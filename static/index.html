@@ -57,6 +57,13 @@
   .result .wait { aspect-ratio:832/480; display:flex; align-items:center; justify-content:center; color:var(--dim); text-align:center; padding:10px; font-size:12px; }
   .result .bar { display:flex; align-items:center; gap:6px; padding:5px 8px; font-size:12px; color:var(--dim); }
   .err { color:var(--accent); }
+  .pbar { width:80%; height:8px; background:var(--panel2); border-radius:4px; overflow:hidden; margin:10px auto 6px; }
+  .pbar i { display:block; height:100%; width:0; background:var(--accent2); transition:width .4s; }
+  .wait { flex-direction:column; }
+  .len { width:220px; accent-color:var(--accent2); vertical-align:middle; }
+  .times { font-variant-numeric:tabular-nums; }
+  .shot.inherited img { opacity:.75; outline:2px dashed var(--accent2); outline-offset:-2px; }
+  .footer-row { display:flex; gap:12px; align-items:center; flex-wrap:wrap; margin-top:4px; }
   #toast { position:fixed; bottom:18px; left:50%; transform:translateX(-50%); background:var(--accent); color:#fff; padding:10px 16px; border-radius:8px; max-width:80vw; display:none; z-index:9; }
 </style>
 </head>
@@ -76,9 +83,8 @@
       <label class="btn">Load song<input id="songFile" type="file" accept="audio/*,video/mp4" hidden></label>
       <span id="songName" class="hint">No song loaded.</span>
       <span class="spacer"></span>
-      <div><label>Segment length</label>
-        <select id="splitLen"><option>5</option><option>6</option><option selected>8</option><option>10</option><option>12</option><option>15</option></select></div>
-      <button id="split">Split song into segments</button>
+      <span class="hint">Segments run back to back. Set each one's length with its own slider.</span>
+      <button id="split">Fill the song with segments</button>
     </div>
     <canvas id="wave" width="1200" height="110"></canvas>
     <audio id="audio" controls preload="auto"></audio>
@@ -94,11 +100,14 @@
   </section>
 
   <section>
-    <div class="row" style="margin-bottom:12px">
-      <h2 style="margin:0">Segments</h2><span class="spacer"></span>
-      <button id="addSeg">Add segment</button>
-    </div>
+    <h2>Segments</h2>
     <div id="segments"></div>
+    <div class="footer-row">
+      <button id="addSeg">Add segment</button>
+      <span class="spacer"></span>
+      <span id="allHint" class="hint"></span>
+      <button id="renderAll" class="primary">Render all segments</button>
+    </div>
   </section>
 </main>
 <div id="toast"></div>
@@ -200,8 +209,8 @@ $('songFile').onchange = async e => {
 
 $('split').onclick = () => {
   const dur = P.song?.duration; if (!dur) return toast('Load a song first.');
-  if (P.segments.length && !confirm('Replace the current segments with an even split? Their settings and results will be removed.')) return;
-  const len = +$('splitLen').value, list = [];
+  if (P.segments.length && !confirm('Replace the current segments with a fresh set covering the song? Their settings and results will be removed.')) return;
+  const len = 8, list = [];
   for (let t = 0, i = 1; t < dur - 0.5; t += len, i++) {
     let end = Math.min(dur, t + len);
     if (dur - end < 5 && dur - t <= 15) end = dur;              // fold a short tail into the last segment
@@ -210,6 +219,23 @@ $('split').onclick = () => {
   }
   P.segments = list; render(); dirty();
 };
+
+/* Segments run back to back: each starts where the one before it ends. */
+function retime() {
+  let t = Math.max(0, +P.segments[0]?.start || 0);
+  for (const s of P.segments) {
+    const len = Math.min(15, Math.max(5, (s.end - s.start) || 8));
+    s.start = +t.toFixed(2); s.end = +(t + len).toFixed(2); t = s.end;
+  }
+}
+
+/* The begin shot a segment will actually render from: its own, or the previous segment's end shot. */
+function beginOf(i) {
+  const s = P.segments[i];
+  if (s.begin_image) return { image: s.begin_image, inherited: false };
+  const prev = i > 0 ? P.segments[i - 1].end_image : null;
+  return { image: prev || null, inherited: !!prev };
+}
 
 /* ---------- actors ---------- */
 $('actorFile').onchange = async e => {
@@ -239,17 +265,17 @@ function newSegment(start, end, name) {
 
 $('addSeg').onclick = () => {
   const last = P.segments[P.segments.length - 1], start = last ? last.end : 0;
-  const end = Math.min(P.song?.duration || start + 8, start + 8);
-  P.segments.push(newSegment(start, Math.max(end, start + 5), 'Segment ' + (P.segments.length + 1)));
+  P.segments.push(newSegment(start, start + 8, 'Segment ' + (P.segments.length + 1)));
   render(); dirty();
 };
 
-function shotBox(seg, key, label) {
-  const img = seg[key];
-  const opts = P.actors.map(a => `<option value="${esc(a.image)}" ${a.image === img ? 'selected' : ''}>${esc(a.name)}</option>`).join('');
-  const box = document.createElement('div'); box.className = 'shot';
+function shotBox(seg, key, label, inherited) {
+  const own = seg[key], img = own || inherited || null;
+  const opts = P.actors.map(a => `<option value="${esc(a.image)}" ${a.image === own ? 'selected' : ''}>${esc(a.name)}</option>`).join('');
+  const box = document.createElement('div'); box.className = 'shot' + (!own && inherited ? ' inherited' : '');
+  const first = own ? 'Clear' : (inherited ? 'Using previous end shot' : 'Choose a still…');
   box.innerHTML = `<label>${label}</label>` + (img ? `<img src="${view(img)}" alt="">` : `<div class="empty">none</div>`) +
-    `<select><option value="">${img ? 'Clear' : 'Choose a still…'}</option>${opts}<option value="__upload">Upload new…</option></select><input type="file" accept="image/*" hidden>`;
+    `<select><option value="">${first}</option>${opts}<option value="__upload">Upload new…</option></select><input type="file" accept="image/*" hidden>`;
   const sel = box.querySelector('select'), file = box.querySelector('input');
   sel.onchange = () => { if (sel.value === '__upload') return file.click(); seg[key] = sel.value || null; renderSegments(); dirty(); };
   file.onchange = async () => {
@@ -266,7 +292,8 @@ function resultCard(seg, r) {
   let media;
   if (r.status === 'done' && file) media = `<video src="${view(file.filename, file.type, file.subfolder)}" controls loop preload="metadata"></video>`;
   else if (r.status === 'error') media = `<div class="wait err">${esc(r.error || 'Failed')}</div>`;
-  else media = `<div class="wait">${r.status === 'running' ? 'Rendering on the PGX…' : 'Waiting in the queue…'}</div>`;
+  else media = `<div class="wait"><div>${r.status === 'running' ? 'Rendering on the PGX…' : 'Waiting in the queue…'}</div>` +
+    `<div class="pbar"><i id="pb-${r.id}"></i></div><div id="pt-${r.id}" class="hint"></div></div>`;
   d.innerHTML = media + `<div class="bar"><span>${esc(r.engine || '')} · seed ${r.seed}</span><span class="spacer"></span>` +
     (r.status === 'done' ? `<button class="ghost pick">${seg.chosen === r.id ? '★ picked' : '☆ pick'}</button>` : '') + `<button class="ghost del" title="Remove">✕</button></div>`;
   const pick = d.querySelector('.pick');
@@ -281,15 +308,15 @@ function resultCard(seg, r) {
 function renderSegments() {
   const wrap = $('segments'); wrap.innerHTML = P.segments.length ? '' : '<span class="hint">Load a song and split it, or add a segment.</span>';
   P.segments.forEach((seg, i) => {
-    const len = seg.end - seg.start, off = len < 5 || len > 15;
+    const len = seg.end - seg.start, past = !!P.song?.duration && seg.end > P.song.duration + 0.05, begin = beginOf(i);
     const el = document.createElement('div'); el.className = 'seg';
     el.innerHTML = `
       <div class="seg-head">
         <div class="swatch" style="background:${COLORS[i % COLORS.length]}"></div>
         <div style="flex:1;min-width:180px"><label>Segment name</label><input class="name" style="width:100%" value="${esc(seg.name)}"></div>
-        <div><label>Start (s)</label><input class="num start" type="number" step="0.1" min="0" value="${seg.start}"></div>
-        <div><label>End (s)</label><input class="num end" type="number" step="0.1" min="0" value="${seg.end}"></div>
-        <div><label>Length</label><div class="${off ? 'warn' : 'hint'}" style="padding:8px 0">${len.toFixed(1)} s${off ? ' (aim for 5–15)' : ''}</div></div>
+        ${i === 0 ? `<div><label>First segment starts at (s)</label><input class="num start" type="number" step="0.1" min="0" value="${seg.start}"></div>` : ''}
+        <div><label>Length: <b class="lenval">${len.toFixed(1)} s</b></label><input class="len" type="range" min="5" max="15" step="0.1" value="${len}">
+          <div class="times ${past ? 'warn' : 'hint'}">${fmt(seg.start)} → ${fmt(seg.end)}${past ? ' · past the end of the song' : ''}</div></div>
         <div><label>Shot type</label><div class="toggle"><button class="t-story ${seg.type !== 'singing' ? 'on' : ''}">Story</button><button class="t-sing ${seg.type === 'singing' ? 'on' : ''}">Singing</button></div></div>
         <button class="play">▶ Play</button>
         <button class="ghost delseg" title="Delete segment">✕</button>
@@ -301,16 +328,19 @@ function renderSegments() {
           <div class="row" style="margin-top:8px">
             <div><label>Runs</label><input class="num runs" type="number" min="1" max="8" value="${seg.runs}"></div>
             <button class="primary go">Render</button>
-            <span class="hint">${seg.type === 'singing' ? 'Singing: mouth follows this part of the song. Uses the begin shot.' : 'Story: animates the begin shot.'} The end shot is saved for the start-and-end mode that comes next.</span>
+            <span class="hint">${seg.type === 'singing' ? 'Singing: the mouth follows this part of the song.' : 'Story: animates the begin shot.'}${begin.inherited ? ' Begins from the previous segment\'s end shot.' : ''}</span>
           </div>
         </div>
       </div>
       <div class="results"></div>`;
-    el.querySelector('.b').appendChild(shotBox(seg, 'begin_image', 'Begin shot'));
+    el.querySelector('.b').appendChild(shotBox(seg, 'begin_image', 'Begin shot', begin.inherited ? begin.image : null));
     el.querySelector('.e').appendChild(shotBox(seg, 'end_image', 'End shot'));
-    const bind = (sel, key, num) => el.querySelector(sel).oninput = ev => { seg[key] = num ? +ev.target.value : ev.target.value; dirty(); drawWave(); };
-    bind('.name', 'name'); bind('.prompt', 'prompt'); bind('.runs', 'runs', true); bind('.start', 'start', true); bind('.end', 'end', true);
-    el.querySelector('.start').onchange = el.querySelector('.end').onchange = () => renderSegments();
+    const bind = (sel, key, num) => el.querySelector(sel).oninput = ev => { seg[key] = num ? +ev.target.value : ev.target.value; dirty(); drawWave(); updateAllHint(); };
+    bind('.name', 'name'); bind('.prompt', 'prompt'); bind('.runs', 'runs', true);
+    const lenEl = el.querySelector('.len'), startEl = el.querySelector('.start');
+    lenEl.oninput = () => { seg.end = seg.start + (+lenEl.value); retime(); el.querySelector('.lenval').textContent = (+lenEl.value).toFixed(1) + ' s'; refreshTimes(); drawWave(); dirty(); };
+    lenEl.onchange = () => renderSegments();
+    if (startEl) startEl.oninput = () => { const keep = seg.end - seg.start; seg.start = Math.max(0, +startEl.value || 0); seg.end = seg.start + keep; retime(); refreshTimes(); drawWave(); dirty(); };
     el.querySelector('.t-story').onclick = () => { seg.type = 'story'; renderSegments(); dirty(); };
     el.querySelector('.t-sing').onclick = () => { seg.type = 'singing'; renderSegments(); dirty(); };
     el.querySelector('.play').onclick = () => { if (!P.song) return toast('Load a song first.'); const a = $('audio'); a.currentTime = seg.start; stopAt = seg.end; a.play(); };
@@ -328,10 +358,60 @@ function renderSegments() {
     (seg.results || []).slice().reverse().forEach(r => res.appendChild(resultCard(seg, r)));
     wrap.appendChild(el);
   });
-  drawWave();
+  drawWave(); updateAllHint(); paintProgress();
 }
 
-function render() { renderActors(); renderSegments(); }
+function refreshTimes() {
+  document.querySelectorAll('#segments .seg').forEach((el, i) => {
+    const s = P.segments[i], t = el.querySelector('.times'); if (!s || !t) return;
+    const past = !!P.song?.duration && s.end > P.song.duration + 0.05;
+    t.textContent = fmt(s.start) + ' → ' + fmt(s.end) + (past ? ' · past the end of the song' : '');
+    t.className = 'times ' + (past ? 'warn' : 'hint');
+  });
+}
+
+function updateAllHint() {
+  const runs = P.segments.reduce((n, s) => n + Math.max(1, Math.min(8, +s.runs || 1)), 0);
+  $('allHint').textContent = P.segments.length ? `${P.segments.length} segments · ${runs} clips in total` : '';
+}
+
+function render() { retime(); renderActors(); renderSegments(); }
+
+/* ---------- live progress from ComfyUI ---------- */
+const prog = {};   // prompt_id -> { pass, value, max }
+function findResult(pid) { for (const s of P.segments) for (const r of (s.results || [])) if (r.prompt_id === pid) return r; return null; }
+
+function onProgress(d) {
+  const r = findResult(d.prompt_id); if (!r) return;
+  if (r.steps && d.max !== r.steps) return;                    // ignore non-sampler progress such as decoding
+  const p = prog[d.prompt_id] ||= { pass: 0, value: 0, max: d.max };
+  if (d.value < p.value) p.pass++;                             // the step counter restarted: next pass
+  p.value = d.value; p.max = d.max;
+  if (r.status === 'queued') { r.status = 'running'; renderSegments(); } else paintProgress();
+}
+
+function paintProgress() {
+  for (const pid in prog) {
+    const r = findResult(pid); if (!r) continue;
+    const bar = $('pb-' + r.id), txt = $('pt-' + r.id); if (!bar) continue;
+    const p = prog[pid], passes = r.passes || 1, frac = Math.min(1, (p.pass * p.max + p.value) / (passes * p.max));
+    bar.style.width = (frac * 100).toFixed(1) + '%';
+    txt.textContent = (passes > 1 ? `Pass ${Math.min(p.pass + 1, passes)} of ${passes} · ` : '') + `step ${p.value} of ${p.max} · ${Math.round(frac * 100)}%`;
+  }
+}
+
+function connectProgress(port) {
+  let ws;
+  try { ws = new WebSocket(`ws://${location.hostname}:${port}/ws?clientId=storyboard`); } catch (e) { return; }
+  ws.onmessage = ev => {
+    if (typeof ev.data !== 'string') return;
+    let m; try { m = JSON.parse(ev.data); } catch (e) { return; }
+    if (m.type === 'progress' && m.data) onProgress(m.data);
+    else if (m.type === 'executing' && m.data && m.data.node === null) poll(true);          // a job just finished
+    else if (m.type === 'execution_error' || m.type === 'execution_success') poll(true);
+  };
+  ws.onclose = () => setTimeout(() => connectProgress(port), 4000);
+}
 
 /* ---------- polling ---------- */
 async function poll(force) {
@@ -350,10 +430,26 @@ async function health() {
 
 $('cancel').onclick = async () => { if (!confirm('Stop the running job and clear everything waiting?')) return; try { await api('/api/cancel', { method:'POST', body:'{}' }); health(); } catch (e) { toast(e.message); } };
 
+$('renderAll').onclick = async ev => {
+  if (!P.segments.length) return toast('Add a segment first.');
+  const runs = P.segments.reduce((n, s) => n + Math.max(1, Math.min(8, +s.runs || 1)), 0);
+  if (!confirm(`Queue every segment's listed runs? That is ${runs} clips across ${P.segments.length} segments. They render one after another on the PGX, and you can close this page while they run.`)) return;
+  const btn = ev.target; btn.disabled = true; btn.textContent = 'Queuing…';
+  try {
+    clearTimeout(saveTimer); await save();
+    const out = await api('/api/render_all', { method:'POST', body:'{}' });
+    await poll(true);
+    const skipped = out.skipped.map(s => `${s.name}: ${s.reason}`).join('  |  ');
+    toast(`Queued ${out.queued} clips.` + (skipped ? ` Skipped — ${skipped}` : ''));
+  } catch (err) { toast(err.message); }
+  btn.disabled = false; btn.textContent = 'Render all segments';
+};
+
 (async function start() {
   try { P = await api('/api/project'); } catch (e) { toast(e.message); }
   P.segments ||= []; P.actors ||= []; P.settings ||= {};
   render(); loadSongAudio(); health();
+  try { const h = await api('/api/health'); connectProgress(h.comfy_port || 8188); } catch (e) { connectProgress(8188); }
   setInterval(poll, 4000); setInterval(health, 6000);
 })();
 </script>

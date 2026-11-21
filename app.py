@@ -29,6 +29,7 @@ LOCK = threading.RLock()
 
 EDITABLE = ("name", "start", "end", "type", "begin_image", "end_image", "prompt", "runs", "chosen")
 PENDING = ("queued", "running")
+COMFY_PORT = urllib.parse.urlsplit(COMFY).port or 8188
 
 
 def empty_project():
@@ -144,12 +145,32 @@ def refresh_statuses():
         return project
 
 
+def effective_begin(project, seg):
+    """A segment with no begin shot starts from the end shot of the segment before it."""
+    if seg.get("begin_image"):
+        return seg["begin_image"]
+    index = project["segments"].index(seg)
+    return project["segments"][index - 1].get("end_image") if index > 0 else None
+
+
+def render_all():
+    """Queue every segment's listed runs. Segments that cannot render are reported, not fatal."""
+    queued, skipped = 0, []
+    for seg in load_project()["segments"]:
+        try:
+            queued += len(render_segment(seg["id"]))
+        except ValueError as e:
+            skipped.append({"name": seg.get("name") or "Unnamed segment", "reason": str(e)})
+    return {"queued": queued, "skipped": skipped}
+
+
 def render_segment(segment_id, runs=None):
     with LOCK:
         project = load_project()
         seg = next((s for s in project["segments"] if s["id"] == segment_id), None)
         if seg is None:
             raise ValueError("Segment not found. Save the storyboard and try again.")
+        source = dict(seg, begin_image=effective_begin(project, seg))
         song = (project.get("song") or {}).get("filename")
         settings = project.get("settings", {})
         count = max(1, min(8, int(runs or seg.get("runs") or 1)))
@@ -158,7 +179,7 @@ def render_segment(segment_id, runs=None):
             rid = uuid.uuid4().hex[:8]
             seed = random.randint(1, 2**31 - 1)
             prefix = f"storyboard/{workflows.safe_name(seg.get('name'))}_{rid}"
-            graph = workflows.build(seg, song, seed, width=int(settings.get("width", 832)),
+            graph = workflows.build(source, song, seed, width=int(settings.get("width", 832)),
                                     height=int(settings.get("height", 480)), prefix=prefix)
             reply = comfy_json("/prompt", {"prompt": graph, "client_id": "storyboard"})
             if reply.get("_http_error") or reply.get("node_errors") or not reply.get("prompt_id"):
@@ -166,7 +187,7 @@ def render_segment(segment_id, runs=None):
                 raise ValueError("ComfyUI rejected the job: " + detail)
             result = {"id": rid, "prompt_id": reply["prompt_id"], "seed": seed, "status": "queued",
                       "files": [], "created": time.time(), "engine": seg.get("type", "story"),
-                      "prompt": seg.get("prompt", "")}
+                      "prompt": seg.get("prompt", ""), **workflows.plan(seg)}
             seg.setdefault("results", []).append(result)
             made.append(result)
             save_project(project)
@@ -226,7 +247,7 @@ class Handler(BaseHTTPRequestHandler):
         if url.path == "/api/health":
             try:
                 queue = comfy_json("/queue", timeout=5)
-                return self.send_json({"comfy": True, "running": len(queue.get("queue_running", [])),
+                return self.send_json({"comfy": True, "comfy_port": COMFY_PORT, "running": len(queue.get("queue_running", [])),
                                        "waiting": len(queue.get("queue_pending", []))})
             except OSError as e:
                 return self.send_json({"comfy": False, "error": str(e)})
@@ -251,6 +272,8 @@ class Handler(BaseHTTPRequestHandler):
             payload = json.loads(body or b"{}")
             if path == "/api/render":
                 return self.send_json({"results": render_segment(payload.get("segment_id"), payload.get("runs"))})
+            if path == "/api/render_all":
+                return self.send_json(render_all())
             if path == "/api/result/delete":
                 with LOCK:
                     project = load_project()

@@ -31,6 +31,13 @@ It runs as a Docker container named `storyboard` that starts on boot. It expects
 | `workflows.py` | Builds the ComfyUI job for each segment. |
 | `static/index.html` | The page. |
 
+## Timing, progress and batch renders
+
+- Segments run back to back. Each has its own 5 to 15 second length slider; changing one shifts the segments after it.
+- A segment with no begin shot starts from the end shot of the segment before it.
+- Clips show a live progress bar read from ComfyUI's websocket (port 8188 must be reachable from the browser).
+- **Render all segments** queues every segment's listed runs for an unattended batch. The page can be closed while it runs.
+
 ## Shot types
 
 | Type | Engine | Frame rate | Long segments |
@@ -46,7 +53,7 @@ File names are set at the top of `workflows.py`.
 
 ## Not built yet
 
-- End shots are saved per segment but do not drive the video yet (needs a start-and-end-frame model).
+- End shots do not drive the video yet (needs a start-and-end-frame model). Today an end shot is used as the next segment's begin shot when that segment has none.
 - Generating new actor stills from a character reference.
 - Upscaling and final assembly of picked clips into one video.
 

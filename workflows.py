@@ -22,6 +22,8 @@ STORY_PASS = 81          # frames per pass (5 s)
 SING_FPS = 25
 SING_PASS = 81           # frames per pass (3.24 s)
 SING_MOTION = 9          # frames of overlap fed back into each extension pass
+STORY_STEPS = 4
+SING_STEPS = 6
 NEGATIVE = "blurry, distorted, low quality, static, watermark, text"
 
 
@@ -107,7 +109,7 @@ def build_story(seg, song, seed, width=832, height=480, prefix="storyboard/clip"
         i2v = g.add("WanImageToVideo", positive=g.out(pos), negative=g.out(neg), vae=g.out(vae),
                     width=width, height=height, length=length, batch_size=1,
                     clip_vision_output=g.out(cve), start_image=start_link)
-        ks = g.add("KSampler", seed=seed + i, steps=4, cfg=1, sampler_name="euler", scheduler="simple",
+        ks = g.add("KSampler", seed=seed + i, steps=STORY_STEPS, cfg=1, sampler_name="euler", scheduler="simple",
                    denoise=1.0, model=g.out(model), positive=g.out(i2v, 0), negative=g.out(i2v, 1),
                    latent_image=g.out(i2v, 2))
         dec = g.add("VAEDecode", samples=g.out(ks), vae=g.out(vae))
@@ -153,7 +155,7 @@ def build_singing(seg, song, seed, width=832, height=480, prefix="storyboard/cli
             inputs["previous_frames"] = acc
         talk = g.add("WanInfiniteTalkToVideo", **inputs)
         guider = g.add("CFGGuider", cfg=1, model=g.out(talk, 0), positive=g.out(talk, 1), negative=g.out(talk, 2))
-        sigmas = g.add("BasicScheduler", scheduler="normal", steps=6, denoise=1, model=g.out(talk, 0))
+        sigmas = g.add("BasicScheduler", scheduler="normal", steps=SING_STEPS, denoise=1, model=g.out(talk, 0))
         noise = g.add("RandomNoise", noise_seed=seed + i)
         samp = g.add("SamplerCustomAdvanced", noise=g.out(noise), guider=g.out(guider), sampler=g.out(sampler),
                      sigmas=g.out(sigmas), latent_image=g.out(talk, 3))
@@ -167,6 +169,14 @@ def build_singing(seg, song, seed, width=832, height=480, prefix="storyboard/cli
 
     _save(g, acc, total, SING_FPS, audio, prefix)
     return g.nodes
+
+
+def plan(seg):
+    """How much work a segment is: passes and sampler steps per pass (used for progress bars)."""
+    duration = float(seg["end"]) - float(seg["start"])
+    if seg.get("type") == "singing":
+        return {"passes": singing_plan(duration)[1], "steps": SING_STEPS}
+    return {"passes": story_plan(duration)[1], "steps": STORY_STEPS}
 
 
 def build(seg, song, seed, **kw):
