@@ -64,3 +64,7 @@ File names are set at the top of `workflows.py`.
 ## Security
 
 There is no login. Keep ports 8190 and 8188 on your home network only; do not forward them from your router.
+
+## Audio patch for NVIDIA's ComfyUI container
+
+NVIDIA's ComfyUI image for DGX Spark ships a placeholder in place of `torchaudio`, so any node that processes audio fails. `patch-comfy-audio.sh` copies two small pure-PyTorch files from `comfy-patches/` into the container (`resample` and `MelSpectrogram`, checked against the real library) and restarts ComfyUI. Run it again if the container is ever rebuilt.
