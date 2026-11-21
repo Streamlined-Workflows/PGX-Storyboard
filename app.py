@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Storyboard server for the PGX. Standard library only.
 
-Serves the browser page, keeps the project in data/project.json, forwards uploads and
-media to ComfyUI, and turns segments into ComfyUI jobs.
+Serves the browser page, keeps each project in data/projects/<id>.json, forwards uploads and
+media to ComfyUI, turns segments into ComfyUI jobs, and reports system load.
 
   COMFY_URL  ComfyUI address (default http://127.0.0.1:8188)
   PORT       port to listen on (default 8190)
@@ -10,6 +10,8 @@ media to ComfyUI, and turns segments into ComfyUI jobs.
 import json
 import os
 import random
+import shutil
+import subprocess
 import threading
 import time
 import urllib.error
@@ -24,7 +26,9 @@ ROOT = os.path.dirname(os.path.abspath(__file__))
 COMFY = os.environ.get("COMFY_URL", "http://127.0.0.1:8188").rstrip("/")
 PORT = int(os.environ.get("PORT", "8190"))
 DATA_DIR = os.environ.get("DATA_DIR", os.path.join(ROOT, "data"))
-PROJECT_FILE = os.path.join(DATA_DIR, "project.json")
+PROJECTS_DIR = os.path.join(DATA_DIR, "projects")
+TRASH_DIR = os.path.join(DATA_DIR, "trash")
+LEGACY_FILE = os.path.join(DATA_DIR, "project.json")
 LOCK = threading.RLock()
 
 EDITABLE = ("name", "start", "end", "type", "begin_image", "end_image", "prompt", "runs", "chosen")
@@ -32,27 +36,123 @@ PENDING = ("queued", "running")
 COMFY_PORT = urllib.parse.urlsplit(COMFY).port or 8188
 
 
-def empty_project():
-    return {"song": None, "settings": {"width": 832, "height": 480}, "actors": [], "segments": []}
+# ---------- projects on disk ----------
+
+def new_id():
+    return uuid.uuid4().hex[:8]
 
 
-def load_project():
+def empty_project(name="Untitled project"):
+    now = time.time()
+    return {"id": new_id(), "name": name, "created": now, "updated": now, "song": None,
+            "settings": {"width": 832, "height": 480}, "audio": [], "actors": [], "segments": []}
+
+
+def project_path(pid):
+    if not pid or not all(c.isalnum() for c in pid):
+        raise ValueError("Unknown project.")
+    return os.path.join(PROJECTS_DIR, pid + ".json")
+
+
+def normalize(project):
+    """Fill in fields that older project files do not have."""
+    project.setdefault("name", "Untitled project")
+    project.setdefault("created", time.time())
+    project.setdefault("updated", project["created"])
+    project.setdefault("settings", {"width": 832, "height": 480})
+    project.setdefault("segments", [])
+    project.setdefault("actors", [])
+    project.setdefault("audio", [])
+    for actor in project["actors"]:
+        actor.setdefault("kind", "actor")
+    song = project.get("song")
+    if song and song.get("filename") and not any(a.get("filename") == song["filename"] for a in project["audio"]):
+        project["audio"].append({"id": new_id(), "name": song["filename"], "filename": song["filename"],
+                                 "duration": song.get("duration", 0)})
+    return project
+
+
+def load_project(pid):
     with LOCK:
         try:
-            with open(PROJECT_FILE) as f:
-                return json.load(f)
-        except (OSError, ValueError):
-            return empty_project()
+            with open(project_path(pid)) as f:
+                return normalize(json.load(f))
+        except OSError:
+            raise ValueError("That project no longer exists.")
 
 
-def save_project(project):
+def save_project(project, touch=True):
     with LOCK:
-        os.makedirs(DATA_DIR, exist_ok=True)
-        tmp = PROJECT_FILE + ".tmp"
-        with open(tmp, "w") as f:
+        os.makedirs(PROJECTS_DIR, exist_ok=True)
+        if touch:
+            project["updated"] = time.time()
+        path = project_path(project["id"])
+        with open(path + ".tmp", "w") as f:
             json.dump(project, f, indent=1)
-        os.replace(tmp, PROJECT_FILE)
+        os.replace(path + ".tmp", path)
+        return project
 
+
+def migrate_legacy():
+    """Move the single-project file from version 1 into the projects folder."""
+    with LOCK:
+        os.makedirs(PROJECTS_DIR, exist_ok=True)
+        if os.path.exists(LEGACY_FILE) and not os.listdir(PROJECTS_DIR):
+            try:
+                with open(LEGACY_FILE) as f:
+                    old = json.load(f)
+                project = {**empty_project("My first project"), **old}
+                save_project(normalize(project))
+                os.replace(LEGACY_FILE, LEGACY_FILE + ".migrated")
+            except (OSError, ValueError):
+                pass
+
+
+def list_projects():
+    with LOCK:
+        os.makedirs(PROJECTS_DIR, exist_ok=True)
+        out = []
+        for name in os.listdir(PROJECTS_DIR):
+            if not name.endswith(".json"):
+                continue
+            try:
+                p = load_project(name[:-5])
+            except ValueError:
+                continue
+            clips = [r for s in p["segments"] for r in s.get("results", []) if r.get("status") == "done"]
+            thumb = next((s.get("begin_image") for s in p["segments"] if s.get("begin_image")), None)
+            out.append({"id": p["id"], "name": p["name"], "created": p["created"], "updated": p["updated"],
+                        "segments": len(p["segments"]), "clips": len(clips), "assets": len(p["actors"]) + len(p["audio"]),
+                        "song": (p.get("song") or {}).get("filename"), "thumb": thumb or (p["actors"][0]["image"] if p["actors"] else None)})
+        return sorted(out, key=lambda p: -p["updated"])
+
+
+def merge_project(pid, incoming):
+    """Apply the browser's edits. Render results stay owned by the server."""
+    with LOCK:
+        current = load_project(pid)
+        old = {s["id"]: s for s in current.get("segments", [])}
+        segments = []
+        for seg in incoming.get("segments", []):
+            sid = seg.get("id") or new_id()
+            kept = old.get(sid, {})
+            out = {"id": sid, "results": kept.get("results", [])}
+            for key in EDITABLE:
+                out[key] = seg.get(key, kept.get(key))
+            out["runs"] = max(1, min(8, int(out.get("runs") or 1)))
+            out["type"] = "singing" if out.get("type") == "singing" else "story"
+            segments.append(out)
+        current["segments"] = segments
+        for key in ("song", "actors", "audio"):
+            if key in incoming:
+                current[key] = incoming[key]
+        if incoming.get("name"):
+            current["name"] = str(incoming["name"])[:80]
+        current["settings"] = {**current.get("settings", {}), **incoming.get("settings", {})}
+        return save_project(normalize(current))
+
+
+# ---------- ComfyUI ----------
 
 def comfy_json(path, payload=None, timeout=30):
     data = json.dumps(payload).encode() if payload is not None else None
@@ -66,29 +166,6 @@ def comfy_json(path, payload=None, timeout=30):
             return {"_http_error": e.code, **json.loads(body)}
         except ValueError:
             return {"_http_error": e.code, "error": body[:500]}
-
-
-def merge_project(incoming):
-    """Apply the browser's edits. Render results stay owned by the server."""
-    with LOCK:
-        current = load_project()
-        old = {s["id"]: s for s in current.get("segments", [])}
-        segments = []
-        for seg in incoming.get("segments", []):
-            sid = seg.get("id") or uuid.uuid4().hex[:8]
-            kept = old.get(sid, {})
-            out = {"id": sid, "results": kept.get("results", [])}
-            for key in EDITABLE:
-                out[key] = seg.get(key, kept.get(key))
-            out["runs"] = max(1, min(8, int(out.get("runs") or 1)))
-            out["type"] = "singing" if out.get("type") == "singing" else "story"
-            segments.append(out)
-        current["segments"] = segments
-        current["song"] = incoming.get("song", current.get("song"))
-        current["actors"] = incoming.get("actors", current.get("actors", []))
-        current["settings"] = {**current.get("settings", {}), **incoming.get("settings", {})}
-        save_project(current)
-        return current
 
 
 def describe_error(entry):
@@ -108,10 +185,10 @@ def collect_files(entry):
             for f in files]
 
 
-def refresh_statuses():
-    """Ask ComfyUI about every unfinished run and record what it says."""
+def refresh_statuses(pid):
+    """Ask ComfyUI about every unfinished run in a project and record what it says."""
     with LOCK:
-        project = load_project()
+        project = load_project(pid)
         pending = [r for s in project["segments"] for r in s.get("results", []) if r.get("status") in PENDING]
         if not pending:
             return project
@@ -122,15 +199,15 @@ def refresh_statuses():
         running = {item[1] for item in queue.get("queue_running", [])}
         waiting = {item[1] for item in queue.get("queue_pending", [])}
         for res in pending:
-            pid = res["prompt_id"]
-            if pid in running:
+            pid_ = res["prompt_id"]
+            if pid_ in running:
                 res["status"] = "running"
                 continue
-            if pid in waiting:
+            if pid_ in waiting:
                 res["status"] = "queued"
                 continue
             try:
-                entry = comfy_json("/history/" + pid, timeout=10).get(pid)
+                entry = comfy_json("/history/" + pid_, timeout=10).get(pid_)
             except OSError:
                 continue
             if not entry:
@@ -141,8 +218,7 @@ def refresh_statuses():
                 res.update(status="error", error=describe_error(entry))
             else:
                 res.update(status="done", files=collect_files(entry), finished=time.time())
-        save_project(project)
-        return project
+        return save_project(project, touch=False)
 
 
 def effective_begin(project, seg):
@@ -153,20 +229,20 @@ def effective_begin(project, seg):
     return project["segments"][index - 1].get("end_image") if index > 0 else None
 
 
-def render_all():
+def render_all(pid):
     """Queue every segment's listed runs. Segments that cannot render are reported, not fatal."""
     queued, skipped = 0, []
-    for seg in load_project()["segments"]:
+    for seg in load_project(pid)["segments"]:
         try:
-            queued += len(render_segment(seg["id"]))
+            queued += len(render_segment(pid, seg["id"]))
         except ValueError as e:
             skipped.append({"name": seg.get("name") or "Unnamed segment", "reason": str(e)})
     return {"queued": queued, "skipped": skipped}
 
 
-def render_segment(segment_id, runs=None):
+def render_segment(pid, segment_id, runs=None):
     with LOCK:
-        project = load_project()
+        project = load_project(pid)
         seg = next((s for s in project["segments"] if s["id"] == segment_id), None)
         if seg is None:
             raise ValueError("Segment not found. Save the storyboard and try again.")
@@ -176,9 +252,9 @@ def render_segment(segment_id, runs=None):
         count = max(1, min(8, int(runs or seg.get("runs") or 1)))
         made = []
         for _ in range(count):
-            rid = uuid.uuid4().hex[:8]
+            rid = new_id()
             seed = random.randint(1, 2**31 - 1)
-            prefix = f"storyboard/{workflows.safe_name(seg.get('name'))}_{rid}"
+            prefix = f"storyboard/{project['id']}/{workflows.safe_name(seg.get('name'))}_{rid}"
             graph = workflows.build(source, song, seed, width=int(settings.get("width", 832)),
                                     height=int(settings.get("height", 480)), prefix=prefix)
             reply = comfy_json("/prompt", {"prompt": graph, "client_id": "storyboard"})
@@ -195,6 +271,80 @@ def render_segment(segment_id, runs=None):
             save_project(project)
         return made
 
+
+# ---------- system status ----------
+
+def cpu_percent(interval=0.25):
+    def snap():
+        with open("/proc/stat") as f:
+            parts = [int(x) for x in f.readline().split()[1:]]
+        idle = parts[3] + (parts[4] if len(parts) > 4 else 0)
+        return idle, sum(parts)
+    try:
+        idle1, total1 = snap()
+        time.sleep(interval)
+        idle2, total2 = snap()
+        span = total2 - total1
+        return round(100.0 * (1 - (idle2 - idle1) / span), 1) if span else 0.0
+    except (OSError, ValueError, IndexError):
+        return None
+
+
+def memory_info():
+    try:
+        info = {}
+        with open("/proc/meminfo") as f:
+            for line in f:
+                key, _, rest = line.partition(":")
+                info[key] = int(rest.split()[0]) * 1024
+        total, free = info["MemTotal"], info.get("MemAvailable", info.get("MemFree", 0))
+        return {"total": total, "used": total - free, "percent": round(100.0 * (total - free) / total, 1)}
+    except (OSError, ValueError, KeyError, IndexError):
+        return None
+
+
+def gpu_info():
+    """GPU load from nvidia-smi. Returns None when the tool is not available in this container."""
+    try:
+        out = subprocess.run(["nvidia-smi", "--query-gpu=name,utilization.gpu,temperature.gpu,power.draw",
+                              "--format=csv,noheader,nounits"], capture_output=True, text=True, timeout=4)
+        if out.returncode != 0 or not out.stdout.strip():
+            return None
+        name, util, temp, power = [p.strip() for p in out.stdout.strip().splitlines()[0].split(",")][:4]
+
+        def num(value):
+            try:
+                return float(value)
+            except ValueError:
+                return None
+        return {"name": name, "percent": num(util), "temperature": num(temp), "power": num(power)}
+    except (OSError, subprocess.SubprocessError, ValueError):
+        return None
+
+
+def system_status():
+    started = time.time()
+    try:
+        queue = comfy_json("/queue", timeout=5)
+        comfy = {"ok": True, "ms": round((time.time() - started) * 1000),
+                 "running": len(queue.get("queue_running", [])), "waiting": len(queue.get("queue_pending", []))}
+    except OSError as e:
+        comfy = {"ok": False, "error": str(e)}
+    try:
+        disk = shutil.disk_usage(ROOT)
+        disk = {"total": disk.total, "used": disk.used, "percent": round(100.0 * disk.used / disk.total, 1)}
+    except OSError:
+        disk = None
+    try:
+        with open("/proc/loadavg") as f:
+            load = float(f.read().split()[0])
+    except (OSError, ValueError, IndexError):
+        load = None
+    return {"comfy": comfy, "cpu": {"percent": cpu_percent(), "cores": os.cpu_count(), "load": load},
+            "memory": memory_info(), "gpu": gpu_info(), "disk": disk, "time": time.time()}
+
+
+# ---------- HTTP ----------
 
 class Handler(BaseHTTPRequestHandler):
     protocol_version = "HTTP/1.1"
@@ -235,32 +385,45 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_GET(self):
         url = urllib.parse.urlsplit(self.path)
-        if url.path in ("/", "/index.html"):
-            with open(os.path.join(ROOT, "static", "index.html"), "rb") as f:
-                body = f.read()
-            self.send_response(200)
-            self.send_header("Content-Type", "text/html; charset=utf-8")
-            self.send_header("Content-Length", str(len(body)))
-            self.send_header("Cache-Control", "no-store")
-            self.end_headers()
-            return self.wfile.write(body)
-        if url.path == "/api/project":
-            return self.send_json(refresh_statuses())
-        if url.path == "/api/health":
-            try:
-                queue = comfy_json("/queue", timeout=5)
-                return self.send_json({"comfy": True, "comfy_port": COMFY_PORT, "running": len(queue.get("queue_running", [])),
-                                       "waiting": len(queue.get("queue_pending", []))})
-            except OSError as e:
-                return self.send_json({"comfy": False, "error": str(e)})
-        if url.path == "/comfy/view":
-            return self.proxy("GET", "/view?" + url.query)
+        query = urllib.parse.parse_qs(url.query)
+        try:
+            if url.path in ("/", "/index.html"):
+                with open(os.path.join(ROOT, "static", "index.html"), "rb") as f:
+                    body = f.read()
+                self.send_response(200)
+                self.send_header("Content-Type", "text/html; charset=utf-8")
+                self.send_header("Content-Length", str(len(body)))
+                self.send_header("Cache-Control", "no-store")
+                self.end_headers()
+                return self.wfile.write(body)
+            if url.path == "/api/projects":
+                return self.send_json({"projects": list_projects()})
+            if url.path == "/api/project":
+                return self.send_json(refresh_statuses(query.get("id", [""])[0]))
+            if url.path == "/api/ping":
+                return self.send_json({"ok": True, "time": time.time()})
+            if url.path == "/api/system":
+                return self.send_json(system_status())
+            if url.path == "/api/health":
+                try:
+                    queue = comfy_json("/queue", timeout=5)
+                    return self.send_json({"comfy": True, "comfy_port": COMFY_PORT,
+                                           "running": len(queue.get("queue_running", [])),
+                                           "waiting": len(queue.get("queue_pending", []))})
+                except OSError as e:
+                    return self.send_json({"comfy": False, "comfy_port": COMFY_PORT, "error": str(e)})
+            if url.path == "/comfy/view":
+                return self.proxy("GET", "/view?" + url.query)
+        except ValueError as e:
+            return self.send_json({"error": str(e)}, 404)
         self.send_json({"error": "Not found"}, 404)
 
     def do_PUT(self):
-        if urllib.parse.urlsplit(self.path).path == "/api/project":
+        url = urllib.parse.urlsplit(self.path)
+        if url.path == "/api/project":
             try:
-                return self.send_json(merge_project(json.loads(self.read_body() or b"{}")))
+                pid = urllib.parse.parse_qs(url.query).get("id", [""])[0]
+                return self.send_json(merge_project(pid, json.loads(self.read_body() or b"{}")))
             except (ValueError, TypeError) as e:
                 return self.send_json({"error": str(e)}, 400)
         self.send_json({"error": "Not found"}, 404)
@@ -272,13 +435,31 @@ class Handler(BaseHTTPRequestHandler):
             return self.proxy("POST", "/upload/image", body)
         try:
             payload = json.loads(body or b"{}")
+            pid = payload.get("project")
+            if path == "/api/projects":
+                return self.send_json(save_project(empty_project(str(payload.get("name") or "Untitled project")[:80])))
+            if path == "/api/projects/duplicate":
+                with LOCK:
+                    copy = load_project(payload.get("id"))
+                    copy.update(id=new_id(), name=(copy["name"] + " copy")[:80], created=time.time())
+                    for seg in copy["segments"]:          # the copy keeps finished clips, drops unfinished jobs
+                        seg["results"] = [r for r in seg.get("results", []) if r.get("status") == "done"]
+                    return self.send_json(save_project(copy))
+            if path == "/api/projects/delete":
+                with LOCK:
+                    os.makedirs(TRASH_DIR, exist_ok=True)
+                    src = project_path(payload.get("id"))
+                    if not os.path.exists(src):
+                        raise ValueError("That project no longer exists.")
+                    os.replace(src, os.path.join(TRASH_DIR, f"{payload['id']}-{int(time.time())}.json"))
+                return self.send_json({"ok": True})
             if path == "/api/render":
-                return self.send_json({"results": render_segment(payload.get("segment_id"), payload.get("runs"))})
+                return self.send_json({"results": render_segment(pid, payload.get("segment_id"), payload.get("runs"))})
             if path == "/api/render_all":
-                return self.send_json(render_all())
+                return self.send_json(render_all(pid))
             if path == "/api/result/delete":
                 with LOCK:
-                    project = load_project()
+                    project = load_project(pid)
                     for seg in project["segments"]:
                         if seg["id"] == payload.get("segment_id"):
                             seg["results"] = [r for r in seg.get("results", []) if r["id"] != payload.get("result_id")]
@@ -298,6 +479,6 @@ class Handler(BaseHTTPRequestHandler):
 
 
 if __name__ == "__main__":
-    os.makedirs(DATA_DIR, exist_ok=True)
+    migrate_legacy()
     print(f"Storyboard on http://0.0.0.0:{PORT}  ->  ComfyUI at {COMFY}", flush=True)
     ThreadingHTTPServer(("0.0.0.0", PORT), Handler).serve_forever()

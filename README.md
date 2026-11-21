@@ -27,9 +27,21 @@ It runs as a Docker container named `storyboard` that starts on boot. It expects
 
 | File | Purpose |
 |---|---|
-| `app.py` | Web server (Python standard library only). Stores the project in `data/project.json`, forwards uploads and media to ComfyUI, queues renders. |
+| `app.py` | Web server (Python standard library only). Stores projects, forwards uploads and media to ComfyUI, queues renders, reports system load. |
 | `workflows.py` | Builds the ComfyUI job for each segment. |
 | `static/index.html` | The page. |
+
+## Sidebar
+
+| Tab | What it holds |
+|---|---|
+| Storyboard | The song, timeline and segments of the open project |
+| Projects | Every saved project. Open, rename, duplicate or delete one; each keeps its own timeline, assets and clips |
+| Assets | The open project's actors, photos and audio |
+| Library | Every video rendered in the open project, with download links |
+| System status | Ping test, and CPU, GPU, memory and disk meters for the PGX |
+
+Projects are stored as `data/projects/<id>.json`. Deleted projects are moved to `data/trash/`. The GPU meter reads `nvidia-smi`, which is why `run.sh` starts the container with `--gpus all`.
 
 ## Timing, progress and batch renders
 
