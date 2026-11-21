@@ -183,10 +183,12 @@ def render_segment(segment_id, runs=None):
                                     height=int(settings.get("height", 480)), prefix=prefix)
             reply = comfy_json("/prompt", {"prompt": graph, "client_id": "storyboard"})
             if reply.get("_http_error") or reply.get("node_errors") or not reply.get("prompt_id"):
-                detail = json.dumps(reply.get("node_errors") or reply.get("error") or reply)[:600]
-                raise ValueError("ComfyUI rejected the job: " + detail)
+                detail = json.dumps(reply.get("node_errors") or reply.get("error") or reply)
+                if "not in" in detail and ".safetensors" in detail:
+                    raise ValueError("A model file this shot needs is not on the PGX yet. " + detail[:400])
+                raise ValueError("ComfyUI rejected the job: " + detail[:600])
             result = {"id": rid, "prompt_id": reply["prompt_id"], "seed": seed, "status": "queued",
-                      "files": [], "created": time.time(), "engine": seg.get("type", "story"),
+                      "files": [], "created": time.time(), "engine": workflows.engine(seg),
                       "prompt": seg.get("prompt", ""), **workflows.plan(seg)}
             seg.setdefault("results", []).append(result)
             made.append(result)

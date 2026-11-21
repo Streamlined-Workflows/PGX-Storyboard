@@ -36,6 +36,7 @@ It runs as a Docker container named `storyboard` that starts on boot. It expects
 - Segments run back to back. Each has its own 5 to 15 second length slider; changing one shifts the segments after it.
 - A segment with no begin shot starts from the end shot of the segment before it.
 - Clips show a live progress bar read from ComfyUI's websocket (port 8188 must be reachable from the browser).
+- Picking a clip puts it on the timeline strip, and playing the song shows the picked clips in the preview, in sync.
 - **Render all segments** queues every segment's listed runs for an unattended batch. The page can be closed while it runs.
 
 ## Shot types
@@ -44,16 +45,19 @@ It runs as a Docker container named `storyboard` that starts on boot. It expects
 |---|---|---|---|
 | Story | Wan 2.1 image-to-video with the lightx2v 4-step LoRA | 16 fps | Chained: each 5 s pass starts from the last frame of the one before |
 | Singing | Wan 2.1 InfiniteTalk, driven by that slice of the song | 25 fps | Chained: each pass continues from the previous frames |
+| Story with an end shot | Wan 2.2 first-and-last-frame video (high-noise and low-noise models, 4-step LoRAs) | 16 fps | Chained: only the final pass is steered to the end shot |
 
 ## Models it expects in ComfyUI
 
 `diffusion_models/Wan2_1-I2V-14B-480p_fp8_e4m3fn_scaled_KJ.safetensors`, `loras/lightx2v_I2V_14B_480p_cfg_step_distill_rank64_bf16.safetensors`, `text_encoders/umt5_xxl_fp8_e4m3fn_scaled.safetensors`, `vae/Wan2_1_VAE_bf16.safetensors`, `clip_vision/clip_vision_h.safetensors`, `model_patches/wan2.1_infiniteTalk_single_fp16.safetensors`, `audio_encoders/wav2vec2-chinese-base_fp16.safetensors`.
 
+For story segments that have an end shot, also: `diffusion_models/wan2.2_i2v_high_noise_14B_fp8_scaled.safetensors`, `diffusion_models/wan2.2_i2v_low_noise_14B_fp8_scaled.safetensors`, `loras/wan2.2_i2v_lightx2v_4steps_lora_v1_high_noise.safetensors`, `loras/wan2.2_i2v_lightx2v_4steps_lora_v1_low_noise.safetensors`, `vae/wan_2.1_vae.safetensors` (all from `Comfy-Org/Wan_2.2_ComfyUI_Repackaged`).
+
 File names are set at the top of `workflows.py`.
 
 ## Not built yet
 
-- End shots do not drive the video yet (needs a start-and-end-frame model). Today an end shot is used as the next segment's begin shot when that segment has none.
+- Singing segments cannot be steered to an end shot (the lip-sync model takes a begin shot only).
 - Generating new actor stills from a character reference.
 - Upscaling and final assembly of picked clips into one video.
 

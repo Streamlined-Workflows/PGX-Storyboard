@@ -15,6 +15,12 @@ MODELS = {
     "clip_vision": "clip_vision_h.safetensors",
     "talk_patch": "wan2.1_infiniteTalk_single_fp16.safetensors",
     "audio_encoder": "wav2vec2-chinese-base_fp16.safetensors",
+    # Wan 2.2 pair, used when a story segment has an end shot (first-and-last-frame video)
+    "unet_22_high": "wan2.2_i2v_high_noise_14B_fp8_scaled.safetensors",
+    "unet_22_low": "wan2.2_i2v_low_noise_14B_fp8_scaled.safetensors",
+    "lora_22_high": "wan2.2_i2v_lightx2v_4steps_lora_v1_high_noise.safetensors",
+    "lora_22_low": "wan2.2_i2v_lightx2v_4steps_lora_v1_low_noise.safetensors",
+    "vae_22": "wan_2.1_vae.safetensors",
 }
 
 STORY_FPS = 16
@@ -126,6 +132,63 @@ def build_story(seg, song, seed, width=832, height=480, prefix="storyboard/clip"
     return g.nodes
 
 
+def build_story_to_end(seg, song, seed, width=832, height=480, prefix="storyboard/clip"):
+    """Story segment that lands on its end shot, using Wan 2.2 first-and-last-frame video.
+
+    Wiring follows ComfyUI's video_wan2_2_14B_flf2v template (4-step LoRA variant): a high-noise
+    model does steps 0-2, a low-noise model finishes. Long segments chain passes; only the final
+    pass is given the end shot.
+    """
+    duration = float(seg["end"]) - float(seg["start"])
+    total, passes = story_plan(duration)
+    g = Graph()
+    models = []
+    for unet_key, lora_key in (("unet_22_high", "lora_22_high"), ("unet_22_low", "lora_22_low")):
+        unet = g.add("UNETLoader", unet_name=MODELS[unet_key], weight_dtype="default")
+        lora = g.add("LoraLoaderModelOnly", lora_name=MODELS[lora_key], strength_model=1.0, model=g.out(unet))
+        models.append(g.out(g.add("ModelSamplingSD3", shift=5, model=g.out(lora))))
+    clip = g.add("CLIPLoader", clip_name=MODELS["text_encoder"], type="wan", device="default")
+    pos = g.add("CLIPTextEncode", clip=g.out(clip), text=seg.get("prompt") or "")
+    neg = g.add("CLIPTextEncode", clip=g.out(clip), text=NEGATIVE)
+    vae = g.add("VAELoader", vae_name=MODELS["vae_22"])
+    begin = g.add("LoadImage", image=seg["begin_image"])
+    end = g.add("LoadImage", image=seg["end_image"])
+
+    start_link, acc = g.out(begin), None
+    for i in range(passes):
+        length = total if passes == 1 else STORY_PASS
+        inputs = dict(positive=g.out(pos), negative=g.out(neg), vae=g.out(vae), width=width, height=height,
+                      length=length, batch_size=1, start_image=start_link)
+        if i == passes - 1:
+            inputs["end_image"] = g.out(end)
+        flf = g.add("WanFirstLastFrameToVideo", **inputs)
+        common = dict(steps=4, cfg=1, sampler_name="euler", scheduler="simple",
+                      positive=g.out(flf, 0), negative=g.out(flf, 1))
+        first = g.add("KSamplerAdvanced", add_noise="enable", noise_seed=seed + i, start_at_step=0, end_at_step=2,
+                      return_with_leftover_noise="enable", model=models[0], latent_image=g.out(flf, 2), **common)
+        second = g.add("KSamplerAdvanced", add_noise="disable", noise_seed=0, start_at_step=2, end_at_step=10000,
+                       return_with_leftover_noise="disable", model=models[1], latent_image=g.out(first), **common)
+        dec = g.add("VAEDecode", samples=g.out(second), vae=g.out(vae))
+        if acc is None:
+            acc = g.out(dec)
+        else:
+            fresh = g.add("ImageFromBatch", image=g.out(dec), batch_index=1, length=length - 1)
+            acc = g.out(g.add("ImageBatch", image1=acc, image2=g.out(fresh)))
+        if i < passes - 1:
+            last = g.add("ImageFromBatch", image=g.out(dec), batch_index=length - 1, length=1)
+            start_link = g.out(last)
+
+    _save(g, acc, total, STORY_FPS, _segment_audio(g, song, seg["start"], duration), prefix)
+    return g.nodes
+
+
+def engine(seg):
+    """Which engine renders this segment."""
+    if seg.get("type") == "singing":
+        return "singing"
+    return "story to end shot" if seg.get("end_image") else "story"
+
+
 def build_singing(seg, song, seed, width=832, height=480, prefix="storyboard/clip"):
     if not song:
         raise ValueError("A singing segment needs a song loaded.")
@@ -176,6 +239,8 @@ def plan(seg):
     duration = float(seg["end"]) - float(seg["start"])
     if seg.get("type") == "singing":
         return {"passes": singing_plan(duration)[1], "steps": SING_STEPS}
+    if seg.get("end_image"):                      # two 2-step samplers per pass
+        return {"passes": story_plan(duration)[1] * 2, "steps": 2}
     return {"passes": story_plan(duration)[1], "steps": STORY_STEPS}
 
 
@@ -184,6 +249,9 @@ def build(seg, song, seed, **kw):
         raise ValueError("This segment has no begin shot yet.")
     if float(seg["end"]) <= float(seg["start"]):
         raise ValueError("Segment end must be after its start.")
-    if seg.get("type") == "singing":
+    kind = engine(seg)
+    if kind == "singing":
         return build_singing(seg, song, seed, **kw)
+    if kind == "story to end shot":
+        return build_story_to_end(seg, song, seed, **kw)
     return build_story(seg, song, seed, **kw)

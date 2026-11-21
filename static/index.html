@@ -64,6 +64,15 @@
   .times { font-variant-numeric:tabular-nums; }
   .shot.inherited img { opacity:.75; outline:2px dashed var(--accent2); outline-offset:-2px; }
   .footer-row { display:flex; gap:12px; align-items:center; flex-wrap:wrap; margin-top:4px; }
+  #monitor { position:relative; width:min(100%,640px); aspect-ratio:832/480; margin:12px auto 0; background:#000; border:1px solid var(--line); border-radius:8px; overflow:hidden; }
+  #monitor video, #monitor img { position:absolute; inset:0; width:100%; height:100%; object-fit:cover; display:none; }
+  #monitor .label { position:absolute; left:10px; bottom:8px; font-size:12px; color:#fff; text-shadow:0 1px 3px #000; }
+  #strip { position:relative; height:58px; margin:0 0 10px; background:var(--bg); border:1px solid var(--line); border-radius:8px; overflow:hidden; }
+  #strip .cell { position:absolute; top:0; bottom:0; border-left:2px solid; overflow:hidden; cursor:pointer; background:var(--panel2); }
+  #strip .cell video, #strip .cell img { width:100%; height:100%; object-fit:cover; display:block; pointer-events:none; }
+  #strip .cell.still img { opacity:.45; }
+  #strip .cell span { position:absolute; left:4px; bottom:2px; font-size:10px; color:#fff; text-shadow:0 1px 2px #000; white-space:nowrap; }
+  #wave { margin-bottom:4px; }
   #toast { position:fixed; bottom:18px; left:50%; transform:translateX(-50%); background:var(--accent); color:#fff; padding:10px 16px; border-radius:8px; max-width:80vw; display:none; z-index:9; }
 </style>
 </head>
@@ -86,7 +95,9 @@
       <span class="hint">Segments run back to back. Set each one's length with its own slider.</span>
       <button id="split">Fill the song with segments</button>
     </div>
+    <div id="monitor"><img id="pi" alt=""><video id="pv" muted playsinline preload="auto"></video><div id="pl" class="label"></div></div>
     <canvas id="wave" width="1200" height="110"></canvas>
+    <div id="strip" title="Picked clips. Click a segment to jump to it."></div>
     <audio id="audio" controls preload="auto"></audio>
   </section>
 
@@ -196,6 +207,50 @@ function drawWave() {
   if (peaks) { g.fillStyle = '#c9cfdf'; for (let i = 0; i < W; i++) { const h = peaks[Math.floor(i / W * peaks.length)] * (H - 22); g.fillRect(i, H / 2 + 6 - h / 2, 1, Math.max(1, h)); } }
   if (dur) { g.fillStyle = '#fff'; g.fillRect($('audio').currentTime / dur * W, 0, 1, H); }
 }
+
+/* ---------- picked clips: timeline strip and synced preview ---------- */
+function clipUrl(seg) {
+  const r = (seg.results || []).find(x => x.id === seg.chosen && x.status === 'done');
+  const f = r && (r.files || [])[0];
+  return f ? view(f.filename, f.type, f.subfolder) : null;
+}
+
+function renderStrip() {
+  const strip = $('strip'), dur = P.song?.duration || (P.segments.length ? P.segments[P.segments.length - 1].end : 0);
+  strip.innerHTML = '';
+  if (!dur) return;
+  P.segments.forEach((s, i) => {
+    const url = clipUrl(s), still = url ? null : beginOf(i).image;
+    const cell = document.createElement('div'); cell.className = 'cell' + (url ? '' : ' still');
+    cell.style.left = (s.start / dur * 100) + '%'; cell.style.width = ((s.end - s.start) / dur * 100) + '%';
+    cell.style.borderColor = COLORS[i % COLORS.length];
+    cell.innerHTML = (url ? `<video src="${url}#t=0.1" muted preload="metadata"></video>` : (still ? `<img src="${view(still)}" alt="">` : '')) +
+      `<span>${url ? '★ ' : ''}${esc(s.name || 'Segment ' + (i + 1))}</span>`;
+    cell.onclick = () => { $('audio').currentTime = s.start; syncPreview(); drawWave(); };
+    strip.appendChild(cell);
+  });
+}
+
+let pvKey = null;
+function syncPreview() {
+  const a = $('audio'), t = a.currentTime, v = $('pv'), im = $('pi'), lab = $('pl');
+  const i = P.segments.findIndex(s => t >= s.start && t < s.end), seg = P.segments[i];
+  if (!seg) { if (pvKey !== 'none') { pvKey = 'none'; v.pause(); v.style.display = im.style.display = 'none'; lab.textContent = P.segments.length ? 'No segment at this point in the song' : ''; } return; }
+  const url = clipUrl(seg), still = url ? null : beginOf(i).image, key = seg.id + '|' + (url || still || '');
+  if (key !== pvKey) {
+    pvKey = key;
+    if (url) { v.src = url; v.style.display = 'block'; im.style.display = 'none'; }
+    else { v.pause(); v.removeAttribute('src'); v.style.display = 'none'; im.style.display = still ? 'block' : 'none'; if (still) im.src = view(still); }
+  }
+  lab.textContent = (seg.name || 'Segment ' + (i + 1)) + (url ? '' : ' · no clip picked yet');
+  if (url) {
+    const target = t - seg.start;
+    if (v.readyState >= 1 && Math.abs(v.currentTime - target) > 0.35) { try { v.currentTime = Math.min(target, (v.duration || target) - 0.05); } catch (e) {} }
+    if (!a.paused && v.paused) v.play().catch(() => {});
+    if (a.paused && !v.paused) v.pause();
+  }
+}
+setInterval(syncPreview, 200);
 
 $('wave').onclick = e => { const dur = P.song?.duration; if (!dur) return; const r = e.target.getBoundingClientRect(); $('audio').currentTime = (e.clientX - r.left) / r.width * dur; drawWave(); };
 $('audio').ontimeupdate = () => { if (stopAt !== null && $('audio').currentTime >= stopAt) { $('audio').pause(); stopAt = null; } drawWave(); };
@@ -328,7 +383,9 @@ function renderSegments() {
           <div class="row" style="margin-top:8px">
             <div><label>Runs</label><input class="num runs" type="number" min="1" max="8" value="${seg.runs}"></div>
             <button class="primary go">Render</button>
-            <span class="hint">${seg.type === 'singing' ? 'Singing: the mouth follows this part of the song.' : 'Story: animates the begin shot.'}${begin.inherited ? ' Begins from the previous segment\'s end shot.' : ''}</span>
+            <span class="hint">${seg.type === 'singing'
+              ? 'Singing: the mouth follows this part of the song.' + (seg.end_image ? ' A singing clip cannot steer toward an end shot; it is used as the next segment\'s begin shot.' : '')
+              : (seg.end_image ? 'Story: moves from the begin shot to the end shot.' : 'Story: animates the begin shot.')}${begin.inherited ? ' Begins from the previous segment\'s end shot.' : ''}</span>
           </div>
         </div>
       </div>
@@ -358,7 +415,7 @@ function renderSegments() {
     (seg.results || []).slice().reverse().forEach(r => res.appendChild(resultCard(seg, r)));
     wrap.appendChild(el);
   });
-  drawWave(); updateAllHint(); paintProgress();
+  drawWave(); updateAllHint(); paintProgress(); renderStrip(); pvKey = null;
 }
 
 function refreshTimes() {
@@ -396,7 +453,7 @@ function paintProgress() {
     const bar = $('pb-' + r.id), txt = $('pt-' + r.id); if (!bar) continue;
     const p = prog[pid], passes = r.passes || 1, frac = Math.min(1, (p.pass * p.max + p.value) / (passes * p.max));
     bar.style.width = (frac * 100).toFixed(1) + '%';
-    txt.textContent = (passes > 1 ? `Pass ${Math.min(p.pass + 1, passes)} of ${passes} · ` : '') + `step ${p.value} of ${p.max} · ${Math.round(frac * 100)}%`;
+    txt.textContent = (passes > 1 ? `Part ${Math.min(p.pass + 1, passes)} of ${passes} · ` : '') + `step ${p.value} of ${p.max} · ${Math.round(frac * 100)}%`;
   }
 }
 
