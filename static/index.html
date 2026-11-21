@@ -1,0 +1,361 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>PGX Storyboard</title>
+<style>
+  :root { --bg:#12141a; --panel:#1b1e27; --panel2:#232733; --line:#323747; --text:#e8eaf0; --dim:#9aa1b5;
+          --accent:#e0483e; --accent2:#4aa3ff; --ok:#3fbf7f; --warn:#e0a93e; }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--bg); color:var(--text); font:14px/1.45 system-ui,Segoe UI,Roboto,sans-serif; }
+  header { display:flex; align-items:center; gap:14px; padding:12px 20px; border-bottom:1px solid var(--line); position:sticky; top:0; background:var(--bg); z-index:5; }
+  header h1 { font-size:17px; margin:0; letter-spacing:.3px; }
+  .pill { font-size:12px; padding:3px 10px; border-radius:99px; background:var(--panel2); color:var(--dim); }
+  .pill.ok { color:var(--ok); } .pill.bad { color:var(--accent); }
+  .spacer { flex:1; }
+  main { max-width:1280px; margin:0 auto; padding:18px 20px 80px; display:grid; gap:18px; }
+  section { background:var(--panel); border:1px solid var(--line); border-radius:10px; padding:16px; }
+  h2 { font-size:14px; margin:0 0 12px; text-transform:uppercase; letter-spacing:.8px; color:var(--dim); }
+  button, .btn { background:var(--panel2); color:var(--text); border:1px solid var(--line); border-radius:7px; padding:7px 12px; font:inherit; cursor:pointer; }
+  button:hover, .btn:hover { border-color:var(--accent2); }
+  button.primary { background:var(--accent); border-color:var(--accent); font-weight:600; }
+  button.ghost { background:none; border-color:transparent; color:var(--dim); padding:4px 8px; }
+  button:disabled { opacity:.5; cursor:default; }
+  input, select, textarea { background:var(--bg); color:var(--text); border:1px solid var(--line); border-radius:7px; padding:7px 9px; font:inherit; }
+  input:focus, select:focus, textarea:focus { outline:none; border-color:var(--accent2); }
+  textarea { width:100%; min-height:64px; resize:vertical; }
+  label { display:block; font-size:12px; color:var(--dim); margin-bottom:4px; }
+  .row { display:flex; gap:12px; align-items:flex-end; flex-wrap:wrap; }
+  .hint { color:var(--dim); font-size:12px; }
+  .warn { color:var(--warn); font-size:12px; }
+  #wave { width:100%; height:110px; display:block; background:var(--bg); border:1px solid var(--line); border-radius:8px; cursor:pointer; margin:10px 0; }
+  audio { width:100%; height:34px; }
+  .actors { display:flex; gap:12px; flex-wrap:wrap; }
+  .actor { width:132px; background:var(--panel2); border:1px solid var(--line); border-radius:8px; overflow:hidden; }
+  .actor img { width:100%; height:78px; object-fit:cover; display:block; }
+  .actor input { width:100%; border:none; border-radius:0; background:none; font-size:12px; padding:5px 7px; }
+  .actor .del { float:right; }
+  .seg { background:var(--panel2); border:1px solid var(--line); border-radius:10px; padding:14px; margin-bottom:14px; }
+  .seg-head { display:flex; gap:10px; align-items:flex-end; flex-wrap:wrap; margin-bottom:12px; }
+  .seg-head .name { flex:1; min-width:180px; font-weight:600; }
+  .num { width:84px; }
+  .swatch { width:10px; align-self:stretch; border-radius:5px; }
+  .seg-body { display:grid; grid-template-columns:150px 150px 1fr; gap:14px; }
+  @media (max-width:800px) { .seg-body { grid-template-columns:1fr 1fr; } .seg-body .promptcol { grid-column:1 / -1; } }
+  .shot { border:1px dashed var(--line); border-radius:8px; padding:6px; text-align:center; }
+  .shot img { width:100%; height:78px; object-fit:cover; border-radius:5px; display:block; margin-bottom:6px; background:var(--bg); }
+  .shot .empty { height:78px; display:flex; align-items:center; justify-content:center; color:var(--dim); font-size:12px; background:var(--bg); border-radius:5px; margin-bottom:6px; }
+  .shot select { width:100%; font-size:12px; padding:4px; }
+  .toggle { display:inline-flex; border:1px solid var(--line); border-radius:7px; overflow:hidden; }
+  .toggle button { border:none; border-radius:0; background:none; color:var(--dim); }
+  .toggle button.on { background:var(--accent2); color:#08131f; font-weight:600; }
+  .results { display:flex; gap:12px; flex-wrap:wrap; margin-top:14px; }
+  .result { width:270px; background:var(--bg); border:1px solid var(--line); border-radius:8px; overflow:hidden; }
+  .result.chosen { border-color:var(--ok); box-shadow:0 0 0 1px var(--ok); }
+  .result video { width:100%; display:block; background:#000; aspect-ratio:832/480; }
+  .result .wait { aspect-ratio:832/480; display:flex; align-items:center; justify-content:center; color:var(--dim); text-align:center; padding:10px; font-size:12px; }
+  .result .bar { display:flex; align-items:center; gap:6px; padding:5px 8px; font-size:12px; color:var(--dim); }
+  .err { color:var(--accent); }
+  #toast { position:fixed; bottom:18px; left:50%; transform:translateX(-50%); background:var(--accent); color:#fff; padding:10px 16px; border-radius:8px; max-width:80vw; display:none; z-index:9; }
+</style>
+</head>
+<body>
+<header>
+  <h1>PGX Storyboard</h1>
+  <span id="health" class="pill">checking PGX…</span>
+  <span class="spacer"></span>
+  <span id="saved" class="pill">loaded</span>
+  <button id="cancel" class="ghost" title="Stop the running job and clear the queue">Stop all renders</button>
+</header>
+
+<main>
+  <section>
+    <h2>Song</h2>
+    <div class="row">
+      <label class="btn">Load song<input id="songFile" type="file" accept="audio/*,video/mp4" hidden></label>
+      <span id="songName" class="hint">No song loaded.</span>
+      <span class="spacer"></span>
+      <div><label>Segment length</label>
+        <select id="splitLen"><option>5</option><option>6</option><option selected>8</option><option>10</option><option>12</option><option>15</option></select></div>
+      <button id="split">Split song into segments</button>
+    </div>
+    <canvas id="wave" width="1200" height="110"></canvas>
+    <audio id="audio" controls preload="auto"></audio>
+  </section>
+
+  <section>
+    <h2>Actors and stills</h2>
+    <div class="row" style="margin-bottom:12px">
+      <label class="btn">Add still<input id="actorFile" type="file" accept="image/*" multiple hidden></label>
+      <span class="hint">Saved stills can be used as the begin or end shot of any segment.</span>
+    </div>
+    <div id="actors" class="actors"></div>
+  </section>
+
+  <section>
+    <div class="row" style="margin-bottom:12px">
+      <h2 style="margin:0">Segments</h2><span class="spacer"></span>
+      <button id="addSeg">Add segment</button>
+    </div>
+    <div id="segments"></div>
+  </section>
+</main>
+<div id="toast"></div>
+
+<script>
+const COLORS = ['#e0483e','#4aa3ff','#3fbf7f','#e0a93e','#b07cff','#ff7ab8','#39c5c8','#ff9a4a'];
+let P = { song:null, settings:{}, actors:[], segments:[] };
+let peaks = null, saveTimer = null, stopAt = null;
+const $ = id => document.getElementById(id);
+const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const view = (f, type='input', sub='') => '/comfy/view?filename=' + encodeURIComponent(f) + '&type=' + type + '&subfolder=' + encodeURIComponent(sub);
+const uid = () => Math.random().toString(16).slice(2, 10);
+const fmt = t => { t = Math.max(0, t || 0); return Math.floor(t / 60) + ':' + (t % 60).toFixed(1).padStart(4, '0'); };
+
+function toast(msg) { const t = $('toast'); t.textContent = msg; t.style.display = 'block'; clearTimeout(t._h); t._h = setTimeout(() => t.style.display = 'none', 7000); }
+
+async function api(path, opts) {
+  const r = await fetch(path, opts);
+  const j = await r.json().catch(() => ({ error: 'Bad reply from server' }));
+  if (!r.ok || j.error) throw new Error(j.error || ('Request failed: ' + r.status));
+  return j;
+}
+
+async function upload(file) {
+  const fd = new FormData();
+  fd.append('image', file, file.name);
+  const j = await api('/api/upload', { method:'POST', body: fd });
+  return j.name;
+}
+
+function dirty() {
+  $('saved').textContent = 'saving…';
+  clearTimeout(saveTimer);
+  saveTimer = setTimeout(save, 600);
+}
+
+async function save() {
+  try {
+    const body = JSON.stringify({ song:P.song, settings:P.settings, actors:P.actors,
+      segments: P.segments.map(({results, ...rest}) => rest) });
+    const fresh = await api('/api/project', { method:'PUT', headers:{'Content-Type':'application/json'}, body });
+    mergeResults(fresh);
+    $('saved').textContent = 'saved';
+  } catch (e) { $('saved').textContent = 'not saved'; toast(e.message); }
+}
+
+function mergeResults(fresh) {
+  const byId = Object.fromEntries(fresh.segments.map(s => [s.id, s]));
+  let changed = false;
+  for (const s of P.segments) {
+    const f = byId[s.id]; if (!f) continue;
+    if (JSON.stringify(s.results || []) !== JSON.stringify(f.results || [])) { s.results = f.results || []; changed = true; }
+  }
+  return changed;
+}
+
+/* ---------- song and waveform ---------- */
+async function loadSongAudio() {
+  if (!P.song) { $('songName').textContent = 'No song loaded.'; return; }
+  $('songName').textContent = P.song.filename + (P.song.duration ? '  ·  ' + fmt(P.song.duration) : '');
+  const url = view(P.song.filename);
+  $('audio').src = url;
+  try {
+    const buf = await (await fetch(url)).arrayBuffer();
+    const ctx = new (window.AudioContext || window.webkitAudioContext)();
+    const audio = await ctx.decodeAudioData(buf);
+    ctx.close();
+    const data = audio.getChannelData(0), n = 1200, step = Math.floor(data.length / n) || 1;
+    peaks = new Float32Array(n);
+    for (let i = 0; i < n; i++) { let m = 0; for (let j = i * step; j < (i + 1) * step && j < data.length; j += 16) m = Math.max(m, Math.abs(data[j])); peaks[i] = m; }
+    if (!P.song.duration || Math.abs(P.song.duration - audio.duration) > 0.05) { P.song.duration = audio.duration; dirty(); }
+    $('songName').textContent = P.song.filename + '  ·  ' + fmt(P.song.duration);
+  } catch (e) { peaks = null; toast('Could not read the song for the waveform: ' + e.message); }
+  drawWave();
+}
+
+function drawWave() {
+  const c = $('wave'), g = c.getContext('2d'), W = c.width, H = c.height, dur = P.song?.duration || 0;
+  g.clearRect(0, 0, W, H);
+  if (dur) P.segments.forEach((s, i) => {
+    g.fillStyle = COLORS[i % COLORS.length] + '44';
+    g.fillRect(s.start / dur * W, 0, Math.max(1, (s.end - s.start) / dur * W), H);
+    g.fillStyle = COLORS[i % COLORS.length]; g.fillRect(s.start / dur * W, 0, 2, H);
+    g.font = '11px system-ui'; g.fillText(s.name || ('Segment ' + (i + 1)), s.start / dur * W + 5, 13);
+  });
+  if (peaks) { g.fillStyle = '#c9cfdf'; for (let i = 0; i < W; i++) { const h = peaks[Math.floor(i / W * peaks.length)] * (H - 22); g.fillRect(i, H / 2 + 6 - h / 2, 1, Math.max(1, h)); } }
+  if (dur) { g.fillStyle = '#fff'; g.fillRect($('audio').currentTime / dur * W, 0, 1, H); }
+}
+
+$('wave').onclick = e => { const dur = P.song?.duration; if (!dur) return; const r = e.target.getBoundingClientRect(); $('audio').currentTime = (e.clientX - r.left) / r.width * dur; drawWave(); };
+$('audio').ontimeupdate = () => { if (stopAt !== null && $('audio').currentTime >= stopAt) { $('audio').pause(); stopAt = null; } drawWave(); };
+
+$('songFile').onchange = async e => {
+  const f = e.target.files[0]; if (!f) return;
+  try { $('songName').textContent = 'Uploading…'; P.song = { filename: await upload(f), duration: 0 }; await save(); await loadSongAudio(); }
+  catch (err) { toast(err.message); }
+  e.target.value = '';
+};
+
+$('split').onclick = () => {
+  const dur = P.song?.duration; if (!dur) return toast('Load a song first.');
+  if (P.segments.length && !confirm('Replace the current segments with an even split? Their settings and results will be removed.')) return;
+  const len = +$('splitLen').value, list = [];
+  for (let t = 0, i = 1; t < dur - 0.5; t += len, i++) {
+    let end = Math.min(dur, t + len);
+    if (dur - end < 5 && dur - t <= 15) end = dur;              // fold a short tail into the last segment
+    list.push(newSegment(t, end, 'Segment ' + i));
+    if (end === dur) break;
+  }
+  P.segments = list; render(); dirty();
+};
+
+/* ---------- actors ---------- */
+$('actorFile').onchange = async e => {
+  for (const f of e.target.files) {
+    try { const name = await upload(f); P.actors.push({ id: uid(), name: f.name.replace(/\.[^.]+$/, ''), image: name }); }
+    catch (err) { toast(err.message); }
+  }
+  e.target.value = ''; render(); dirty();
+};
+
+function renderActors() {
+  $('actors').innerHTML = P.actors.length ? '' : '<span class="hint">No stills yet.</span>';
+  P.actors.forEach(a => {
+    const d = document.createElement('div'); d.className = 'actor';
+    d.innerHTML = `<img src="${view(a.image)}" alt=""><button class="ghost del" title="Remove">✕</button><input value="${esc(a.name)}">`;
+    d.querySelector('input').oninput = ev => { a.name = ev.target.value; dirty(); };
+    d.querySelector('input').onchange = () => renderSegments();
+    d.querySelector('.del').onclick = () => { P.actors = P.actors.filter(x => x !== a); render(); dirty(); };
+    $('actors').appendChild(d);
+  });
+}
+
+/* ---------- segments ---------- */
+function newSegment(start, end, name) {
+  return { id: uid(), name, start: +start.toFixed(2), end: +end.toFixed(2), type:'story', begin_image:null, end_image:null, prompt:'', runs:2, chosen:null, results:[] };
+}
+
+$('addSeg').onclick = () => {
+  const last = P.segments[P.segments.length - 1], start = last ? last.end : 0;
+  const end = Math.min(P.song?.duration || start + 8, start + 8);
+  P.segments.push(newSegment(start, Math.max(end, start + 5), 'Segment ' + (P.segments.length + 1)));
+  render(); dirty();
+};
+
+function shotBox(seg, key, label) {
+  const img = seg[key];
+  const opts = P.actors.map(a => `<option value="${esc(a.image)}" ${a.image === img ? 'selected' : ''}>${esc(a.name)}</option>`).join('');
+  const box = document.createElement('div'); box.className = 'shot';
+  box.innerHTML = `<label>${label}</label>` + (img ? `<img src="${view(img)}" alt="">` : `<div class="empty">none</div>`) +
+    `<select><option value="">${img ? 'Clear' : 'Choose a still…'}</option>${opts}<option value="__upload">Upload new…</option></select><input type="file" accept="image/*" hidden>`;
+  const sel = box.querySelector('select'), file = box.querySelector('input');
+  sel.onchange = () => { if (sel.value === '__upload') return file.click(); seg[key] = sel.value || null; renderSegments(); dirty(); };
+  file.onchange = async () => {
+    const f = file.files[0]; if (!f) return;
+    try { const name = await upload(f); P.actors.push({ id: uid(), name: f.name.replace(/\.[^.]+$/, ''), image: name }); seg[key] = name; render(); dirty(); }
+    catch (err) { toast(err.message); }
+  };
+  return box;
+}
+
+function resultCard(seg, r) {
+  const d = document.createElement('div'); d.className = 'result' + (seg.chosen === r.id ? ' chosen' : '');
+  const file = (r.files || [])[0];
+  let media;
+  if (r.status === 'done' && file) media = `<video src="${view(file.filename, file.type, file.subfolder)}" controls loop preload="metadata"></video>`;
+  else if (r.status === 'error') media = `<div class="wait err">${esc(r.error || 'Failed')}</div>`;
+  else media = `<div class="wait">${r.status === 'running' ? 'Rendering on the PGX…' : 'Waiting in the queue…'}</div>`;
+  d.innerHTML = media + `<div class="bar"><span>${esc(r.engine || '')} · seed ${r.seed}</span><span class="spacer"></span>` +
+    (r.status === 'done' ? `<button class="ghost pick">${seg.chosen === r.id ? '★ picked' : '☆ pick'}</button>` : '') + `<button class="ghost del" title="Remove">✕</button></div>`;
+  const pick = d.querySelector('.pick');
+  if (pick) pick.onclick = () => { seg.chosen = seg.chosen === r.id ? null : r.id; renderSegments(); dirty(); };
+  d.querySelector('.del').onclick = async () => {
+    try { mergeResults(await api('/api/result/delete', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ segment_id: seg.id, result_id: r.id }) })); renderSegments(); }
+    catch (err) { toast(err.message); }
+  };
+  return d;
+}
+
+function renderSegments() {
+  const wrap = $('segments'); wrap.innerHTML = P.segments.length ? '' : '<span class="hint">Load a song and split it, or add a segment.</span>';
+  P.segments.forEach((seg, i) => {
+    const len = seg.end - seg.start, off = len < 5 || len > 15;
+    const el = document.createElement('div'); el.className = 'seg';
+    el.innerHTML = `
+      <div class="seg-head">
+        <div class="swatch" style="background:${COLORS[i % COLORS.length]}"></div>
+        <div style="flex:1;min-width:180px"><label>Segment name</label><input class="name" style="width:100%" value="${esc(seg.name)}"></div>
+        <div><label>Start (s)</label><input class="num start" type="number" step="0.1" min="0" value="${seg.start}"></div>
+        <div><label>End (s)</label><input class="num end" type="number" step="0.1" min="0" value="${seg.end}"></div>
+        <div><label>Length</label><div class="${off ? 'warn' : 'hint'}" style="padding:8px 0">${len.toFixed(1)} s${off ? ' (aim for 5–15)' : ''}</div></div>
+        <div><label>Shot type</label><div class="toggle"><button class="t-story ${seg.type !== 'singing' ? 'on' : ''}">Story</button><button class="t-sing ${seg.type === 'singing' ? 'on' : ''}">Singing</button></div></div>
+        <button class="play">▶ Play</button>
+        <button class="ghost delseg" title="Delete segment">✕</button>
+      </div>
+      <div class="seg-body">
+        <div class="b"></div><div class="e"></div>
+        <div class="promptcol">
+          <label>Video prompt</label><textarea class="prompt" placeholder="What happens in this shot: action, camera move, mood">${esc(seg.prompt)}</textarea>
+          <div class="row" style="margin-top:8px">
+            <div><label>Runs</label><input class="num runs" type="number" min="1" max="8" value="${seg.runs}"></div>
+            <button class="primary go">Render</button>
+            <span class="hint">${seg.type === 'singing' ? 'Singing: mouth follows this part of the song. Uses the begin shot.' : 'Story: animates the begin shot.'} The end shot is saved for the start-and-end mode that comes next.</span>
+          </div>
+        </div>
+      </div>
+      <div class="results"></div>`;
+    el.querySelector('.b').appendChild(shotBox(seg, 'begin_image', 'Begin shot'));
+    el.querySelector('.e').appendChild(shotBox(seg, 'end_image', 'End shot'));
+    const bind = (sel, key, num) => el.querySelector(sel).oninput = ev => { seg[key] = num ? +ev.target.value : ev.target.value; dirty(); drawWave(); };
+    bind('.name', 'name'); bind('.prompt', 'prompt'); bind('.runs', 'runs', true); bind('.start', 'start', true); bind('.end', 'end', true);
+    el.querySelector('.start').onchange = el.querySelector('.end').onchange = () => renderSegments();
+    el.querySelector('.t-story').onclick = () => { seg.type = 'story'; renderSegments(); dirty(); };
+    el.querySelector('.t-sing').onclick = () => { seg.type = 'singing'; renderSegments(); dirty(); };
+    el.querySelector('.play').onclick = () => { if (!P.song) return toast('Load a song first.'); const a = $('audio'); a.currentTime = seg.start; stopAt = seg.end; a.play(); };
+    el.querySelector('.delseg').onclick = () => { if (confirm('Delete "' + (seg.name || 'this segment') + '" and its results?')) { P.segments = P.segments.filter(s => s !== seg); render(); dirty(); } };
+    el.querySelector('.go').onclick = async ev => {
+      const btn = ev.target; btn.disabled = true; btn.textContent = 'Sending…';
+      try {
+        clearTimeout(saveTimer); await save();
+        await api('/api/render', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ segment_id: seg.id, runs: seg.runs }) });
+        await poll(true);
+      } catch (err) { toast(err.message); }
+      btn.disabled = false; btn.textContent = 'Render';
+    };
+    const res = el.querySelector('.results');
+    (seg.results || []).slice().reverse().forEach(r => res.appendChild(resultCard(seg, r)));
+    wrap.appendChild(el);
+  });
+  drawWave();
+}
+
+function render() { renderActors(); renderSegments(); }
+
+/* ---------- polling ---------- */
+async function poll(force) {
+  const pending = P.segments.some(s => (s.results || []).some(r => r.status === 'queued' || r.status === 'running'));
+  if (!pending && !force) return;
+  try { if (mergeResults(await api('/api/project'))) renderSegments(); } catch (e) { /* PGX busy; try again next tick */ }
+}
+
+async function health() {
+  try {
+    const h = await api('/api/health'), el = $('health');
+    if (h.comfy) { el.className = 'pill ok'; el.textContent = 'PGX ready · ' + h.running + ' rendering, ' + h.waiting + ' waiting'; }
+    else { el.className = 'pill bad'; el.textContent = 'ComfyUI not reachable'; }
+  } catch (e) { $('health').className = 'pill bad'; $('health').textContent = 'Storyboard server not reachable'; }
+}
+
+$('cancel').onclick = async () => { if (!confirm('Stop the running job and clear everything waiting?')) return; try { await api('/api/cancel', { method:'POST', body:'{}' }); health(); } catch (e) { toast(e.message); } };
+
+(async function start() {
+  try { P = await api('/api/project'); } catch (e) { toast(e.message); }
+  P.segments ||= []; P.actors ||= []; P.settings ||= {};
+  render(); loadSongAudio(); health();
+  setInterval(poll, 4000); setInterval(health, 6000);
+})();
+</script>
+</body>
+</html>
