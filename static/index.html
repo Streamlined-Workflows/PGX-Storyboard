@@ -116,7 +116,10 @@
   #viewer.on { display:flex; }
   #viewer .vbar { display:flex; gap:8px; align-items:center; padding:10px 14px; border-bottom:1px solid var(--line); }
   #viewer .vstage { flex:1; overflow:hidden; position:relative; cursor:grab; touch-action:none; }
-  #viewer .vstage.drag { cursor:grabbing; }
+  #viewer .vstage.drag { cursor:grabbing; } #viewer .vstage.paint { cursor:crosshair; }
+  #viewer .vstage canvas { position:absolute; left:0; top:0; transform-origin:0 0; opacity:.5; pointer-events:none; }
+  #viewer .fixbar { display:none; gap:8px; align-items:center; padding:8px 14px; border-bottom:1px solid var(--line); background:var(--panel); flex-wrap:wrap; }
+  #viewer.fixing .fixbar { display:flex; } #viewer .fixbar input[type=text] { flex:1; min-width:260px; }
   #viewer .vstage img { position:absolute; left:0; top:0; transform-origin:0 0; max-width:none; user-select:none; -webkit-user-drag:none; image-rendering:auto; }
   #v-assets .card img, .keyframe img { cursor:zoom-in; }
   .step { counter-increment:step; }
@@ -303,8 +306,15 @@
 <div id="viewer">
   <div class="vbar"><b id="vName"></b><span class="hint" id="vInfo"></span><span class="spacer"></span>
     <button class="small" id="vOut" title="Zoom out (-)">−</button><span id="vZoom" style="min-width:52px;text-align:center;font-variant-numeric:tabular-nums"></span><button class="small" id="vIn" title="Zoom in (+)">+</button>
-    <button class="small" id="vFit" title="Fit the whole picture (0)">Fit</button><button class="small" id="vFull" title="Actual pixels (1)">100%</button><button class="small" id="vClose" title="Close (Esc)">✕ Close</button></div>
-  <div class="vstage" id="vStage"><img id="vImg" alt="" draggable="false"></div>
+    <button class="small" id="vFit" title="Fit the whole picture (0)">Fit</button><button class="small" id="vFull" title="Actual pixels (1)">100%</button><button class="small primary" id="vFix" title="Paint over a problem area and describe how it should look">Fix an area</button><button class="small" id="vClose" title="Close (Esc)">✕ Close</button></div>
+  <div class="fixbar">
+    <div class="toggle"><button id="fxPaint" class="on" title="Drag to mark the area to change">Paint</button><button id="fxErase" title="Drag to unmark">Erase</button><button id="fxMove" title="Drag to move the picture">Move</button></div>
+    <label style="margin:0">Brush</label><input type="range" id="fxSize" min="8" max="200" value="48" style="width:110px">
+    <button class="small" id="fxUndo">Undo</button><button class="small" id="fxClear">Clear</button>
+    <input type="text" id="fxText" placeholder="What the painted area should show, e.g. plain dark background and her shoulder armour, no hair">
+    <button class="primary" id="fxGo">Generate fix</button><span id="fxStatus" class="hint"></span>
+  </div>
+  <div class="vstage" id="vStage"><img id="vImg" alt="" draggable="false"><canvas id="vMask"></canvas></div>
 </div>
 <div id="toast"></div>
 
@@ -378,6 +388,7 @@ function mergeJobs(fresh) {
       if (!P.photos.some(ph => ph.image === j.image)) P.photos.push({ id: uid(), name: j.label || 'Shot', image: j.image });
     }
     const a = P.actors.find(x => x.id === j.actor_id);
+    if (j.kind === 'fix' && !a && !P.photos.some(ph => ph.image === j.image)) P.photos.push({ id: uid(), name: j.label || 'Fixed picture', image: j.image });
     if (a && !a.views.some(v => v.image === j.image)) a.views.push({ id: uid(), image: j.image, label: j.label });
     taken.push(j.id);
   }
@@ -1295,7 +1306,7 @@ setInterval(refreshSystem, 2000);
 
 /* ---------- picture viewer: zoom and pan ---------- */
 const V = { s: 1, x: 0, y: 0, fit: 1 };
-function vPaint() { $('vImg').style.transform = `translate(${V.x}px,${V.y}px) scale(${V.s})`; $('vZoom').textContent = Math.round(V.s * 100) + '%'; }
+function vPaint() { $('vMask').style.transform = $('vImg').style.transform = `translate(${V.x}px,${V.y}px) scale(${V.s})`; $('vZoom').textContent = Math.round(V.s * 100) + '%'; }
 function vZoomTo(scale, cx, cy) {                       /* keep the point under (cx, cy) where it is */
   const st = $('vStage').getBoundingClientRect(); cx ??= st.width / 2; cy ??= st.height / 2;
   const next = Math.max(V.fit * 0.5, Math.min(16, scale)), k = next / V.s;
@@ -1307,16 +1318,68 @@ function vFit() {
   V.x = (st.width - im.naturalWidth * V.s) / 2; V.y = (st.height - im.naturalHeight * V.s) / 2; vPaint();
 }
 function openViewer(src, name) {
+  FX.file = new URL(src, location.href).searchParams.get('filename'); FX.label = name || 'Picture'; fixMode(false);
+  $('vFix').style.display = FX.file && PID ? '' : 'none';
   $('vName').textContent = name || 'Picture'; $('vInfo').textContent = ''; $('vImg').style.visibility = 'hidden';
   $('vImg').onload = () => { $('vInfo').textContent = `${$('vImg').naturalWidth} × ${$('vImg').naturalHeight} · scroll to zoom, drag to move, double-click for 100%`; vFit(); $('vImg').style.visibility = ''; };
   $('viewer').classList.add('on'); $('vImg').src = src;
 }
 const closeViewer = () => $('viewer').classList.remove('on');
+
+/* ----- fix an area: paint a mask, describe the fix, FLUX.2 repaints only that part ----- */
+const FX = { file: null, label: '', mode: 'paint', undo: [] };
+function fixMode(on) {
+  $('viewer').classList.toggle('fixing', on); $('vFix').textContent = on ? 'Cancel fix' : 'Fix an area'; $('vFix').classList.toggle('primary', !on);
+  const c = $('vMask'), im = $('vImg'); FX.undo = []; $('fxStatus').textContent = ''; $('fxStatus').className = 'hint';
+  if (on) { c.width = im.naturalWidth; c.height = im.naturalHeight; fxSet('paint'); } else { c.width = c.height = 0; $('vStage').classList.remove('paint'); }
+  if ($('viewer').classList.contains('on')) vFit();
+}
+function fxSet(mode) { FX.mode = mode; ['Paint', 'Erase', 'Move'].forEach(m => $('fx' + m).classList.toggle('on', m.toLowerCase() === mode)); $('vStage').classList.toggle('paint', mode !== 'move'); }
+$('vFix').onclick = () => fixMode(!$('viewer').classList.contains('fixing'));
+$('fxPaint').onclick = () => fxSet('paint'); $('fxErase').onclick = () => fxSet('erase'); $('fxMove').onclick = () => fxSet('move');
+$('fxClear').onclick = () => { const c = $('vMask'), x = c.getContext('2d'); FX.undo.push(x.getImageData(0, 0, c.width, c.height)); x.clearRect(0, 0, c.width, c.height); };
+$('fxUndo').onclick = () => { const last = FX.undo.pop(); if (last) $('vMask').getContext('2d').putImageData(last, 0, 0); };
+function fxStroke(ev) {                                  /* returns true if this drag painted instead of moving the picture */
+  if (!$('viewer').classList.contains('fixing') || FX.mode === 'move') return false;
+  const stage = $('vStage'), c = $('vMask'), x = c.getContext('2d'), st = stage.getBoundingClientRect();
+  const at = e => [(e.clientX - st.left - V.x) / V.s, (e.clientY - st.top - V.y) / V.s];
+  FX.undo.push(x.getImageData(0, 0, c.width, c.height)); if (FX.undo.length > 12) FX.undo.shift();
+  $('fxStatus').textContent = '';
+  x.lineCap = x.lineJoin = 'round'; x.lineWidth = +$('fxSize').value / V.s; x.strokeStyle = x.fillStyle = '#ff2d55';
+  x.globalCompositeOperation = FX.mode === 'erase' ? 'destination-out' : 'source-over';
+  let [px, py] = at(ev); x.beginPath(); x.arc(px, py, x.lineWidth / 2, 0, 7); x.fill();
+  stage.setPointerCapture(ev.pointerId);
+  const move = e => { const [nx, ny] = at(e); x.beginPath(); x.moveTo(px, py); x.lineTo(nx, ny); x.stroke(); px = nx; py = ny; };
+  const up = () => { stage.removeEventListener('pointermove', move); stage.removeEventListener('pointerup', up); stage.removeEventListener('pointercancel', up); };
+  stage.addEventListener('pointermove', move); stage.addEventListener('pointerup', up); stage.addEventListener('pointercancel', up);
+  return true;
+}
+function fxMaskFile() {                                  /* white where painted, black elsewhere, with a soft edge so the repaint blends in */
+  const c = $('vMask'), solid = document.createElement('canvas'), out = document.createElement('canvas');
+  solid.width = out.width = c.width; solid.height = out.height = c.height;
+  const sx = solid.getContext('2d'); sx.drawImage(c, 0, 0); sx.globalCompositeOperation = 'source-in'; sx.fillStyle = '#fff'; sx.fillRect(0, 0, c.width, c.height);
+  const data = c.getContext('2d').getImageData(0, 0, c.width, c.height).data; let any = false;
+  for (let i = 3; i < data.length; i += 4 * 97) if (data[i] > 0) { any = true; break; }
+  if (!any) for (let i = 3; i < data.length; i += 4) if (data[i] > 0) { any = true; break; }
+  if (!any) return null;
+  const ox = out.getContext('2d'); ox.fillStyle = '#000'; ox.fillRect(0, 0, c.width, c.height); ox.filter = 'blur(6px)'; ox.drawImage(solid, 0, 0); ox.filter = 'none'; ox.drawImage(solid, 0, 0);
+  return new Promise(res => out.toBlob(b => res(new File([b], 'fixmask_' + uid() + '.png', { type: 'image/png' })), 'image/png'));
+}
+$('fxGo').onclick = () => busy($('fxGo'), $('fxStatus'), 'Sending to the PGX…', async () => {
+  if (!$('fxText').value.trim()) throw new Error('Describe what the painted area should look like.');
+  const file = await fxMaskFile(); if (!file) throw new Error('Paint over the area to fix first.');
+  const mask = await upload(file);
+  await save();
+  await post('/api/image/fix', { project: PID, image: FX.file, mask, prompt: $('fxText').value, width: $('vImg').naturalWidth, height: $('vImg').naturalHeight, label: FX.label.split(' · ').pop() });
+  closeViewer(); await poll(true); redrawClips();
+  toast('Fix queued. The new picture is added next to the original when it finishes; the original is kept.');
+});
 $('vClose').onclick = closeViewer; $('vFit').onclick = vFit; $('vFull').onclick = () => vZoomTo(1);
 $('vIn').onclick = () => vZoomTo(V.s * 1.4); $('vOut').onclick = () => vZoomTo(V.s / 1.4);
 $('vStage').addEventListener('wheel', ev => { ev.preventDefault(); const st = $('vStage').getBoundingClientRect(); vZoomTo(V.s * Math.exp(-ev.deltaY * 0.0015), ev.clientX - st.left, ev.clientY - st.top); }, { passive: false });
-$('vStage').addEventListener('dblclick', ev => { const st = $('vStage').getBoundingClientRect(); Math.abs(V.s - V.fit) < 0.01 ? vZoomTo(1, ev.clientX - st.left, ev.clientY - st.top) : vFit(); });
+$('vStage').addEventListener('dblclick', ev => { if ($('viewer').classList.contains('fixing') && FX.mode !== 'move') return; const st = $('vStage').getBoundingClientRect(); Math.abs(V.s - V.fit) < 0.01 ? vZoomTo(1, ev.clientX - st.left, ev.clientY - st.top) : vFit(); });
 $('vStage').addEventListener('pointerdown', ev => {
+  if (fxStroke(ev)) return;
   const stage = $('vStage'), from = { x: ev.clientX - V.x, y: ev.clientY - V.y }; stage.setPointerCapture(ev.pointerId); stage.classList.add('drag');
   const move = e => { V.x = e.clientX - from.x; V.y = e.clientY - from.y; vPaint(); };
   const up = () => { stage.classList.remove('drag'); stage.removeEventListener('pointermove', move); stage.removeEventListener('pointerup', up); stage.removeEventListener('pointercancel', up); };
@@ -1324,6 +1387,7 @@ $('vStage').addEventListener('pointerdown', ev => {
 });
 document.addEventListener('keydown', ev => {
   if (!$('viewer').classList.contains('on')) return;
+  if (ev.target.tagName === 'INPUT' && ev.target.type === 'text') { if (ev.key === 'Enter') $('fxGo').click(); if (ev.key !== 'Escape') return; }
   if (ev.key === 'Escape') closeViewer(); else if (ev.key === '+' || ev.key === '=') vZoomTo(V.s * 1.4); else if (ev.key === '-') vZoomTo(V.s / 1.4); else if (ev.key === '0') vFit(); else if (ev.key === '1') vZoomTo(1);
 });
 window.addEventListener('resize', () => { if ($('viewer').classList.contains('on')) vFit(); });

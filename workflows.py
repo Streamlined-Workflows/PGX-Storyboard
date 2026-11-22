@@ -221,6 +221,40 @@ def build_image(prompt, refs=(), seed=1, width=1248, height=720, prefix="storybo
     return g.nodes
 
 
+def build_fix(image, mask, prompt, seed=1, width=1248, height=720, prefix="storyboard/fix"):
+    """Repaint only the masked part of a picture with FLUX.2 (inpainting).
+
+    `mask` is an input image, white where the picture should change. The original is encoded and sampled with a noise
+    mask so only that area is regenerated; the whole original is also given as a reference so the new part matches the
+    character and style. The result is pasted back over the original through the same mask, so every pixel outside
+    the painted area is exactly what it was.
+    """
+    width, height = max(256, width // 16 * 16), max(256, height // 16 * 16)
+    g = Graph()
+    unet = g.add("UNETLoader", unet_name=MODELS["flux2"], weight_dtype="default")
+    model = g.add("LoraLoaderModelOnly", lora_name=MODELS["flux2_turbo"], strength_model=1.0, model=g.out(unet))
+    clip = g.add("CLIPLoader", clip_name=MODELS["flux2_text"], type="flux2", device="default")
+    vae = g.add("VAELoader", vae_name=MODELS["flux2_vae"])
+    picture = g.add("ImageScale", image=g.out(g.add("LoadImage", image=image)), upscale_method="lanczos", width=width, height=height, crop="center")
+    painted = g.add("ImageScale", image=g.out(g.add("LoadImage", image=mask)), upscale_method="bilinear", width=width, height=height, crop="center")
+    area = g.add("ImageToMask", image=g.out(painted), channel="red")
+    original = g.add("VAEEncode", pixels=g.out(picture), vae=g.out(vae))
+    text = g.add("CLIPTextEncode", clip=g.out(clip), text=prompt)
+    cond = g.out(g.add("FluxGuidance", conditioning=g.out(text), guidance=4.0))
+    cond = g.out(g.add("ReferenceLatent", conditioning=cond, latent=g.out(original)))
+    latent = g.add("SetLatentNoiseMask", samples=g.out(original), mask=g.out(area))
+    sigmas = g.add("Flux2Scheduler", steps=IMAGE_STEPS, width=width, height=height)
+    sampler = g.add("KSamplerSelect", sampler_name="euler")
+    noise = g.add("RandomNoise", noise_seed=seed)
+    guider = g.add("BasicGuider", model=g.out(model), conditioning=cond)
+    samp = g.add("SamplerCustomAdvanced", noise=g.out(noise), guider=g.out(guider), sampler=g.out(sampler),
+                 sigmas=g.out(sigmas), latent_image=g.out(latent))
+    dec = g.add("VAEDecode", samples=g.out(samp), vae=g.out(vae))
+    merged = g.add("ImageCompositeMasked", destination=g.out(picture), source=g.out(dec), x=0, y=0, resize_source=False, mask=g.out(area))
+    g.add("SaveImage", images=g.out(merged), filename_prefix=prefix)
+    return g.nodes
+
+
 def engine(seg):
     """Which engine renders this segment."""
     if seg.get("type") == "singing":

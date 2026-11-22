@@ -120,3 +120,7 @@ After a story is approved, step 4 (Cast) lets you tick which actors appear and w
 - Singing segments cannot have an end shot (the lip sync engine only takes a start image).
 
 In Full assist > Shots the language model also decides, for every segment after the first, whether it **continues** the previous shot or cuts to a **new scene** (place, subject or time changes, or the music turns sharply), with a one-line reason. New scenes get their own begin-frame description and image; continuing segments have their begin shot cleared. Each decision can be flipped by hand. **Render all** skips segments that would have to wait for a pick and lists them.
+
+## Fixing part of a picture
+
+Click a picture (Assets, Library > Images, Full assist key frames) to open the viewer, then **Fix an area**: paint over the problem, describe what should be there, and Generate fix. FLUX.2 repaints only the painted area (`workflows.build_fix`: noise-masked sampling with the original as reference, then pasted back through the mask). The result is saved as a new picture; the original is kept.

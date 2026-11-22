@@ -309,7 +309,7 @@ def refresh_statuses(pid):
                     actor = next((a for a in project.get("actors", []) if a.get("id") == res.get("actor_id")), None)
                     project["generated"].append({
                         "id": res["id"], "image": res["image"], "kind": res.get("kind"), "created": res["finished"], "seed": res.get("seed"),
-                        "actor_id": res.get("actor_id"), "segment_id": res.get("segment_id"),
+                        "actor_id": res.get("actor_id"), "segment_id": res.get("segment_id"), "source": res.get("source"), "fix": res.get("fix"),
                         "label": f"{actor.get('name') or 'Actor'} · {res.get('label')}" if actor else res.get("label") or "Picture"})
                 except (OSError, ValueError, KeyError) as e:
                     res.update(status="error", error=f"Could not save the generated image: {e}")
@@ -373,12 +373,34 @@ def actor_generate(pid, actor_id, refs=None, views=None, extra=""):
         return {"jobs": made}
 
 
-def queue_still(project, prompt, refs, stem, **fields):
-    """Queue one FLUX.2 image and record it on the project. Call with LOCK held."""
+def image_fix(pid, image, mask, text, width, height, label):
+    """Queue an inpaint: repaint the masked area of `image` as `text` describes. The original is kept."""
+    text = str(text or "").strip()[:800]
+    if not image or not mask:
+        raise ValueError("Paint over the area to fix first.")
+    if not text:
+        raise ValueError("Describe what the painted area should look like.")
+    with LOCK:
+        project = load_project(pid)
+        actor = next((a for a in project.get("actors", []) if any(v.get("image") == image for v in a.get("views", []))), None)
+        view = next((v for v in actor["views"] if v.get("image") == image), {}) if actor else {}
+        label = (view.get("label") or str(label or "Picture"))[:60].replace(" (fixed)", "") + " (fixed)"
+        prompt = (f"{text.rstrip('.')}. Only this part of the picture changes. It blends seamlessly with the rest of the image: "
+                  "the same character, art style, lighting and colours as the reference image, no visible seam, no text.")
+        threading.Thread(target=assist.unload, daemon=True).start()
+        graph = lambda seed, prefix: workflows.build_fix(image, mask, prompt, seed, int(width or 1248), int(height or 720), prefix)
+        stem = f"{workflows.safe_name((actor or {}).get('name') or 'picture')}_{workflows.safe_name(label)}"
+        return {"job": queue_still(project, prompt, [], stem, graph=graph, kind="fix", source=image, label=label,
+                                   actor_id=actor["id"] if actor else None, fix=text)}
+
+
+def queue_still(project, prompt, refs, stem, graph=None, **fields):
+    """Queue one FLUX.2 image and record it on the project. Call with LOCK held. `graph(seed, prefix)` overrides the standard graph."""
     rid = new_id()
     seed = random.randint(1, 2**31 - 1)
     stem = f"{stem}_{rid}"
-    graph = workflows.build_image(prompt, refs, seed, prefix=f"storyboard/{project['id']}/stills/{stem}")
+    prefix = f"storyboard/{project['id']}/stills/{stem}"
+    graph = graph(seed, prefix) if graph else workflows.build_image(prompt, refs, seed, prefix=prefix)
     reply = comfy_json("/prompt", {"prompt": graph, "client_id": "storyboard"})
     if reply.get("_http_error") or reply.get("node_errors") or not reply.get("prompt_id"):
         detail = json.dumps(reply.get("node_errors") or reply.get("error") or reply)
@@ -961,6 +983,9 @@ class Handler(BaseHTTPRequestHandler):
                 return self.send_json(actor_describe(pid, payload.get("actor_id")))
             if path == "/api/actor/generate":
                 return self.send_json(actor_generate(pid, payload.get("actor_id"), payload.get("refs"), payload.get("views"), payload.get("extra")))
+            if path == "/api/image/fix":
+                return self.send_json(image_fix(pid, payload.get("image"), payload.get("mask"), payload.get("prompt"),
+                                                payload.get("width"), payload.get("height"), payload.get("label")))
             if path == "/api/generated/remove":
                 return self.send_json(generated_remove(pid, payload.get("id")))
             if path == "/api/image_jobs/clear":
