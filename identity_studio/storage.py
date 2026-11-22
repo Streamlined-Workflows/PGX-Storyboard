@@ -114,7 +114,7 @@ class Store:
             kind, safe, removed = references.check(data)
             ref = {"id": schemas.new_id(), "name": references.display_name(filename), "kind": kind,
                    "bytes": len(safe), "use": references.USES[0] if kind == "svg" else references.USES[1],
-                   "note": "", "cleaned": removed, "added": time.time()}
+                   "note": "", "enabled": True, "flat": False, "cleaned": removed, "added": time.time()}
             os.makedirs(self.reference_dir(pid), exist_ok=True)
             path = os.path.join(self.reference_dir(pid), f"{ref['id']}.{kind}")     # the name on disk is ours, never the upload's
             with open(path + ".tmp", "wb") as f:
@@ -138,6 +138,91 @@ class Store:
             raise ValueError("That reference's file is missing.")
         return path, references.TYPES[ref["kind"]]
 
+    def save_reference_flat(self, pid, rid, data):
+        """Keep the flattened PNG the browser made of a reference (white behind any transparency).
+        This is the version the image model is given, because it cannot read SVG or transparency."""
+        with LOCK:
+            project = self.load(pid)
+            ref = self._reference(project, rid)
+            if references.sniff(data or b"") != "png" or len(data) > references.MAX_BYTES:
+                raise ValueError("The prepared picture must be a PNG.")
+            path = os.path.join(self.reference_dir(pid), f"{ref['id']}.flat.png")
+            with open(path + ".tmp", "wb") as f:
+                f.write(data)
+            os.replace(path + ".tmp", path)
+            ref["flat"] = True
+            self.save(project, touch=False)
+            return ref
+
+    def reference_for_model(self, pid, rid):
+        """-> (PNG-or-JPEG bytes to give the image model, True if nothing usable exists yet)."""
+        ref = self._reference(self.load(pid), rid)
+        flat = os.path.join(self.reference_dir(pid), f"{ref['id']}.flat.png")
+        path = flat if os.path.isfile(flat) else None
+        if path is None and ref["kind"] != "svg":
+            path = os.path.join(self.reference_dir(pid), f"{ref['id']}.{ref['kind']}")
+        if path is None or not os.path.isfile(path):
+            return b"", True
+        with open(path, "rb") as f:
+            return f.read(), False
+
+    # ---- concepts: generated pictures, kept in the project's own folder ----
+    def concept_dir(self, pid):
+        return os.path.join(self.asset_dir(pid), "concepts")
+
+    def _concept(self, project, cid):
+        for c in project["concepts"]:
+            if isinstance(c, dict) and c.get("id") == cid and schemas.valid_id(cid):
+                return c
+        raise ValueError("That concept no longer exists.")
+
+    def add_concept(self, pid, concept):
+        with LOCK:
+            project = self.load(pid)
+            concept = dict(concept, created=time.time())
+            project["concepts"].append(concept)
+            self.save(project)
+            return concept
+
+    def update_concept(self, pid, cid, **changes):
+        with LOCK:
+            project = self.load(pid)
+            concept = self._concept(project, cid)
+            concept.update(changes)
+            self.save(project, touch=False)
+            return concept
+
+    def save_concept_file(self, pid, cid, data):
+        with LOCK:
+            self._concept(self.load(pid), cid)
+            os.makedirs(self.concept_dir(pid), exist_ok=True)
+            path = os.path.join(self.concept_dir(pid), f"{cid}.png")
+            with open(path + ".tmp", "wb") as f:
+                f.write(data)
+            os.replace(path + ".tmp", path)
+
+    def concept_file(self, pid, cid):
+        self._concept(self.load(pid), cid)
+        path = os.path.join(self.concept_dir(pid), f"{cid}.png")
+        if not os.path.isfile(path):
+            raise ValueError("That concept has no picture yet.")
+        return path, "image/png"
+
+    def remove_concept(self, pid, cid):
+        """Take a concept off the project. Its picture goes to the trash folder."""
+        with LOCK:
+            project = self.load(pid)
+            concept = self._concept(project, cid)
+            project["concepts"].remove(concept)
+            if project.get("approved_concept_id") == cid:
+                project["approved_concept_id"] = None
+            path = os.path.join(self.concept_dir(pid), f"{cid}.png")
+            if os.path.isfile(path):
+                os.makedirs(self.trash, exist_ok=True)
+                os.replace(path, os.path.join(self.trash, f"{pid}-concept-{cid}.png"))
+            self.save(project)
+            return concept
+
     def update_reference(self, pid, rid, changes):
         with LOCK:
             project = self.load(pid)
@@ -146,6 +231,8 @@ class Store:
                 raise ValueError("Nothing to save.")
             if changes.get("use") in references.USES:
                 ref["use"] = changes["use"]
+            if isinstance(changes.get("enabled"), bool):
+                ref["enabled"] = changes["enabled"]
             if "note" in changes:
                 ref["note"] = str(changes["note"]).strip()[:500]
             if "name" in changes:
@@ -163,6 +250,9 @@ class Store:
             if schemas.valid_id(ref["id"]) and os.path.isfile(path):
                 os.makedirs(self.trash, exist_ok=True)
                 os.replace(path, os.path.join(self.trash, f"{pid}-ref-{ref['id']}.{ref['kind']}"))
+            flat = os.path.join(self.reference_dir(pid), f"{ref['id']}.flat.png")
+            if schemas.valid_id(ref["id"]) and os.path.isfile(flat):
+                os.remove(flat)                    # only a copy we made; the upload itself is in the trash
             self.save(project)
             return {"removed": rid}
 
@@ -174,6 +264,7 @@ class Store:
             copy["name"] = (source["name"] + " (copy)")[:schemas.NAME_MAX]
             copy["created"] = copy["updated"] = time.time()
             copy["exports"] = []                   # a copy has not been exported or approved
+            copy["concepts"] = [c for c in copy["concepts"] if isinstance(c, dict) and c.get("state") == "done"]   # unfinished ones belong to the original's jobs
             copy["approved_concept_id"] = None
             if os.path.isdir(self.asset_dir(pid)):
                 shutil.copytree(self.asset_dir(pid), self.asset_dir(copy["id"]))

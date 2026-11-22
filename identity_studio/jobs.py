@@ -19,7 +19,9 @@ import os
 import threading
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
+import uuid
 
 from . import schemas
 
@@ -73,6 +75,29 @@ class Comfy:
         """-> the finished job's record, or None while it has not finished."""
         return self._call("/history/" + prompt_id).get(prompt_id)
 
+    def upload(self, name, data):
+        """Put a picture in ComfyUI's input folder under `name`. -> the name ComfyUI stored it as."""
+        boundary = "----identity" + uuid.uuid4().hex
+        body = (f'--{boundary}\r\nContent-Disposition: form-data; name="overwrite"\r\n\r\ntrue\r\n'
+                f'--{boundary}\r\nContent-Disposition: form-data; name="image"; filename="{name}"\r\n'
+                f'Content-Type: image/png\r\n\r\n').encode() + data + f"\r\n--{boundary}--\r\n".encode()
+        req = urllib.request.Request(self.url + "/upload/image", data=body,
+                                     headers={"Content-Type": "multipart/form-data; boundary=" + boundary})
+        try:
+            with urllib.request.urlopen(req, timeout=60) as r:
+                return json.loads(r.read())["name"]
+        except (OSError, ValueError, KeyError) as e:
+            raise ValueError(f"ComfyUI did not accept the picture: {e}")
+
+    def view(self, file):
+        """-> the bytes of a picture a job left in ComfyUI's output folder."""
+        query = urllib.parse.urlencode({"filename": file["filename"], "subfolder": file.get("subfolder", ""), "type": file.get("type", "output")})
+        try:
+            with urllib.request.urlopen(self.url + "/view?" + query, timeout=60) as r:
+                return r.read()
+        except OSError as e:
+            raise ValueError(f"The finished picture could not be fetched from ComfyUI: {e}")
+
     def remove(self, prompt_id):
         self._call("/queue", {"delete": [prompt_id]})
 
@@ -91,6 +116,7 @@ class Jobs:
         self.comfy = comfy or Comfy()
         self.lock = threading.RLock()
         self.note = ""                # why the next job is waiting, in words for a person
+        self.on_change = None         # called with a job each time its state changes
         self._thread = None
         self._jobs = self._read()
 
@@ -115,6 +141,11 @@ class Jobs:
 
     def _set(self, job, state, **more):
         job.update(state=state, updated=time.time(), **more)
+        if self.on_change:
+            try:
+                self.on_change(_public(job))
+            except Exception as e:                      # a listener's trouble must not stall the queue
+                self.note = "A finished job could not be recorded: " + str(e)[:200]
 
     def _find(self, job_id):
         for j in self._jobs:
@@ -123,7 +154,7 @@ class Jobs:
         raise ValueError("That job no longer exists.")
 
     # ---- what callers use ----
-    def add(self, project_id, kind, label, graph):
+    def add(self, project_id, kind, label, graph, meta=None):
         """Queue a job. It goes to ComfyUI when ComfyUI is free. Called by module code, never by the browser."""
         if not schemas.valid_id(project_id):
             raise ValueError("That is not a valid identity project id.")
@@ -132,7 +163,7 @@ class Jobs:
         now = time.time()
         job = {"id": schemas.new_id(), "project_id": project_id, "kind": str(kind)[:40], "label": str(label)[:200],
                "graph": graph, "state": WAITING, "prompt_id": None, "created": now, "updated": now,
-               "outputs": [], "error": ""}
+               "outputs": [], "error": "", "meta": dict(meta or {})}
         with self.lock:
             self._jobs.append(job)
             self._write()

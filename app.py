@@ -1101,6 +1101,8 @@ class Handler(BaseHTTPRequestHandler):
 
 if __name__ == "__main__":
     migrate_legacy()
+    # Identity Studio draws with the same FLUX.2 graphs as the storyboard, so there is one configuration to keep.
+    identity_api.configure(build_image=workflows.build_image, build_fix=workflows.build_fix, before=assist.unload)
     identity_api.start()
     print(f"SWIFT Director on http://0.0.0.0:{PORT}  ->  ComfyUI at {COMFY}", flush=True)
     ThreadingHTTPServer(("0.0.0.0", PORT), Handler).serve_forever()

@@ -12,10 +12,12 @@ class Base(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
         self.store = Store(self.tmp.name)
+        api.configure()                           # no graph builders: generation is reported as not connected
         api.use_store(self.store)
 
     def tearDown(self):
         api.use_store(None)
+        api.configure()
         self.tmp.cleanup()
 
 
@@ -137,7 +139,7 @@ class ApiTests(Base):
 
     def test_info_says_what_is_not_built_yet(self):
         info = api.handle("GET", "/api/identity/info")
-        self.assertEqual(info["ready"], {"projects": True, "jobs": True, "generation": False, "references": True, "exports": False})
+        self.assertEqual(info["ready"], {"projects": True, "jobs": True, "generation": False, "fix": False, "references": True, "exports": False})
         self.assertIn("custom", info["styles"])
 
     def test_models_list_reports_install_state_honestly(self):

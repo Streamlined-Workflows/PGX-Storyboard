@@ -16,6 +16,8 @@ class FakeComfy:
         self.running, self.pending, self.done, self.log = [], [], {}, []
         self.down = False
         self.n = 0
+        self.uploads = {}
+        self.picture = b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x04\x00\x00\x00\x04\x00" + b"\x00" * 20
 
     def _up(self):
         if self.down:
@@ -37,6 +39,12 @@ class FakeComfy:
     def interrupt(self, pid):
         self._up(); self.log.append(("interrupt", pid))
         if pid in self.running: self.running.remove(pid)
+
+    def upload(self, name, data):
+        self._up(); self.uploads[name] = data; self.log.append(("upload", name)); return name
+
+    def view(self, file):
+        return self.picture
 
     # helpers for the tests
     def begin(self, pid): self.pending.remove(pid); self.running.append(pid)

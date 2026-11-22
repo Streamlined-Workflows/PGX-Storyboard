@@ -1450,9 +1450,11 @@ function vFit() {
   V.fit = V.s = Math.min(st.width / im.naturalWidth, st.height / im.naturalHeight, 1);
   V.x = (st.width - im.naturalWidth * V.s) / 2; V.y = (st.height - im.naturalHeight * V.s) / 2; vPaint();
 }
-function openViewer(src, name) {
+function openViewer(src, name, fixer) {
+  /* `fixer`, when given, receives the painted mask and the description instead of the storyboard's own fix. Identity Studio uses it. */
+  FX.custom = typeof fixer === 'function' ? fixer : null;
   FX.file = new URL(src, location.href).searchParams.get('filename'); FX.label = name || 'Picture'; fixMode(false);
-  $('vFix').style.display = FX.file && PID ? '' : 'none';
+  $('vFix').style.display = FX.custom || (FX.file && PID) ? '' : 'none';
   $('vName').textContent = name || 'Picture'; $('vInfo').textContent = ''; $('vImg').style.visibility = 'hidden';
   $('vImg').onload = () => { $('vInfo').textContent = `${$('vImg').naturalWidth} × ${$('vImg').naturalHeight} · scroll to zoom, drag to move, double-click for 100%`; vFit(); $('vImg').style.visibility = ''; };
   $('viewer').classList.add('on'); $('vImg').src = src;
@@ -1460,7 +1462,7 @@ function openViewer(src, name) {
 const closeViewer = () => $('viewer').classList.remove('on');
 
 /* ----- fix an area: paint a mask, describe the fix, FLUX.2 repaints only that part ----- */
-const FX = { file: null, label: '', mode: 'paint', undo: [] };
+const FX = { file: null, label: '', mode: 'paint', undo: [], custom: null };
 function fixMode(on) {
   $('viewer').classList.toggle('fixing', on); $('vFix').textContent = on ? 'Cancel fix' : 'Fix an area'; $('vFix').classList.toggle('primary', !on);
   const c = $('vMask'), im = $('vImg'); FX.undo = []; $('fxStatus').textContent = ''; $('fxStatus').className = 'hint';
@@ -1501,6 +1503,10 @@ function fxMaskFile() {                                  /* white where painted,
 $('fxGo').onclick = () => busy($('fxGo'), $('fxStatus'), 'Sending to the server…', async () => {
   if (!$('fxText').value.trim()) throw new Error('Describe what the painted area should look like.');
   const file = await fxMaskFile(); if (!file) throw new Error('Paint over the area to fix first.');
+  if (FX.custom) {
+    await FX.custom({ mask: file, prompt: $('fxText').value, width: $('vImg').naturalWidth, height: $('vImg').naturalHeight });
+    closeViewer(); toast('Fix queued. The new picture is added next to the original when it finishes; the original is kept.'); return;
+  }
   const mask = await upload(file);
   await save();
   await post('/api/image/fix', { project: PID, image: FX.file, mask, prompt: $('fxText').value, width: $('vImg').naturalWidth, height: $('vImg').naturalHeight, label: FX.label.split(' · ').pop() });

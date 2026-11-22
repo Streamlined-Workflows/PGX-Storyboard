@@ -5,8 +5,8 @@ separate module so it can later be lifted into its own app without untangling it
 storyboard code.
 
 **Status: Phase 1 (architectural foundation) plus job tracking.** Identity projects and their
-briefs work, reference images can be added, and the module can queue ComfyUI jobs politely.
-Nothing builds a job yet, so nothing is generated or exported.
+briefs work, reference images can be added and switched on or off, concepts can be generated,
+looked at closely and fixed by area. Nothing is exported yet.
 
 ## Architecture
 
@@ -16,18 +16,23 @@ Nothing builds a job yet, so nothing is generated or exported.
 | Storage | `identity_studio/storage.py` | Reading and writing projects on disk, safe ids, duplicate, trash |
 | References | `identity_studio/references.py` | Checking uploaded images, and rebuilding SVG files so they are safe to keep and show |
 | Tools | `identity_studio/tools.py` | The models and tools only Identity Studio uses, with whether each is installed. System status shows them in their own section |
+| Generation | `identity_studio/generate.py` | Turning the brief and enabled references into concept jobs, fixing an area, and bringing finished pictures into the project |
 | Jobs | `identity_studio/jobs.py` | Identity Studio's own job list and its rules for sharing ComfyUI with video renders |
 | API | `identity_studio/api.py` | Every route under `/api/identity/` |
 | Tests | `identity_studio/tests/` | Unit tests for the three parts above |
 | Frontend | `static/identity/identity-studio.js` and `.css` | The workspace page. Classes all start with `ids-`, colours are SWIFT tokens only |
 
-The host touches the module in exactly five places:
+The host touches the module in seven places:
 
 1. `app.py` imports `identity_studio.api` and passes any `/api/identity/` request to `handle()`.
 2. `app.py` serves `.js` files from `static/` (it already served `.css`, `.svg` and `.woff2`).
 3. `static/index.html` has one sidebar button, one empty container (`#v-identity`) and the two tags that load the module's files.
 4. `show('identity')` calls `IdentityStudio.show()`.
 5. `app.py` calls `identity_api.start()` once at start-up, so jobs left waiting by a restart carry on.
+6. `app.py` calls `identity_api.configure(build_image=…, build_fix=…, before=…)`, handing over the
+   storyboard's FLUX.2 graph builders. The module keeps no copy of model names or sampler settings.
+7. The picture viewer's `openViewer(src, name, fixer)` takes an optional third argument, so the
+   module can reuse the same zoom, pan and "Fix an area" tools with its own fix handler.
 
 The module imports nothing from `app.py`, `assist.py`, `workflows.py` or `models.py`, and never
 reads or writes `data/projects/`.
@@ -59,6 +64,8 @@ server image today, and adding them is a decision to make at that phase, not som
 data/identity/
   projects/<id>.json      one file per identity project
   assets/<id>/references/ that project's reference images, named by our own ids
+                          (<ref>.flat.png is the white-backed PNG the image model is given)
+  assets/<id>/concepts/   finished concept pictures, copied out of ComfyUI's output folder
   trash/                  deleted projects, with the time of deletion in the name
   jobs.json               identity jobs: waiting, in ComfyUI, and the last 200 finished
 ```
@@ -94,7 +101,13 @@ A project file holds: `schema`, `id`, `name`, `description`, `created`, `updated
 | PUT | `/api/identity/reference?project=…&id=…` | `{use?, note?, name?}` | The reference's record |
 | POST | `/api/identity/references/remove` | `{project, id}` | Confirmation. The file goes to the trash folder |
 
-No route accepts a ComfyUI graph from the browser. Jobs are created by module code only.
+| POST | `/api/identity/reference/flat?project=…&id=…` | A PNG | Stores the flattened copy the page made |
+| POST | `/api/identity/concepts/generate` | `{project, direction?}` | `{queued, concepts, notes}` |
+| GET | `/api/identity/concept?project=…&id=…` | | A finished concept's picture |
+| POST | `/api/identity/concepts/fix?project=…&id=…&prompt=…` | The painted mask (PNG) | `{queued, concepts}` |
+| POST | `/api/identity/concepts/remove` | `{project, id}` | Confirmation. The picture goes to the trash folder |
+
+`PUT …/reference` also takes `{enabled}`. No route accepts a ComfyUI graph from the browser. Jobs are created by module code only.
 
 Errors come back as `{"error": "…"}` with status 400 (bad input) or 404 (unknown route).
 Only `name`, `description` and `settings` can be changed through the API; unknown settings are
@@ -140,12 +153,30 @@ The storyboard's own job tracking is untouched.
 One gap remains: if a render is queued in the instant between the idle check and the hand-over,
 the identity job sits in front of it. It delays that render by one still image and interrupts nothing.
 
-## Generation (not built)
+## Generation
 
-Nothing builds a job yet. Decided for when it does: concepts will be made with FLUX.2 [dev], whose
-licence is non-commercial. That is accepted because these are internal concept and placeholder
-marks; final artwork for any product that is sold will come from hired artists. The page should
-say this next to generated concepts.
+**Generate concepts** queues one job per concept ("concepts per round" in the brief), each with
+its own seed, through the job tracker above. The prompt is built from the brief, an optional
+direction for the round, and the enabled references. Icon-only concepts are 1024 × 1024; icon and
+text are 1536 × 768. When a job finishes, its picture is copied into the project's own folder.
+
+References and the image model:
+
+- Up to four enabled references are sent. More than four enabled: the first four are used and the page says so.
+- FLUX.2 cannot read SVG or transparency, so the page draws each reference onto white and stores
+  that PNG; generation uses it. An SVG whose flat copy has not been made yet is refused with a message.
+- A reference is guidance. "Keep exactly" asks for a faithful copy, but the model redraws the
+  mark, so its shape must be checked in each concept. Exact placement of the uploaded vector
+  belongs to a later composition step.
+- Concepts are drawn on plain white (or black for a dark background). Transparency comes with export.
+- Lettering from the model is often misspelled.
+
+**Fix an area** uses the storyboard's inpainting graph: paint over the part to change, describe
+it, and a new concept is added. The original is kept.
+
+Licence: concepts are made with FLUX.2 [dev], which is licensed for non-commercial use. That is
+accepted because these are internal concept and placeholder marks; final artwork for any product
+that is sold will come from hired artists. The page says this under the concepts.
 
 ## Export (not built)
 
@@ -159,7 +190,8 @@ suits flat marks with a few solid colours and suits gradients, glows and fine te
 
 ## Known limitations
 
-- No concept generation, brand profiles, approval, export or publishing. References are stored but not yet used.
+- No brand profiles, approval, export or publishing.
+- Generation and fixing are tested against a stand-in for ComfyUI, not yet on the real server.
 - No sign-in, the same as the rest of SWIFT Director. Do not expose the port to the internet.
 - Two browser tabs editing the same brief: the last save wins.
 - The trash folder is never emptied automatically.
@@ -167,8 +199,8 @@ suits flat marks with a few solid colours and suits gradients, glows and fine te
 ## Roadmap
 
 Phase 1 (this one) is the foundation: module boundary, storage, API, project management.
-Job tracking and reference images are also in. Still to come, in the order the development
-prompt sets out: concept generation through ComfyUI, brand profiles, refinement and approval, export of icon sets, and explicit publishing.
+Job tracking, reference images, concept generation and fixing an area are also in. Still to
+come, in the order the development prompt sets out: brand profiles, approval, export of icon sets, and explicit publishing.
 
 ## Running the tests
 

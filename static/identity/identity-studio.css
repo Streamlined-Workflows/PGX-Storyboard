@@ -44,3 +44,16 @@
 .ids .ids-mark.ok { background:var(--swift-green); border-color:var(--swift-green); color:var(--swift-on-primary); }
 .ids .ids-use-text { margin:3px 0; color:var(--swift-text); }
 .ids .ids-good { color:var(--swift-green-400); font-size:12px; }
+/* On/off pill, to the SWIFT standard: green with "Enabled" on the left, red with "Disabled" on the right. */
+.ids .ids-switch { display:flex; width:118px; padding:3px; border-radius:999px; border:none; background:var(--swift-danger); justify-content:flex-end; }
+.ids .ids-switch.on { background:var(--swift-green); justify-content:flex-start; }
+.ids .ids-switch:hover { background:var(--swift-danger); filter:brightness(1.08); } .ids .ids-switch.on:hover { background:var(--swift-green); }
+.ids .ids-switch span { padding:3px 12px; border-radius:999px; background:var(--swift-base); color:var(--swift-text-strong); font-size:12px; font-weight:700; }
+.ids .ids-gen { display:flex; gap:12px; align-items:flex-end; flex-wrap:wrap; max-width:860px; }
+.ids .ids-gen input { width:100%; } .ids .ids-gen > .ids-grow { min-width:240px; }
+.ids .ids-gen-notes { margin:8px 0 12px; max-width:860px; min-height:1em; }
+.ids .ids-concepts { display:flex; gap:12px; flex-wrap:wrap; }
+.ids .ids-concept { width:232px; padding:10px; display:grid; gap:6px; align-content:start; border:1px solid var(--swift-border); border-radius:var(--swift-radius-xl); }
+.ids .ids-cthumb { height:210px; cursor:zoom-in; } .ids .ids-cthumb img { max-height:210px; }
+.ids .ids-cthumb.ids-wait { cursor:default; background:var(--swift-surface); background-image:none; color:var(--swift-text-muted); font-size:12px; text-align:center; padding:12px; }
+@media (max-width:760px) { .ids .ids-concept { width:100%; } }
