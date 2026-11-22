@@ -275,8 +275,11 @@ def describe_actor(name, images_b64):
 
 def view_prompt(description, framing, has_refs):
     who = (description or "").strip().rstrip(".")
-    if has_refs:
-        lead = "The same character as in the reference image" + (f": {who}" if who else "")
+    if has_refs and who:      # the written description is the authority on clothing and colours, so an actor can be re-dressed
+        lead = ("The same person as in the reference image: keep their face, hair and build exactly. "
+                f"Their clothing and its colours follow this description, even where the reference image differs: {who}")
+    elif has_refs:
+        lead = "The same character as in the reference image"
     else:
         lead = who
     return (f"{framing}. {lead}. Plain dark studio backdrop, soft cinematic lighting, sharp focus, "
@@ -383,7 +386,8 @@ def shot_prompt(text, style, people):
     parts = [text.strip().rstrip(".") + "."]
     for i, c in enumerate(people):
         look = (c.get("description") or "").strip().rstrip(".")
-        parts.append(f'{c["name"]} is the character in reference image {i + 1}; keep their face, hair and outfit exactly' + (f" ({look})." if look else "."))
+        parts.append(f'{c["name"]} is the character in reference image {i + 1}; keep their face, hair and build exactly' +
+                     (f". Their clothing and its colours follow this description: {look}." if look else ", and their outfit as shown."))
     if style.strip():
         parts.append("Visual style: " + style.strip().rstrip(".") + ".")
     parts.append("Cinematic widescreen film still, sharp focus, no text, no watermark.")
