@@ -74,7 +74,11 @@ def transcribe(audio_path, job):
         job["progress"] = "Loading the speech model (the first run downloads about 1.6 GB)"
         _model = WhisperModel(WHISPER_MODEL, device="cpu", compute_type="int8", cpu_threads=os.cpu_count() or 8)
     job["progress"] = "Transcribing the lyrics"
-    segments, info = _model.transcribe(audio_path, word_timestamps=True, beam_size=5,
+    # Hand the speech model the samples directly (16 kHz mono). Letting it open the file itself breaks on
+    # newer versions of its audio library ("unexpected keyword argument 'metadata_errors'").
+    import librosa
+    samples, _ = librosa.load(audio_path, sr=16000, mono=True)
+    segments, info = _model.transcribe(samples.astype("float32"), word_timestamps=True, beam_size=5,
                                        condition_on_previous_text=False, vad_filter=False)
     lines = []
     for seg in segments:
