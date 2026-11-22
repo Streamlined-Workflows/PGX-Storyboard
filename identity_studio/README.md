@@ -4,8 +4,9 @@ A workspace inside SWIFT Director for designing logos and app identities. It is 
 separate module so it can later be lifted into its own app without untangling it from the
 storyboard code.
 
-**Status: Phase 1 (architectural foundation).** Identity projects and their briefs work.
-Nothing is generated, uploaded or exported yet.
+**Status: Phase 1 (architectural foundation) plus job tracking.** Identity projects and their
+briefs work, and the module can queue ComfyUI jobs politely. Nothing builds a job yet, so nothing
+is generated, uploaded or exported.
 
 ## Architecture
 
@@ -13,16 +14,18 @@ Nothing is generated, uploaded or exported yet.
 |---|---|---|
 | Schemas | `identity_studio/schemas.py` | The shape of an identity project, the allowed styles, layouts, backgrounds and platforms, and validation of anything a browser sends |
 | Storage | `identity_studio/storage.py` | Reading and writing projects on disk, safe ids, duplicate, trash |
+| Jobs | `identity_studio/jobs.py` | Identity Studio's own job list and its rules for sharing ComfyUI with video renders |
 | API | `identity_studio/api.py` | Every route under `/api/identity/` |
 | Tests | `identity_studio/tests/` | Unit tests for the three parts above |
 | Frontend | `static/identity/identity-studio.js` and `.css` | The workspace page. Classes all start with `ids-`, colours are SWIFT tokens only |
 
-The host touches the module in exactly four places:
+The host touches the module in exactly five places:
 
 1. `app.py` imports `identity_studio.api` and passes any `/api/identity/` request to `handle()`.
 2. `app.py` serves `.js` files from `static/` (it already served `.css`, `.svg` and `.woff2`).
 3. `static/index.html` has one sidebar button, one empty container (`#v-identity`) and the two tags that load the module's files.
 4. `show('identity')` calls `IdentityStudio.show()`.
+5. `app.py` calls `identity_api.start()` once at start-up, so jobs left waiting by a restart carry on.
 
 The module imports nothing from `app.py`, `assist.py`, `workflows.py` or `models.py`, and never
 reads or writes `data/projects/`.
@@ -40,8 +43,7 @@ reads or writes `data/projects/`.
 | Setting | Default | Meaning |
 |---|---|---|
 | `DATA_DIR` | `<repo>/data` | The same variable SWIFT Director uses. Identity Studio keeps to the `identity/` folder inside it |
-
-No other settings exist yet.
+| `COMFY_URL` | `http://127.0.0.1:8188` | The same ComfyUI the storyboard uses |
 
 ## Dependencies
 
@@ -56,6 +58,7 @@ data/identity/
   projects/<id>.json      one file per identity project
   assets/<id>/            that project's files (empty until references and concepts exist)
   trash/                  deleted projects, with the time of deletion in the name
+  jobs.json               identity jobs: waiting, in ComfyUI, and the last 200 finished
 ```
 
 Project ids are 8 to 32 lowercase hex characters and are checked on every request, so an id can
@@ -77,27 +80,51 @@ A project file holds: `schema`, `id`, `name`, `description`, `created`, `updated
 | POST | `/api/identity/projects` | `{name, description?}` | The new project |
 | PUT | `/api/identity/project?id=…` | `{name?, description?, settings?}` | The saved project |
 | POST | `/api/identity/projects/duplicate` | `{id}` | The copy |
-| POST | `/api/identity/projects/delete` | `{id}` | Confirmation |
+| POST | `/api/identity/projects/delete` | `{id}` | Confirmation. The project's jobs are cancelled |
+| GET | `/api/identity/queue` | | Whether ComfyUI is reachable, how many other jobs it holds, how many identity jobs are in play |
+| GET | `/api/identity/jobs?project=…` | | `{jobs: […]}`, without their graphs |
+| POST | `/api/identity/jobs/cancel` | `{id}` | The job, cancelled |
+| POST | `/api/identity/jobs/retry` | `{id}` | The job, waiting again |
+
+No route accepts a ComfyUI graph from the browser. Jobs are created by module code only.
 
 Errors come back as `{"error": "…"}` with status 400 (bad input) or 404 (unknown route).
 Only `name`, `description` and `settings` can be changed through the API; unknown settings are
 dropped and invalid values fall back to the current ones.
 
-## Generation integration (not built)
+## Sharing ComfyUI with video renders
 
-Phase 1 sends nothing to ComfyUI. When generation is added it has to respect three facts about
-the host:
+Identity Studio keeps its own job list (`jobs.py`) and follows four rules, each covered by a test:
 
-- SWIFT Director tracks image jobs against storyboard projects. Identity Studio needs its own
-  job tracking, or that tracking needs to be made general first.
-- "Stop all renders" clears the whole ComfyUI queue, so it would also stop identity jobs, and an
-  identity job must never interrupt a running video render.
-- The stills model in use, FLUX.2 [dev], carries a non-commercial licence. Whether logos made
-  with it may be used commercially needs deciding before Phase 2.
+1. A job is handed to ComfyUI only when ComfyUI has nothing running and nothing waiting. Until
+   then it waits in `jobs.json`, and the page says how many jobs are ahead of it.
+2. Only one identity job is in ComfyUI at a time, so a render queued meanwhile goes ahead of the
+   next identity job.
+3. Stopping an identity job removes that job from the queue. It is interrupted only if it is the
+   job ComfyUI is running at that moment. A running render is never interrupted.
+4. The host's "Stop all renders" still clears the whole ComfyUI queue, identity jobs included. A
+   job lost that way is marked stopped and waits for Retry; it does not restart by itself.
+
+Jobs use the client id `identity-studio`, so storyboard progress bars never show identity work.
+The storyboard's own job tracking is untouched.
+
+One gap remains: if a render is queued in the instant between the idle check and the hand-over,
+the identity job sits in front of it. It delays that render by one still image and interrupts nothing.
+
+## Generation (not built)
+
+Nothing builds a job yet. Decided for when it does: concepts will be made with FLUX.2 [dev], whose
+licence is non-commercial. That is accepted because these are internal concept and placeholder
+marks; final artwork for any product that is sold will come from hired artists. The page should
+say this next to generated concepts.
 
 ## Export (not built)
 
 No export exists yet. `exports` in the project file is reserved for it.
+
+Planned for export: tracing an approved concept into an SVG. A traced SVG scales cleanly but is
+an approximation of the picture (many small curves, lettering as shapes rather than type). It
+suits flat marks with a few solid colours and suits gradients, glows and fine texture badly.
 
 ## Known limitations
 

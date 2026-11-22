@@ -11,7 +11,7 @@
 (function () {
   'use strict';
   const API = '/api/identity/';
-  let root = null, info = null, openId = null, saveTimer = null;
+  let root = null, info = null, openId = null, saveTimer = null, pollTimer = null;
 
   const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;' }[c]));
   const el = (html) => { const t = document.createElement('template'); t.innerHTML = html.trim(); return t.content.firstElementChild; };
@@ -28,6 +28,34 @@
     return j;
   }
 
+  /* ---------- the shared render queue, and this workspace's own jobs ---------- */
+  const STATE_WORDS = { waiting:'waiting', submitted:'in the render queue', running:'running', done:'done', failed:'failed', stopped:'stopped', cancelled:'cancelled' };
+  async function refreshQueue() {
+    const line = root.querySelector('.ids-queue'); if (!line) return;
+    let q, jobs = [];
+    try { q = await call('GET', 'queue'); jobs = (await call('GET', 'jobs' + (openId ? '?project=' + encodeURIComponent(openId) : ''))).jobs; }
+    catch (e) { line.textContent = 'The render queue could not be checked.'; return; }
+    if (!line.isConnected) return;
+    line.textContent = !q.comfy ? 'ComfyUI cannot be reached, so identity jobs will wait.'
+      : q.other_jobs ? `The render queue is busy with ${q.other_jobs} other job${q.other_jobs === 1 ? '' : 's'}. Identity jobs wait until it is empty.`
+      : 'The render queue is free.';
+    if (q.identity_active) line.textContent += ` Identity jobs in play: ${q.identity_active}.` + (q.note ? ' ' + q.note : '');
+    const box = root.querySelector('.ids-jobs'); if (!box) return;
+    box.innerHTML = '';
+    jobs.slice(-12).reverse().forEach(j => {
+      const active = ['waiting', 'submitted', 'running'].includes(j.state), again = ['stopped', 'failed', 'cancelled'].includes(j.state);
+      const row = el(`<div class="ids-job"><span class="pill">${esc(STATE_WORDS[j.state] || j.state)}</span><span class="ids-grow">${esc(j.label || j.kind)}${j.error ? `<div class="hint">${esc(j.error)}</div>` : ''}</span>${active ? '<button class="small ids-stop" type="button">Stop this job</button>' : ''}${again ? '<button class="small ids-retry" type="button">Retry</button>' : ''}</div>`);
+      const act = (sel, route) => { const b = row.querySelector(sel); if (b) b.onclick = async () => { try { await call('POST', route, { id: j.id }); } catch (e) { say(e.message); } refreshQueue(); }; };
+      act('.ids-stop', 'jobs/cancel'); act('.ids-retry', 'jobs/retry');
+      box.appendChild(row);
+    });
+  }
+  function poll() {                                           // only while the workspace is on screen
+    clearInterval(pollTimer);
+    pollTimer = setInterval(() => { if (root.classList.contains('on') && !document.hidden) refreshQueue(); }, 3000);
+    refreshQueue();
+  }
+
   /* ---------- the list of identity projects ---------- */
   async function showList() {
     openId = null;
@@ -40,9 +68,10 @@
         <button class="primary" type="submit">Create</button>
       </form>
       <div class="ids-list" aria-live="polite"><span class="hint">Loading…</span></div>
+      <p class="hint ids-queue" aria-live="polite"></p>
       <div class="ids-note"><b>What works today.</b> Create, open, describe, duplicate and delete identity projects, and save the brief for each one. Generating concepts, adding reference images and exporting icon sets are not built yet, so there are no buttons for them here.</div>
     </section>`);
-    root.appendChild(page);
+    root.appendChild(page); poll();
     page.querySelector('.ids-new').onsubmit = async (ev) => {
       ev.preventDefault();
       const input = page.querySelector('#idsNewName'), name = input.value.trim();
@@ -111,9 +140,11 @@
         <div class="ids-wide"><label for="idsPalette">Colours, as hex codes separated by spaces (up to 8)</label><input id="idsPalette" data-set="palette" placeholder="#22c55e #000000" value="${esc((s.palette || []).join(' '))}"><div class="ids-swatches"></div></div>
         <fieldset class="ids-wide ids-plats"><legend>Where it will be used</legend>${info.platforms.map(v => `<label><input type="checkbox" data-plat="${esc(v)}"${(s.platforms || []).includes(v) ? ' checked' : ''}> ${esc(v)}</label>`).join('')}</fieldset>
       </div>
+      <p class="hint ids-queue" aria-live="polite"></p>
+      <div class="ids-jobs"></div>
       <div class="ids-note">The brief is saved as you type. It is what later phases will read when they generate concepts; nothing is generated yet.</div>
     </section>`);
-    root.innerHTML = ''; root.appendChild(page);
+    root.innerHTML = ''; root.appendChild(page); poll();
     const state = page.querySelector('.ids-state');
     const swatches = () => {
       const box = page.querySelector('.ids-swatches'); box.innerHTML = '';

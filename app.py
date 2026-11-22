@@ -1087,5 +1087,6 @@ class Handler(BaseHTTPRequestHandler):
 
 if __name__ == "__main__":
     migrate_legacy()
+    identity_api.start()
     print(f"SWIFT Director on http://0.0.0.0:{PORT}  ->  ComfyUI at {COMFY}", flush=True)
     ThreadingHTTPServer(("0.0.0.0", PORT), Handler).serve_forever()
