@@ -43,6 +43,8 @@ It runs as a Docker container named `storyboard` that starts on boot. It expects
 | Library | Every video rendered in the open project, with download links |
 | System status | Ping test, and CPU, GPU, memory and disk meters for the PGX |
 
+Each actor panel has two buttons. **Describe from images** sends up to four of the actor's views to the language model (it must be vision-capable) and writes the description. **Generate views from description** queues a close-up, a waist-up and a full-body still with FLUX.2 [dev] and the 8-step turbo LoRA, using up to three existing views as references so the new stills match; finished stills are copied into ComfyUI's input folder and added to the actor.
+
 Projects are stored as `data/projects/<id>.json`. Deleted projects are moved to `data/trash/`. The GPU meter reads `nvidia-smi`, which is why `run.sh` starts the container with `--gpus all`.
 
 ## Full assist

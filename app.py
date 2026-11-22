@@ -7,6 +7,7 @@ media to ComfyUI, turns segments into ComfyUI jobs, and reports system load.
   COMFY_URL  ComfyUI address (default http://127.0.0.1:8188)
   PORT       port to listen on (default 8190)
 """
+import base64
 import json
 import os
 import random
@@ -67,6 +68,7 @@ def normalize(project):
     project.setdefault("actors", [])
     project.setdefault("audio", [])
     project.setdefault("photos", [])
+    project.setdefault("image_jobs", [])
     if any("views" not in a for a in project["actors"]):
         migrate_actors(project)
     song = project.get("song")
@@ -215,12 +217,31 @@ def collect_files(entry):
             for f in files]
 
 
+def comfy_bytes(path, timeout=60):
+    with urllib.request.urlopen(COMFY + path, timeout=timeout) as r:
+        return r.read()
+
+
+def import_output(file, name):
+    """Copy a generated image from ComfyUI's output folder into its input folder so shots can use it."""
+    data = comfy_bytes("/view?" + urllib.parse.urlencode({"filename": file["filename"], "subfolder": file.get("subfolder", ""),
+                                                         "type": file.get("type", "output")}))
+    boundary = "----storyboard" + uuid.uuid4().hex
+    body = (f'--{boundary}\r\nContent-Disposition: form-data; name="image"; filename="{name}"\r\n'
+            f'Content-Type: image/png\r\n\r\n').encode() + data + f"\r\n--{boundary}--\r\n".encode()
+    req = urllib.request.Request(COMFY + "/upload/image", data=body,
+                                 headers={"Content-Type": "multipart/form-data; boundary=" + boundary})
+    with urllib.request.urlopen(req, timeout=60) as r:
+        return json.loads(r.read())["name"]
+
+
 def refresh_statuses(pid):
-    """Ask ComfyUI about every unfinished run in a project and record what it says."""
+    """Ask ComfyUI about every unfinished clip and still in a project and record what it says."""
     with LOCK:
         project = load_project(pid)
-        pending = [r for s in project["segments"] for r in s.get("results", []) if r.get("status") in PENDING]
-        if not pending:
+        clips = [r for s in project["segments"] for r in s.get("results", []) if r.get("status") in PENDING]
+        stills = [j for j in project["image_jobs"] if j.get("status") in PENDING]
+        if not clips and not stills:
             return project
         try:
             queue = comfy_json("/queue", timeout=10)
@@ -228,7 +249,7 @@ def refresh_statuses(pid):
             return project
         running = {item[1] for item in queue.get("queue_running", [])}
         waiting = {item[1] for item in queue.get("queue_pending", [])}
-        for res in pending:
+        for res in clips + stills:
             pid_ = res["prompt_id"]
             if pid_ in running:
                 res["status"] = "running"
@@ -246,8 +267,82 @@ def refresh_statuses(pid):
                 continue
             if entry.get("status", {}).get("status_str") == "error":
                 res.update(status="error", error=describe_error(entry))
+                continue
+            files = collect_files(entry)
+            if res in stills:
+                picture = next((f for f in files if f["filename"].lower().endswith((".png", ".jpg", ".jpeg", ".webp"))), None)
+                if not picture:
+                    res.update(status="error", error="ComfyUI finished but returned no image.")
+                    continue
+                try:
+                    res.update(status="done", image=import_output(picture, res.get("save_as") or picture["filename"]),
+                               finished=time.time())
+                except (OSError, ValueError, KeyError) as e:
+                    res.update(status="error", error=f"Could not save the generated image: {e}")
             else:
-                res.update(status="done", files=collect_files(entry), finished=time.time())
+                res.update(status="done", files=files, finished=time.time())
+        return save_project(project, touch=False)
+
+
+# ---------- actors: describe from images, generate views ----------
+
+def find_actor(project, actor_id):
+    actor = next((a for a in project["actors"] if a.get("id") == actor_id), None)
+    if actor is None:
+        raise ValueError("That actor was not found. Save and try again.")
+    return actor
+
+
+def actor_describe(pid, actor_id):
+    actor = find_actor(load_project(pid), actor_id)
+    views = [v["image"] for v in actor.get("views", [])][:4]
+    if not views:
+        raise ValueError("Add at least one view of this actor first.")
+    images = []
+    for image in views:
+        try:
+            images.append(base64.b64encode(comfy_bytes("/view?" + urllib.parse.urlencode({"filename": image, "type": "input"}))).decode())
+        except OSError as e:
+            raise ValueError(f"Could not read the view {image} from the PGX: {e}")
+    return {"description": assist.describe_actor(actor.get("name", ""), images)}
+
+
+def actor_generate(pid, actor_id):
+    """Queue one still per standard framing. Existing views are used as references so the new ones match."""
+    with LOCK:
+        project = load_project(pid)
+        actor = find_actor(project, actor_id)
+        description = (actor.get("description") or "").strip()
+        refs = [v["image"] for v in actor.get("views", [])][:3]
+        if not description and not refs:
+            raise ValueError("Write a description for this actor first, or add a view of them.")
+        threading.Thread(target=assist.unload, daemon=True).start()
+        made = []
+        for label, framing in assist.VIEW_FRAMINGS:
+            rid = new_id()
+            seed = random.randint(1, 2**31 - 1)
+            stem = f"{workflows.safe_name(actor.get('name') or 'actor')}_{workflows.safe_name(label)}_{rid}"
+            graph = workflows.build_image(assist.view_prompt(description, framing, bool(refs)), refs, seed,
+                                          prefix=f"storyboard/{project['id']}/stills/{stem}")
+            reply = comfy_json("/prompt", {"prompt": graph, "client_id": "storyboard"})
+            if reply.get("_http_error") or reply.get("node_errors") or not reply.get("prompt_id"):
+                detail = json.dumps(reply.get("node_errors") or reply.get("error") or reply)
+                if "not in" in detail and ".safetensors" in detail:
+                    raise ValueError("The FLUX.2 image model files are not on the PGX yet. " + detail[:300])
+                raise ValueError("ComfyUI rejected the image job: " + detail[:500])
+            job = {"id": rid, "prompt_id": reply["prompt_id"], "status": "queued", "kind": "actor_view",
+                   "actor_id": actor_id, "label": label, "seed": seed, "created": time.time(),
+                   "save_as": stem + ".png", "steps": workflows.IMAGE_STEPS, "passes": 1}
+            project["image_jobs"].append(job)
+            made.append(job)
+            save_project(project, touch=False)
+        return {"jobs": made}
+
+
+def image_jobs_clear(pid, ids):
+    with LOCK:
+        project = load_project(pid)
+        project["image_jobs"] = [j for j in project["image_jobs"] if j["id"] not in set(ids or [])]
         return save_project(project, touch=False)
 
 
@@ -601,6 +696,12 @@ class Handler(BaseHTTPRequestHandler):
                         raise ValueError("That project no longer exists.")
                     os.replace(src, os.path.join(TRASH_DIR, f"{payload['id']}-{int(time.time())}.json"))
                 return self.send_json({"ok": True})
+            if path == "/api/actor/describe":
+                return self.send_json(actor_describe(pid, payload.get("actor_id")))
+            if path == "/api/actor/generate":
+                return self.send_json(actor_generate(pid, payload.get("actor_id")))
+            if path == "/api/image_jobs/clear":
+                return self.send_json(image_jobs_clear(pid, payload.get("ids")))
             if path == "/api/assist/analyze":
                 return self.send_json(assist_analyze(pid))
             if path == "/api/assist/lyrics":

@@ -16,11 +16,17 @@ MIN_LEN, MAX_LEN, IDEAL_LEN = 5.0, 15.0, 9.0
 
 # ---------- language model ----------
 
-def chat(system, user, schema, think=True, temperature=0.7, timeout=420):
-    """Ask the local model for JSON matching `schema`. Raises ValueError with a readable message."""
+def chat(system, user, schema, think=True, temperature=0.7, timeout=420, images=None):
+    """Ask the local model for JSON matching `schema`. Raises ValueError with a readable message.
+
+    `images` is an optional list of base64-encoded images for the model to look at.
+    """
+    message = {"role": "user", "content": user}
+    if images:
+        message["images"] = images
     payload = {"model": MODEL, "stream": False, "think": think, "format": schema, "keep_alive": "5m",
                "options": {"temperature": temperature, "num_ctx": 16384},
-               "messages": [{"role": "system", "content": system}, {"role": "user", "content": user}]}
+               "messages": [{"role": "system", "content": system}, message]}
     req = urllib.request.Request(OLLAMA + "/api/chat", data=json.dumps(payload).encode(),
                                  headers={"Content-Type": "application/json"})
     try:
@@ -28,6 +34,8 @@ def chat(system, user, schema, think=True, temperature=0.7, timeout=420):
             reply = json.loads(r.read())
     except urllib.error.HTTPError as e:
         detail = e.read().decode("utf-8", "replace")[:300]
+        if images and ("image" in detail.lower() or "vision" in detail.lower() or "multimodal" in detail.lower()):
+            raise ValueError(f"The language model ({MODEL}) cannot look at images: {detail}")
         raise ValueError(f"The language model returned an error ({e.code}): {detail}")
     except OSError as e:
         raise ValueError(f"Cannot reach the language model (Ollama) at {OLLAMA}: {e}")
@@ -237,3 +245,39 @@ def write_story(analysis, lines, segments, direction="", style="", previous=None
         beats = (beats + [""] * len(segments))[:len(segments)]
     return {"title": str(out.get("title", "")).strip()[:120], "logline": str(out.get("logline", "")).strip(),
             "style": str(out.get("style", "")).strip(), "beats": beats, "direction": direction, "style_note": style}
+
+
+# ---------- actors ----------
+
+VIEW_FRAMINGS = [
+    ("close-up", "Close-up portrait, head and shoulders, facing the camera with a calm, neutral expression"),
+    ("waist up", "Medium shot from the waist up, three-quarter view, relaxed natural pose"),
+    ("full body", "Full-body shot, standing, the whole figure visible from head to feet"),
+]
+
+
+def describe_actor(name, images_b64):
+    """Look at an actor's views and write the description used to generate more images of them."""
+    schema = {"type": "object", "required": ["description"], "properties": {"description": {"type": "string"}}}
+    system = ("You write character descriptions for an image generator. You are shown one or more pictures of the same "
+              "character. Return JSON with 'description': three or four sentences that would let an artist redraw this "
+              "character consistently. Start with the art style (for example 'Stylized 3D animated film character' or "
+              "'Photorealistic'). Then cover apparent age range, build, hair colour and style, face and eyes, clothing with "
+              "colours and materials, and any distinguishing details. Describe only the character: leave out the background, "
+              "the pose, the lighting and the camera. Do not give them a name and do not guess who they are.")
+    out = chat(system, f"Describe this character{(' (the artist calls them ' + name + ')') if name else ''}.", schema,
+               think=False, temperature=0.3, images=images_b64)
+    text = str(out.get("description", "")).strip()
+    if not text:
+        raise ValueError("The language model did not return a description. Try again.")
+    return text[:1200]
+
+
+def view_prompt(description, framing, has_refs):
+    who = (description or "").strip().rstrip(".")
+    if has_refs:
+        lead = "The same character as in the reference image" + (f": {who}" if who else "")
+    else:
+        lead = who
+    return (f"{framing}. {lead}. Plain dark studio backdrop, soft cinematic lighting, sharp focus, "
+            "consistent character design, single character, no text.")

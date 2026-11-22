@@ -21,7 +21,13 @@ MODELS = {
     "lora_22_high": "wan2.2_i2v_lightx2v_4steps_lora_v1_high_noise.safetensors",
     "lora_22_low": "wan2.2_i2v_lightx2v_4steps_lora_v1_low_noise.safetensors",
     "vae_22": "wan_2.1_vae.safetensors",
+    # FLUX.2 [dev], used to generate stills (actor views, shots)
+    "flux2": "flux2_dev_fp8mixed.safetensors",
+    "flux2_turbo": "Flux2TurboComfyv2.safetensors",
+    "flux2_text": "mistral_3_small_flux2_bf16.safetensors",
+    "flux2_vae": "flux2-vae.safetensors",
 }
+IMAGE_STEPS = 8
 
 STORY_FPS = 16
 STORY_PASS = 81          # frames per pass (5 s)
@@ -179,6 +185,36 @@ def build_story_to_end(seg, song, seed, width=832, height=480, prefix="storyboar
             start_link = g.out(last)
 
     _save(g, acc, total, STORY_FPS, _segment_audio(g, song, seg["start"], duration), prefix)
+    return g.nodes
+
+
+def build_image(prompt, refs=(), seed=1, width=1248, height=720, prefix="storyboard/still"):
+    """One still from FLUX.2 [dev] with the 8-step turbo LoRA. `refs` are input images of the same subject.
+
+    Wiring follows ComfyUI's image_flux2 template: each reference is encoded and chained through
+    ReferenceLatent so the model keeps the subject's identity.
+    """
+    g = Graph()
+    unet = g.add("UNETLoader", unet_name=MODELS["flux2"], weight_dtype="default")
+    model = g.add("LoraLoaderModelOnly", lora_name=MODELS["flux2_turbo"], strength_model=1.0, model=g.out(unet))
+    clip = g.add("CLIPLoader", clip_name=MODELS["flux2_text"], type="flux2", device="default")
+    vae = g.add("VAELoader", vae_name=MODELS["flux2_vae"])
+    text = g.add("CLIPTextEncode", clip=g.out(clip), text=prompt)
+    cond = g.out(g.add("FluxGuidance", conditioning=g.out(text), guidance=4.0))
+    for ref in list(refs)[:4]:
+        img = g.add("LoadImage", image=ref)
+        scaled = g.add("ImageScaleToTotalPixels", image=g.out(img), upscale_method="lanczos", megapixels=1.0, resolution_steps=1)
+        enc = g.add("VAEEncode", pixels=g.out(scaled), vae=g.out(vae))
+        cond = g.out(g.add("ReferenceLatent", conditioning=cond, latent=g.out(enc)))
+    latent = g.add("EmptyFlux2LatentImage", width=width, height=height, batch_size=1)
+    sigmas = g.add("Flux2Scheduler", steps=IMAGE_STEPS, width=width, height=height)
+    sampler = g.add("KSamplerSelect", sampler_name="euler")
+    noise = g.add("RandomNoise", noise_seed=seed)
+    guider = g.add("BasicGuider", model=g.out(model), conditioning=cond)
+    samp = g.add("SamplerCustomAdvanced", noise=g.out(noise), guider=g.out(guider), sampler=g.out(sampler),
+                 sigmas=g.out(sigmas), latent_image=g.out(latent))
+    dec = g.add("VAEDecode", samples=g.out(samp), vae=g.out(vae))
+    g.add("SaveImage", images=g.out(dec), filename_prefix=prefix)
     return g.nodes
 
 

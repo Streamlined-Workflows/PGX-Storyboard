@@ -306,6 +306,21 @@ function mergeResults(fresh) {
   return changed;
 }
 
+/* Generated stills arrive as finished jobs; add each one to its actor, then tell the server it was taken. */
+function mergeJobs(fresh) {
+  const jobs = fresh.image_jobs || [], before = JSON.stringify(P.image_jobs || []);
+  const taken = [];
+  for (const j of jobs) {
+    if (j.status !== 'done' || !j.image) continue;
+    const a = P.actors.find(x => x.id === j.actor_id);
+    if (a && !a.views.some(v => v.image === j.image)) a.views.push({ id: uid(), image: j.image, label: j.label });
+    taken.push(j.id);
+  }
+  P.image_jobs = jobs.filter(j => !taken.includes(j.id));
+  if (taken.length) { save().then(() => post('/api/image_jobs/clear', { project: PID, ids: taken })).catch(() => {}); }
+  return before !== JSON.stringify(P.image_jobs) || taken.length > 0;
+}
+
 /* ---------- navigation ---------- */
 function show(name) {
   currentView = name;
@@ -328,6 +343,7 @@ async function openProject(id) {
   PID = id; localStorage.setItem('sb.project', id);
   P.segments ||= []; P.actors ||= []; P.photos ||= []; P.audio ||= []; P.settings ||= {};
   P.actors.forEach(a => { a.views ||= []; });
+  mergeJobs(P);
   peaks = null; pvKey = null; for (const k in prog) delete prog[k];
   $('projName').value = P.name || ''; $('navFoot').textContent = P.name || '';
   $('saved').textContent = 'loaded';
@@ -554,7 +570,22 @@ function actorPanel(a) {
   d.innerHTML = `<div class="head"><div><label>Actor name</label><input class="aname" value="${esc(a.name)}"></div>` +
     `<div><label>Description (who they are and how they look; used when shots are generated)</label><textarea class="adesc" placeholder="e.g. A starship pilot in her thirties with wavy red hair and a maroon flight uniform">${esc(a.description || '')}</textarea></div>` +
     `<div style="padding-top:18px"><label class="btn small">Add view<input type="file" accept="image/*" multiple hidden></label> <button class="ghost small delactor" title="Delete this actor">Delete</button></div></div>` +
+    `<div class="row" style="margin-bottom:10px"><button class="small describe" ${a.views.length ? '' : 'disabled'} title="The PGX looks at this actor's views and writes the description">Describe from images</button>` +
+    `<button class="small generate" title="Makes a close-up, a waist-up and a full-body still with FLUX.2">Generate views from description</button><span class="hint astatus"></span></div>` +
     `<div class="cards views"></div>`;
+  const status = d.querySelector('.astatus');
+  d.querySelector('.describe').onclick = ev => busy(ev.target, status, 'Looking at the views… this can take a minute.', async () => {
+    if ((a.description || '').trim() && !confirm('Replace the current description with one written from the images?')) return;
+    await save();
+    a.description = (await post('/api/actor/describe', { project: PID, actor_id: a.id })).description;
+    dirty(); renderAssets();
+  });
+  d.querySelector('.generate').onclick = ev => busy(ev.target, status, 'Sending to the PGX…', async () => {
+    if (!(a.description || '').trim() && !a.views.length) throw new Error('Write a description first, or add a view and use Describe from images.');
+    await save();
+    await post('/api/actor/generate', { project: PID, actor_id: a.id });
+    await poll(true); renderAssets();
+  });
   d.querySelector('.aname').oninput = ev => { a.name = ev.target.value; dirty(); };
   d.querySelector('.adesc').oninput = ev => { a.description = ev.target.value; dirty(); };
   d.querySelector('input[type=file]').onchange = async ev => {
@@ -565,6 +596,16 @@ function actorPanel(a) {
   const views = d.querySelector('.views');
   if (!a.views.length) views.innerHTML = '<span class="hint">No views yet. Add a still of this actor.</span>';
   a.views.forEach(v => views.appendChild(viewCard(a, v)));
+  (P.image_jobs || []).filter(j => j.actor_id === a.id && !j.applied).forEach(j => {
+    if (!a.views.length && views.firstChild && views.firstChild.className === 'hint') views.innerHTML = '';
+    const c = document.createElement('div'); c.className = 'card';
+    c.innerHTML = j.status === 'error'
+      ? `<div class="wait err" style="height:86px;font-size:11px;overflow:auto;padding:6px">${esc(j.error || 'Failed')}</div><div class="acts"><span class="hint" style="padding:4px 6px">${esc(j.label)}</span><button class="ghost small del" title="Dismiss">✕</button></div>`
+      : `<div style="height:86px;display:flex;flex-direction:column;justify-content:center;background:var(--bg)"><div class="pbar"><i id="pb-${j.id}"></i></div><div id="pt-${j.id}" class="hint" style="text-align:center">${j.status === 'running' ? 'Generating…' : 'Waiting…'}</div></div><div class="hint" style="padding:5px 7px">${esc(j.label)}</div>`;
+    const del = c.querySelector('.del');
+    if (del) del.onclick = async () => { try { await post('/api/image_jobs/clear', { project: PID, ids: [j.id] }); P.image_jobs = P.image_jobs.filter(x => x !== j); renderAssets(); } catch (e) { toast(e.message); } };
+    views.appendChild(c);
+  });
   return d;
 }
 
@@ -582,6 +623,7 @@ function renderAssets() {
   P.actors.forEach(a => $('actors').appendChild(actorPanel(a)));
   $('photos').innerHTML = P.photos.length ? '' : '<span class="hint">No photos yet. Use these for locations and other reference stills.</span>';
   P.photos.forEach(ph => $('photos').appendChild(photoCard(ph)));
+  paintProgress();
   const wrap = $('audios'); wrap.innerHTML = P.audio.length ? '' : '<span class="hint">No audio yet.</span>';
   P.audio.forEach(a => {
     const isSong = P.song?.filename === a.filename;
@@ -735,8 +777,8 @@ $('libPicked').onclick = () => { libPickedOnly = true; $('libPicked').classList.
 
 /* ---------- live progress from ComfyUI ---------- */
 const prog = {};   // prompt_id -> { pass, value, max }
-function findResult(pid) { for (const s of P.segments) for (const r of (s.results || [])) if (r.prompt_id === pid) return r; return null; }
-function redrawClips() { if (currentView === 'library') renderLibrary(); else if (currentView === 'storyboard') renderSegments(); }
+function findResult(pid) { for (const s of P.segments) for (const r of (s.results || [])) if (r.prompt_id === pid) return r; return (P.image_jobs || []).find(j => j.prompt_id === pid) || null; }
+function redrawClips() { if (currentView === 'library') renderLibrary(); else if (currentView === 'storyboard') renderSegments(); else if (currentView === 'assets') renderAssets(); }
 
 function onProgress(d) {
   const r = findResult(d.prompt_id); if (!r) return;
@@ -772,10 +814,15 @@ function connectProgress(port) {
 
 async function poll(force) {
   if (!PID) return;
-  const pending = P.segments.some(s => (s.results || []).some(r => r.status === 'queued' || r.status === 'running'));
+  const pending = P.segments.some(s => (s.results || []).some(r => r.status === 'queued' || r.status === 'running')) ||
+    (P.image_jobs || []).some(j => j.status === 'queued' || j.status === 'running');
   if (!pending && !force) return;
   const forPid = PID;
-  try { const fresh = await api('/api/project?id=' + forPid); if (forPid === PID && mergeResults(fresh)) redrawClips(); } catch (e) { /* PGX busy; try again next tick */ }
+  try {
+    const fresh = await api('/api/project?id=' + forPid); if (forPid !== PID) return;
+    const a = mergeResults(fresh), b = mergeJobs(fresh);
+    if (a || b) redrawClips();
+  } catch (e) { /* PGX busy; try again next tick */ }
 }
 
 async function health() {
@@ -809,8 +856,9 @@ let anTimer = null;
 const A = () => P.assist || {};
 async function reloadProject() { const fresh = await api('/api/project?id=' + PID); P.assist = fresh.assist; return fresh; }
 async function busy(btn, statusEl, label, fn) {
-  const old = btn.textContent; btn.disabled = true; statusEl.className = 'busy'; statusEl.textContent = label;
-  try { await fn(); statusEl.textContent = ''; } catch (e) { statusEl.className = 'err'; statusEl.textContent = e.message; }
+  const tone = t => { statusEl.classList.remove('hint', 'busy', 'err'); statusEl.classList.add(t); };
+  const old = btn.textContent; btn.disabled = true; tone('busy'); statusEl.textContent = label;
+  try { await fn(); statusEl.textContent = ''; tone('hint'); } catch (e) { tone('err'); statusEl.textContent = e.message; }
   btn.disabled = false; btn.textContent = old;
 }
 
