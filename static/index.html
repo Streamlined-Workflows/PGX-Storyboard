@@ -409,6 +409,8 @@
       <div id="hfLine" class="hint" style="margin-top:6px"></div>
       <div id="models"></div>
     </section>
+    <!-- Identity Studio's own models and tools, drawn by its module -->
+    <section id="identityModels"></section>
   </div>
 </main>
 </div>
@@ -598,7 +600,7 @@ function show(name) {
   if (name === 'projects') renderProjects();
   if (name === 'assets') { renderAssets(); if (scope.assets === 'all') loadAll().then(renderAssets); }
   if (name === 'library') { renderLibrary(); if (scope.library === 'all') loadAll().then(renderLibrary); }
-  if (name === 'system') { refreshSystem(); loadModels(); }
+  if (name === 'system') { refreshSystem(); loadModels(); if (window.IdentityStudio) window.IdentityStudio.showModels($('identityModels')); }
   if (name === 'storyboard') { renderSegments(); }
   if (name === 'identity' && window.IdentityStudio) window.IdentityStudio.show();
 }

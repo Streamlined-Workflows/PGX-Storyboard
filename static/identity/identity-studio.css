@@ -38,3 +38,9 @@
 .ids .ids-drop { display:flex; gap:12px; align-items:center; margin-top:12px; padding:12px; max-width:860px; border:1px dashed var(--swift-ring-strong); border-radius:var(--swift-radius-lg); }
 .ids .ids-drop.over { background:var(--swift-highlight); }
 @media (max-width:760px) { .ids .ids-ref { width:100%; } }
+.ids .ids-tool { display:grid; grid-template-columns:26px 1fr; gap:4px 10px; align-items:start; padding:11px 0; margin-top:8px; border-top:1px solid var(--swift-border); }
+.ids .ids-tool b { color:var(--swift-text-strong); }
+.ids .ids-mark { width:22px; height:22px; border-radius:50%; display:grid; place-items:center; font-weight:700; font-size:13px; color:var(--swift-text-muted); border:1px solid var(--swift-border); }
+.ids .ids-mark.ok { background:var(--swift-green); border-color:var(--swift-green); color:var(--swift-on-primary); }
+.ids .ids-use-text { margin:3px 0; color:var(--swift-text); }
+.ids .ids-good { color:var(--swift-green-400); font-size:12px; }

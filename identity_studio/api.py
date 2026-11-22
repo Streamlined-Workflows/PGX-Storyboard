@@ -10,6 +10,7 @@ It returns plain data and raises ValueError with a message a person can read.
     PUT   /api/identity/project?id=…          save edits    {name?, description?, settings?}
     POST  /api/identity/projects/duplicate    {id}
     POST  /api/identity/projects/delete       {id}          moved to the trash folder; its jobs are cancelled
+    GET   /api/identity/models                what Identity Studio runs that the storyboard does not, for System status
     GET   /api/identity/queue                 is the render queue free, and how many identity jobs are in play
     GET   /api/identity/jobs?project=…        identity jobs (all, or one project's)
     POST  /api/identity/jobs/cancel           {id}          stops that job only
@@ -25,7 +26,7 @@ module code (jobs().add), so the page can only ask for things the module knows h
 """
 import os
 
-from . import references, schemas
+from . import references, schemas, tools
 from .jobs import Jobs
 from .storage import Store
 
@@ -98,6 +99,8 @@ def handle(method, path, query=None, payload=None, raw=None):
             return s.load(query.get("id", ""))
         if route == "reference":
             return File(*s.reference_file(query.get("project", ""), query.get("id", "")))
+        if route == "models":
+            return tools.status()
         if route == "queue":
             return jobs().status()
         if route == "jobs":

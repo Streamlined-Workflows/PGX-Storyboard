@@ -140,6 +140,14 @@ class ApiTests(Base):
         self.assertEqual(info["ready"], {"projects": True, "jobs": True, "generation": False, "references": True, "exports": False})
         self.assertIn("custom", info["styles"])
 
+    def test_models_list_reports_install_state_honestly(self):
+        data = api.handle("GET", "/api/identity/models")
+        tracer = next(t for t in data["tools"] if t["id"] == "vtracer")
+        import importlib.util
+        self.assertEqual(tracer["installed"], importlib.util.find_spec("vtracer") is not None)
+        self.assertTrue(tracer["use"] and tracer["needed_for"])
+        self.assertIn("FLUX.2", data["shared"])
+
     def test_unknown_routes_and_missing_projects(self):
         with self.assertRaises(LookupError):
             api.handle("GET", "/api/identity/nope")

@@ -219,7 +219,24 @@
     draw();
   }
 
+  /* ---------- System status: what this workspace runs that the storyboard does not ---------- */
+  async function showModels(box) {
+    if (!box) return;
+    let data;
+    try { data = await call('GET', 'models'); } catch (e) { box.innerHTML = '<h2>Identity Studio models</h2><div class="hint">' + esc(e.message) + '</div>'; return; }
+    box.classList.add('ids');
+    box.innerHTML = `<h2>Identity Studio models</h2><div class="hint">Only what Identity Studio adds. ${esc(data.shared)}</div>` +
+      data.tools.map(t => `<div class="ids-tool">
+        <div class="ids-mark ${t.installed ? 'ok' : ''}" title="${t.installed ? 'Installed' : 'Not installed yet'}">${t.installed ? '✓' : '–'}</div>
+        <div><b>${esc(t.name)}</b> <span class="hint">${esc(t.kind)}</span>
+          <div class="ids-use-text"><i>${esc(t.use)}</i></div>
+          <div class="hint">${esc(t.note)}</div>
+          <div class="${t.installed ? 'ids-good' : 'hint'}">${t.installed ? 'Installed' + (t.version ? ' · version ' + esc(t.version) : '') : 'Not installed yet. It is needed for ' + esc(t.needed_for) + ', and will be added to the server when that step is built.'}</div>
+        </div></div>`).join('');
+  }
+
   window.IdentityStudio = {
+    showModels,
     mount(element) { root = element; root.classList.add('ids'); },
     show() { if (root) { if (openId) showProject(openId); else showList(); } },
   };

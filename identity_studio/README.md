@@ -15,6 +15,7 @@ Nothing builds a job yet, so nothing is generated or exported.
 | Schemas | `identity_studio/schemas.py` | The shape of an identity project, the allowed styles, layouts, backgrounds and platforms, and validation of anything a browser sends |
 | Storage | `identity_studio/storage.py` | Reading and writing projects on disk, safe ids, duplicate, trash |
 | References | `identity_studio/references.py` | Checking uploaded images, and rebuilding SVG files so they are safe to keep and show |
+| Tools | `identity_studio/tools.py` | The models and tools only Identity Studio uses, with whether each is installed. System status shows them in their own section |
 | Jobs | `identity_studio/jobs.py` | Identity Studio's own job list and its rules for sharing ComfyUI with video renders |
 | API | `identity_studio/api.py` | Every route under `/api/identity/` |
 | Tests | `identity_studio/tests/` | Unit tests for the three parts above |
@@ -82,6 +83,7 @@ A project file holds: `schema`, `id`, `name`, `description`, `created`, `updated
 | PUT | `/api/identity/project?id=…` | `{name?, description?, settings?}` | The saved project |
 | POST | `/api/identity/projects/duplicate` | `{id}` | The copy |
 | POST | `/api/identity/projects/delete` | `{id}` | Confirmation. The project's jobs are cancelled |
+| GET | `/api/identity/models` | | Identity Studio's own models and tools, and whether each is installed |
 | GET | `/api/identity/queue` | | Whether ComfyUI is reachable, how many other jobs it holds, how many identity jobs are in play |
 | GET | `/api/identity/jobs?project=…` | | `{jobs: […]}`, without their graphs |
 | POST | `/api/identity/jobs/cancel` | `{id}` | The job, cancelled |
@@ -149,7 +151,9 @@ say this next to generated concepts.
 
 No export exists yet. `exports` in the project file is reserved for it.
 
-Planned for export: tracing an approved concept into an SVG. A traced SVG scales cleanly but is
+Planned for export: tracing an approved concept into an SVG with VTracer (the `vtracer` Python
+package, which has a build for the server's ARM processor and Python 3.12). It is listed under
+System status as not installed; the server image does not include it yet. A traced SVG scales cleanly but is
 an approximation of the picture (many small curves, lettering as shapes rather than type). It
 suits flat marks with a few solid colours and suits gradients, glows and fine texture badly.
 
