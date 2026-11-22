@@ -1,6 +1,12 @@
-# PGX Storyboard
+# SWIFT Director
 
-A browser storyboard for making music videos on a local ComfyUI server (built for a Lenovo ThinkStation PGX / DGX Spark).
+**Your story. Your vision. Directed by you, Built by AI.**
+
+SWIFT Director is a browser studio for making music videos with AI models that run on your own machine. You bring the song and the characters and direct every shot; the models on a local ComfyUI server (built for a Lenovo ThinkStation PGX / DGX Spark) do the rendering. Nothing is sent to an outside service.
+
+It has two ways of working. **Storyboard** is the hands-on workspace: split the song into segments and set each shot yourself. **Assisted Storyboard** has the AI listen to the song, propose the cuts, a story, a cast and the key frames for you to approve or change.
+
+The repository, the containers and the folder on the PGX keep the name `PGX-Storyboard`.
 
 Load a song, split it into 5 to 15 second segments, give each one a begin shot, a prompt and a number of runs, and render the clips on the PGX.
 
@@ -29,7 +35,7 @@ It runs as a Docker container named `storyboard` that starts on boot. It expects
 |---|---|
 | `app.py` | Web server (Python standard library only). Stores projects, forwards uploads and media to ComfyUI, queues renders, reports system load. |
 | `workflows.py` | Builds the ComfyUI job for each segment. |
-| `assist.py` | Full assist: cut points, lyric matching and story prompts for the language model. |
+| `assist.py` | Assisted Storyboard: cut points, lyric matching and story prompts for the language model. |
 | `assist-service/` | Song analysis container (lyrics and beats). Built and started by `run.sh`. |
 | `static/index.html` | The page. |
 
@@ -49,7 +55,7 @@ Assets and Library each have an **All / Project** toggle. All also lists what ot
 
 Projects are stored as `data/projects/<id>.json`. Deleted projects are moved to `data/trash/`. The GPU meter reads `nvidia-smi`, which is why `run.sh` starts the container with `--gpus all`.
 
-## Full assist
+## Assisted Storyboard
 
 A guided pass that turns a song into a planned storyboard. Each step waits for approval.
 
@@ -109,7 +115,7 @@ System status > AI models lists every model the storyboard uses, with what it do
 
 **Update** downloads the new file beside the old one, verifies it, then swaps it in and asks ComfyUI to unload the old copy. `run.sh` mounts the models folder (`COMFY_MODELS` overrides the path) and `~/.cache/huggingface` (read-only, for the token saved by `hf auth login`, needed for FLUX.2 and LTX-2.5). The list lives in `models.py`.
 
-## Full assist: cast and shots
+## Assisted Storyboard: cast and shots
 
 After a story is approved, step 4 (Cast) lets you tick which actors appear and what each plays, or ask the language model to recommend characters (each can be added as an actor with its description). Step 5 (Shots) writes the opening frame and one end frame per segment from that segment's lyrics, length, energy and story beat; the descriptions are editable. Generating the images runs FLUX.2 with one picture of each cast member in frame as a reference, then sets the opening frame as segment 1's begin shot and each end frame as its segment's end shot (they are also added to Photos).
 
@@ -119,11 +125,11 @@ After a story is approved, step 4 (Cast) lets you tick which actors appear and w
 - **Continue**: the begin shot is empty. The segment starts from the previous segment's end shot if it has one; otherwise from the last frame of the clip picked on the previous segment. Until a clip is picked there, renders of this segment are created "on hold" and start by themselves once you pick. Every clip saves its final frame for this.
 - Singing segments cannot have an end shot (the lip sync engine only takes a start image).
 
-In Full assist > Shots the language model also decides, for every segment after the first, whether it **continues** the previous shot or cuts to a **new scene** (place, subject or time changes, or the music turns sharply), with a one-line reason. New scenes get their own begin-frame description and image; continuing segments have their begin shot cleared. Each decision can be flipped by hand. **Render all** skips segments that would have to wait for a pick and lists them.
+In Assisted Storyboard > Shots the language model also decides, for every segment after the first, whether it **continues** the previous shot or cuts to a **new scene** (place, subject or time changes, or the music turns sharply), with a one-line reason. New scenes get their own begin-frame description and image; continuing segments have their begin shot cleared. Each decision can be flipped by hand. **Render all** skips segments that would have to wait for a pick and lists them.
 
 ## Fixing part of a picture
 
-Click a picture (Assets, Library > Images, Full assist key frames) to open the viewer, then **Fix an area**: paint over the problem, describe what should be there, and Generate fix. FLUX.2 repaints only the painted area (`workflows.build_fix`: noise-masked sampling with the original as reference, then pasted back through the mask). The result is saved as a new picture; the original is kept.
+Click a picture (Assets, Library > Images, Assisted Storyboard key frames) to open the viewer, then **Fix an area**: paint over the problem, describe what should be there, and Generate fix. FLUX.2 repaints only the painted area (`workflows.build_fix`: noise-masked sampling with the original as reference, then pasted back through the mask). The result is saved as a new picture; the original is kept.
 
 **Hugging Face key.** If the PGX has no key, Check for updates first asks for a read-only Hugging Face token. It is verified with Hugging Face, then stored in `data/hf_token` (owner-only, never committed, never sent back to the browser). Skip checks everything else; models that need access show a yellow triangle and are not attempted. A key saved by `hf auth login` on the PGX is used automatically.
 

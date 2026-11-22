@@ -1,4 +1,4 @@
-"""Full Assist: turn a song analysis into segments and a story concept.
+"""Assisted Storyboard: turn a song analysis into segments and a story concept.
 
 Cut points are computed here from the beat grid and the lyric timing, so every segment is 5-15 s
 and lands on a bar line. The language model (Ollama) names the segments, may merge neighbours that

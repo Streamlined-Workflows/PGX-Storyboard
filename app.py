@@ -452,7 +452,7 @@ def resolve_begin(project, seg):
     if not picked.get("last_image") and picked.get("last_frame"):
         picked["last_image"] = import_output(picked["last_frame"], picked["last_frame"]["filename"])
     if not picked.get("last_image"):
-        raise ValueError(f'The clip picked on "{name}" was made before the storyboard kept last frames. Render "{name}" again '
+        raise ValueError(f'The clip picked on "{name}" was made before SWIFT Director kept last frames. Render "{name}" again '
                          "and pick a new clip, or give this segment its own begin shot.")
     return picked["last_image"], None
 
@@ -548,7 +548,7 @@ def cancel_waiting(pid):
         save_project(project, touch=False)
 
 
-# ---------- Full Assist ----------
+# ---------- Assisted Storyboard ----------
 
 def assist_service(path, payload=None, timeout=15):
     data = json.dumps(payload).encode() if payload is not None else None

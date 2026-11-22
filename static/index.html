@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>SWIFT Storyboard</title>
+<title>SWIFT Director</title>
 <link rel="icon" type="image/svg+xml" href="/static/brand/swift-drop.svg">
 <link rel="stylesheet" href="/static/swift-tokens.css">
 <style>
@@ -170,6 +170,8 @@
   nav .brand img { height:44px; width:auto; justify-self:start; }
   nav .brand b { color:var(--swift-text-strong); font-weight:700; font-size:15px; letter-spacing:.02em; line-height:1.15; }
   nav .brand span { font-size:11px; color:var(--swift-text-muted); }
+  /* The slogan: never smaller than 12px, wraps instead of clipping, and keeps its contrast (gray-300 on black). */
+  nav .brand .slogan { font-size:12px; line-height:1.45; color:var(--swift-text); font-weight:500; overflow-wrap:break-word; }
   nav button { position:relative; border-radius:var(--swift-radius-xl); font-weight:600; padding:10px 12px; }
   nav button:hover { background:var(--swift-elevated); color:var(--swift-text-strong); border-color:transparent; }
   nav button.on { background:var(--swift-highlight); border-color:var(--swift-ring-strong); color:var(--swift-text-strong); box-shadow:var(--swift-glow); }
@@ -218,9 +220,9 @@
 </head>
 <body>
 <nav>
-  <div class="brand"><img src="/static/brand/swift-wordmark.svg" alt="S.W.I.F.T."><b>Storyboard</b><span>Music video studio · runs on your PGX</span></div>
+  <div class="brand"><img src="/static/brand/swift-wordmark.svg" alt="S.W.I.F.T."><b>SWIFT Director</b><span class="slogan">Your story. Your vision. Directed by you, Built by AI.</span></div>
   <button data-view="storyboard" class="on">Storyboard</button>
-  <button data-view="assist">Full assist</button>
+  <button data-view="assist">Assisted Storyboard</button>
   <button data-view="projects">Projects</button>
   <button data-view="assets">Assets</button>
   <button data-view="library">Library</button>
@@ -266,10 +268,10 @@
     </section>
   </div>
 
-  <!-- ===== Full assist ===== -->
+  <!-- ===== Assisted Storyboard ===== -->
   <div id="v-assist" class="view">
     <section>
-      <div class="row"><h2 style="margin:0;text-transform:none;letter-spacing:0;color:var(--text);font-size:16px">Full assist</h2><span id="assistHealth" class="hint"></span></div>
+      <div class="row"><h2 style="margin:0;text-transform:none;letter-spacing:0;color:var(--text);font-size:16px">Assisted Storyboard</h2><span id="assistHealth" class="hint"></span></div>
       <div class="hint" style="margin-top:6px">The PGX listens to the song, proposes segments on the beat, and drafts a story. You approve each step before the next.</div>
     </section>
     <section class="step">
@@ -368,7 +370,7 @@
     <section><h2>Render queue</h2><div id="queueOut" class="hint">–</div></section>
     <section>
       <div class="row"><h2 style="margin:0">AI models</h2><span class="spacer"></span><button id="modelsBtn">Check for updates</button></div>
-      <div id="modelsNote" class="hint" style="margin-top:6px">Every model the storyboard uses and what it does here. Press Check for updates to compare each one with the version published today.</div>
+      <div id="modelsNote" class="hint" style="margin-top:6px">Every model SWIFT Director uses and what it does here. Press Check for updates to compare each one with the version published today.</div>
       <div id="hfLine" class="hint" style="margin-top:6px"></div>
       <div id="models"></div>
     </section>
@@ -1144,7 +1146,7 @@ async function health() {
     if (h.comfy) { el.className = 'pill ok'; el.textContent = 'PGX ready · ' + h.running + ' rendering, ' + h.waiting + ' waiting'; }
     else { el.className = 'pill bad'; el.textContent = 'ComfyUI not reachable'; }
     return h;
-  } catch (e) { $('health').className = 'pill bad'; $('health').textContent = 'Storyboard server not reachable'; return null; }
+  } catch (e) { $('health').className = 'pill bad'; $('health').textContent = 'SWIFT Director server not reachable'; return null; }
 }
 
 $('cancel').onclick = async () => { if (!confirm('Stop the running job and clear everything waiting?')) return; try { await post('/api/cancel', { project: PID }); await poll(true); redrawClips(); health(); } catch (e) { toast(e.message); } };
@@ -1164,7 +1166,7 @@ $('renderAll').onclick = async ev => {
   btn.disabled = false; btn.textContent = 'Render all segments';
 };
 
-/* ---------- full assist ---------- */
+/* ---------- assisted storyboard ---------- */
 let anTimer = null;
 const A = () => P.assist || {};
 async function reloadProject() { const fresh = await api('/api/project?id=' + PID); P.assist = fresh.assist; return fresh; }
@@ -1378,9 +1380,9 @@ async function refreshSystem() {
       : 'GPU reading unavailable. Run ~/PGX-Storyboard/run.sh once on the PGX to enable it.');
     meter('mem', s.memory?.percent, s.memory ? `${gb(s.memory.used)} of ${gb(s.memory.total)} in use` : '');
     meter('disk', s.disk?.percent, s.disk ? `${gb(s.disk.total - s.disk.used)} free of ${gb(s.disk.total)}` : '');
-    $('queueOut').textContent = s.comfy.ok ? `ComfyUI answered the storyboard in ${s.comfy.ms} ms · ${s.comfy.running} rendering, ${s.comfy.waiting} waiting` : 'ComfyUI is not reachable: ' + (s.comfy.error || '');
+    $('queueOut').textContent = s.comfy.ok ? `ComfyUI answered SWIFT Director in ${s.comfy.ms} ms · ${s.comfy.running} rendering, ${s.comfy.waiting} waiting` : 'ComfyUI is not reachable: ' + (s.comfy.error || '');
     $('queueOut').className = s.comfy.ok ? 'hint' : 'err';
-  } catch (e) { $('queueOut').textContent = 'Storyboard server not reachable.'; $('queueOut').className = 'err'; }
+  } catch (e) { $('queueOut').textContent = 'SWIFT Director server not reachable.'; $('queueOut').className = 'err'; }
 }
 setInterval(refreshSystem, 2000);
 
@@ -1471,7 +1473,7 @@ document.addEventListener('keydown', ev => {
   if (ev.key === 'Escape') closeViewer(); else if (ev.key === '+' || ev.key === '=') vZoomTo(V.s * 1.4); else if (ev.key === '-') vZoomTo(V.s / 1.4); else if (ev.key === '0') vFit(); else if (ev.key === '1') vZoomTo(1);
 });
 window.addEventListener('resize', () => { if ($('viewer').classList.contains('on')) vFit(); });
-document.addEventListener('click', ev => {                /* any picture in Assets, and the key frames in Full assist */
+document.addEventListener('click', ev => {                /* any picture in Assets, and the key frames in Assisted Storyboard */
   const img = ev.target.closest('#v-assets .card img, .keyframe img'); if (!img) return;
   const card = img.closest('.card, .keyframe'), actor = img.closest('.actor')?.querySelector('.aname')?.value;
   const label = card.querySelector('input:not([type])')?.value || card.querySelector('.title, b')?.textContent || '';
@@ -1518,10 +1520,10 @@ function renderModels(data) {
   $('modelsBtn').disabled = !!data.checking; $('modelsBtn').textContent = data.checking ? 'Checking…' : 'Check for updates';
   const stale = all.filter(m => m.state === 'outdated').length, checked = all.filter(m => m.checked).length;
   $('modelsNote').textContent = data.checking ? 'Checking each model against the version published today. The first check reads every file once, so it can take several minutes; later checks are quick.'
-    : !checked ? 'Every model the storyboard uses and what it does here. Press Check for updates to compare each one with the version published today.'
+    : !checked ? 'Every model SWIFT Director uses and what it does here. Press Check for updates to compare each one with the version published today.'
     : stale ? `${stale} model${stale > 1 ? 's have' : ' has'} an update available.`
     : all.some(m => m.state === 'needs_key') ? 'Checked everything that does not need a key. Models with a yellow triangle require Hugging Face access: press Check for updates again and enter your key.'
-    : all.some(m => m.state === 'missing' && !m.optional) ? 'Some models the storyboard needs are not on the PGX. Press Download next to each one.'
+    : all.some(m => m.state === 'missing' && !m.optional) ? 'Some models SWIFT Director needs are not on the PGX. Press Download next to each one.'
     : all.some(m => m.state === 'error') ? 'Everything that could be checked is up to date. Some models could not be checked; see the notes below.'
     : 'Everything is up to date.';
   if (stale && !data.checking && all.some(m => m.state === 'needs_key')) $('modelsNote').textContent += ' Models with a yellow triangle require Hugging Face access to check.';

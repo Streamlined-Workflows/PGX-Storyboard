@@ -1,4 +1,4 @@
-"""The AI models the storyboard uses: what each one is for, whether it is current, and updating it.
+"""The AI models SWIFT Director uses: what each one is for, whether it is current, and updating it.
 
 Three kinds of model live on the PGX:
   file    - a weights file in ComfyUI's models folder, published on Hugging Face
@@ -47,8 +47,8 @@ GROUPS = [
     ("singing", "Singing clips", "InfiniteTalk on top of Wan 2.1. Used whenever a segment is set to Singing."),
     ("endshot", "Story clips that land on an end shot", "Wan 2.2. Only used when a Story segment has an end shot."),
     ("stills", "Stills", "FLUX.2 [dev]. Makes actor views and shots."),
-    ("assist", "Full assist", "The models that listen to the song and do the writing."),
-    ("ltx", "LTX-2.5 (installed for testing)", "Not used by the storyboard yet. Listed so it stays current while we evaluate it as the next video engine."),
+    ("assist", "Assisted Storyboard", "The models that listen to the song and do the writing."),
+    ("ltx", "LTX-2.5 (installed for testing)", "Not used by SWIFT Director yet. Listed so it stays current while we evaluate it as the next video engine."),
 ]
 
 CATALOG = [
@@ -105,13 +105,13 @@ CATALOG = [
          use="Reads the prompt for a still (the actor description plus the framing) for FLUX.2."),
     dict(id="flux2_vae", group="stills", name="FLUX.2 VAE", file="flux2-vae.safetensors", folder="vae", repos=[FLUX2],
          use="Reads an actor's reference views in for FLUX.2 and turns the result into the finished image."),
-    # ---- Full assist ----
+    # ---- Assisted Storyboard ----
     dict(id="llm", group="assist", kind="ollama", name=OLLAMA_MODEL,
-         use="The writer. In Full assist it names the segments, lines your pasted lyrics up with the song and writes the story concept. "
+         use="The writer. In Assisted Storyboard it names the segments, lines your pasted lyrics up with the song and writes the story concept. "
              "In Assets it looks at an actor's views to write the description, and writes the prompt for each new view."),
     dict(id="speech", group="assist", kind="speech", name="Whisper large-v3-turbo",
          use="Listens to the song and writes down the lyrics with the time of every word, "
-             "which Full assist uses to decide where the cuts go."),
+             "which Assisted Storyboard uses to decide where the cuts go."),
     # ---- LTX-2.5 ----
     dict(id="ltx_model", group="ltx", name="LTX-2.5 22B distilled", file="ltx-2.5-22b-distilled-transformer-comfy-int8-convrot.safetensors",
          folder="diffusion_models", repos=[LTX], optional=True,
@@ -427,7 +427,7 @@ def check_speech(model):
     if info.get("error"):
         return _set(mid, state="error", detail=info["error"])
     if not info.get("local"):
-        return _set(mid, state="missing", detail="Not downloaded yet. It downloads by itself the first time Full assist analyzes a song.")
+        return _set(mid, state="missing", detail="Not downloaded yet. It downloads by itself the first time Assisted Storyboard analyzes a song.")
     if info["local"] == info.get("remote"):
         return _set(mid, state="current", detail=f"matches {info.get('repo')}")
     return _set(mid, state="outdated", detail=f"{info.get('repo')} has published a newer version.")
