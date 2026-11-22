@@ -206,6 +206,8 @@
 
   <!-- ===== Assets ===== -->
   <div id="v-assets" class="view">
+    <div class="row"><div class="toggle scope" data-scope="assets"><button data-v="all">All</button><button data-v="project" class="on">Project</button></div>
+      <span class="hint" id="assetsScopeHint">Showing this project's assets.</span></div>
     <section>
       <div class="row" style="margin-bottom:12px"><h2 style="margin:0">Actors</h2><span class="spacer"></span>
         <span class="hint">An actor is one character. Add several views of them: close-up, full body, different outfits.</span>
@@ -222,15 +224,19 @@
         <label class="btn">Add audio<input id="audioFile" type="file" accept="audio/*,video/mp4" multiple hidden></label></div>
       <div id="audios"></div>
     </section>
+    <div id="otherAssets" style="display:grid;gap:18px"></div>
   </div>
 
   <!-- ===== Library ===== -->
   <div id="v-library" class="view">
+    <div class="row"><div class="toggle scope" data-scope="library"><button data-v="all">All</button><button data-v="project" class="on">Project</button></div>
+      <span class="hint" id="libraryScopeHint">Showing this project's clips.</span></div>
     <section>
       <div class="row" style="margin-bottom:12px"><h2 style="margin:0">Library</h2><span id="libCount" class="hint"></span><span class="spacer"></span>
         <div class="toggle"><button id="libAll" class="on">All clips</button><button id="libPicked">Picked only</button></div></div>
       <div id="library" class="results" style="margin-top:0"></div>
     </section>
+    <div id="otherLibrary" style="display:grid;gap:18px"></div>
   </div>
 
   <!-- ===== System ===== -->
@@ -321,6 +327,80 @@ function mergeJobs(fresh) {
   return before !== JSON.stringify(P.image_jobs) || taken.length > 0;
 }
 
+/* ---------- All / Project scope for Assets and Library ---------- */
+const scope = { assets: 'project', library: 'project' };
+let ALL = [];
+async function loadAll() { try { ALL = (await api('/api/all')).projects; } catch (e) { toast(e.message); } }
+const others = () => ALL.filter(p => p.id !== PID);
+document.querySelectorAll('.toggle.scope button').forEach(b => b.onclick = async () => {
+  const which = b.parentElement.dataset.scope; scope[which] = b.dataset.v;
+  b.parentElement.querySelectorAll('button').forEach(x => x.classList.toggle('on', x === b));
+  if (b.dataset.v === 'all') { await save(); await loadAll(); }
+  which === 'assets' ? renderAssets() : renderLibrary();
+});
+
+function renderOtherAssets() {
+  const wrap = $('otherAssets'); wrap.innerHTML = '';
+  $('assetsScopeHint').textContent = scope.assets === 'all' ? 'Showing every project. Add anything from another project to this one.' : "Showing this project's assets.";
+  if (scope.assets !== 'all') return;
+  const list = others().filter(p => p.actors.length || p.photos.length || p.audio.length);
+  if (!list.length) { wrap.innerHTML = '<section><span class="hint">No other project has assets yet.</span></section>'; return; }
+  const added = (label, on) => on ? '<span class="pill ok">In this project</span>' : `<button class="small add">${label}</button>`;
+  list.forEach(p => {
+    const sec = document.createElement('section');
+    sec.innerHTML = `<h2>From ${esc(p.name)}</h2>`;
+    p.actors.forEach(a => {
+      const have = P.actors.some(x => x.name === a.name && x.views.some(v => a.views.some(w => w.image === v.image)));
+      const d = document.createElement('div'); d.className = 'actor';
+      d.innerHTML = `<div class="row" style="margin-bottom:8px"><b>${esc(a.name || 'Actor')}</b><span class="hint">${a.views.length} view${a.views.length === 1 ? '' : 's'}</span><span class="spacer"></span>${added('Add this actor to the project', have)}</div>` +
+        (a.description ? `<div class="hint" style="margin-bottom:8px">${esc(a.description)}</div>` : '') +
+        `<div class="cards">${a.views.map(v => `<div class="card"><img src="${view(v.image)}" alt=""><div class="hint" style="padding:5px 7px">${esc(v.label || '')}&nbsp;</div></div>`).join('')}</div>`;
+      const btn = d.querySelector('.add');
+      if (btn) btn.onclick = () => { P.actors.push({ id: uid(), name: a.name, description: a.description || '', views: a.views.map(v => ({ id: uid(), image: v.image, label: v.label })) }); dirty(); renderAssets(); toast(`${a.name || 'Actor'} added to this project.`); };
+      sec.appendChild(d);
+    });
+    if (p.photos.length) {
+      const row = document.createElement('div'); row.className = 'cards'; row.style.marginBottom = '12px';
+      p.photos.forEach(ph => {
+        const have = P.photos.some(x => x.image === ph.image);
+        const c = document.createElement('div'); c.className = 'card';
+        c.innerHTML = `<img src="${view(ph.image)}" alt=""><div class="hint" style="padding:5px 7px">${esc(ph.name)}</div><div class="acts" style="padding:0 6px 6px">${added('Add', have)}</div>`;
+        const btn = c.querySelector('.add'); if (btn) btn.onclick = () => { P.photos.push({ id: uid(), name: ph.name, image: ph.image }); dirty(); renderAssets(); };
+        row.appendChild(c);
+      });
+      sec.appendChild(row);
+    }
+    p.audio.forEach(au => {
+      const have = P.audio.some(x => x.filename === au.filename);
+      const d = document.createElement('div'); d.className = 'audiorow';
+      d.innerHTML = `<b>${esc(au.name)}</b><span class="hint">${au.duration ? fmt(au.duration) : ''}</span><audio controls preload="none" src="${view(au.filename)}"></audio><span class="spacer"></span>${added('Add to this project', have)}`;
+      const btn = d.querySelector('.add'); if (btn) btn.onclick = () => { P.audio.push({ id: uid(), name: au.name, filename: au.filename, duration: au.duration || 0 }); renderSongPick(); dirty(); renderAssets(); };
+      sec.appendChild(d);
+    });
+    wrap.appendChild(sec);
+  });
+}
+
+function renderOtherLibrary() {
+  const wrap = $('otherLibrary'); wrap.innerHTML = '';
+  $('libraryScopeHint').textContent = scope.library === 'all' ? 'Showing clips from every project.' : "Showing this project's clips.";
+  if (scope.library !== 'all') return;
+  const list = others().map(p => ({ ...p, clips: p.clips.filter(c => !libPickedOnly || c.chosen) })).filter(p => p.clips.length);
+  if (!list.length) { wrap.innerHTML = `<section><span class="hint">No other project has ${libPickedOnly ? 'picked ' : ''}clips yet.</span></section>`; return; }
+  list.forEach(p => {
+    const sec = document.createElement('section');
+    sec.innerHTML = `<div class="row" style="margin-bottom:12px"><h2 style="margin:0">From ${esc(p.name)}</h2><span class="hint">${p.clips.length} clip${p.clips.length === 1 ? '' : 's'}</span><span class="spacer"></span><button class="small open">Open this project</button></div><div class="results" style="margin-top:0"></div>`;
+    sec.querySelector('.open').onclick = async () => { if (await openProject(p.id)) show('library'); };
+    p.clips.slice().sort((a, b) => (b.finished || 0) - (a.finished || 0)).forEach(c => {
+      const f = c.files[0], url = view(f.filename, f.type, f.subfolder);
+      const d = document.createElement('div'); d.className = 'result' + (c.chosen ? ' chosen' : '');
+      d.innerHTML = `<video src="${url}" controls loop preload="metadata"></video><div class="title">${esc(c.segment)}</div><div class="bar"><span>${esc(c.engine)} · ${when(c.finished)}</span><span class="spacer"></span>${c.chosen ? '<span>★ picked</span>' : ''}<a class="btn small" href="${url}" download="${esc(f.filename)}">Download</a></div>`;
+      sec.querySelector('.results').appendChild(d);
+    });
+    wrap.appendChild(sec);
+  });
+}
+
 /* ---------- navigation ---------- */
 function show(name) {
   currentView = name;
@@ -329,8 +409,8 @@ function show(name) {
   if (name !== 'storyboard') $('audio').pause();
   if (name === 'assist') { renderAssist(); if (P.song) pollAnalysis(); }
   if (name === 'projects') renderProjects();
-  if (name === 'assets') renderAssets();
-  if (name === 'library') renderLibrary();
+  if (name === 'assets') { renderAssets(); if (scope.assets === 'all') loadAll().then(renderAssets); }
+  if (name === 'library') { renderLibrary(); if (scope.library === 'all') loadAll().then(renderLibrary); }
   if (name === 'system') { refreshSystem(); }
   if (name === 'storyboard') { renderSegments(); }
 }
@@ -623,7 +703,7 @@ function renderAssets() {
   P.actors.forEach(a => $('actors').appendChild(actorPanel(a)));
   $('photos').innerHTML = P.photos.length ? '' : '<span class="hint">No photos yet. Use these for locations and other reference stills.</span>';
   P.photos.forEach(ph => $('photos').appendChild(photoCard(ph)));
-  paintProgress();
+  paintProgress(); renderOtherAssets();
   const wrap = $('audios'); wrap.innerHTML = P.audio.length ? '' : '<span class="hint">No audio yet.</span>';
   P.audio.forEach(a => {
     const isSong = P.song?.filename === a.filename;
@@ -770,7 +850,7 @@ function renderLibrary() {
   $('libCount').textContent = items.length ? `${items.length} clip${items.length === 1 ? '' : 's'} in this project` : '';
   wrap.innerHTML = items.length ? '' : `<span class="hint">${libPickedOnly ? 'No picked clips yet.' : 'No clips yet. Every video you render in this project appears here.'}</span>`;
   items.forEach(([s, r]) => wrap.appendChild(resultCard(s, r, true)));
-  paintProgress();
+  paintProgress(); renderOtherLibrary();
 }
 $('libAll').onclick = () => { libPickedOnly = false; $('libAll').classList.add('on'); $('libPicked').classList.remove('on'); renderLibrary(); };
 $('libPicked').onclick = () => { libPickedOnly = true; $('libPicked').classList.add('on'); $('libAll').classList.remove('on'); renderLibrary(); };

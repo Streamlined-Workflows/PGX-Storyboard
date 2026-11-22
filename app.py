@@ -159,6 +159,22 @@ def list_projects():
         return sorted(out, key=lambda p: -p["updated"])
 
 
+def everything():
+    """Assets and finished clips of every project, for the All view in Assets and Library."""
+    out = []
+    for info in list_projects():
+        try:
+            p = load_project(info["id"])
+        except ValueError:
+            continue
+        clips = [{"segment": s.get("name") or "Segment", "segment_id": s["id"], "chosen": s.get("chosen") == r["id"],
+                  "id": r["id"], "files": r.get("files", []), "engine": r.get("engine", ""),
+                  "finished": r.get("finished") or r.get("created")}
+                 for s in p["segments"] for r in s.get("results", []) if r.get("status") == "done" and r.get("files")]
+        out.append({"id": p["id"], "name": p["name"], "actors": p["actors"], "photos": p["photos"], "audio": p["audio"], "clips": clips})
+    return out
+
+
 def merge_project(pid, incoming):
     """Apply the browser's edits. Render results stay owned by the server."""
     with LOCK:
@@ -633,6 +649,8 @@ class Handler(BaseHTTPRequestHandler):
                 return self.wfile.write(body)
             if url.path == "/api/projects":
                 return self.send_json({"projects": list_projects()})
+            if url.path == "/api/all":
+                return self.send_json({"projects": everything()})
             if url.path == "/api/project":
                 return self.send_json(refresh_statuses(query.get("id", [""])[0]))
             if url.path == "/api/ping":

@@ -45,6 +45,8 @@ It runs as a Docker container named `storyboard` that starts on boot. It expects
 
 Each actor panel has two buttons. **Describe from images** sends up to four of the actor's views to the language model (it must be vision-capable) and writes the description. **Generate views from description** queues a close-up, a waist-up and a full-body still with FLUX.2 [dev] and the 8-step turbo LoRA, using up to three existing views as references so the new stills match; finished stills are copied into ComfyUI's input folder and added to the actor.
 
+Assets and Library each have an **All / Project** toggle. All also lists what other projects hold: actors, photos and audio can be added to the open project (a copy that points at the same image and audio files), and clips can be watched, downloaded, or their project opened.
+
 Projects are stored as `data/projects/<id>.json`. Deleted projects are moved to `data/trash/`. The GPU meter reads `nvidia-smi`, which is why `run.sh` starts the container with `--gpus all`.
 
 ## Full assist
