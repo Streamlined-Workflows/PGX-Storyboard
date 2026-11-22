@@ -1,6 +1,6 @@
 """ComfyUI workflow builders for the storyboard app.
 
-Two engines, both verified on the PGX on 2026-11-21:
+Two engines, both verified on the render server on 2026-11-21:
   story   - Wan 2.1 image-to-video (16 fps), chained from the last frame for long segments
   singing - Wan 2.1 InfiniteTalk (25 fps), audio-driven, chained with motion-frame overlap
 """

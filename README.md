@@ -2,31 +2,29 @@
 
 **Your story. Your vision. Directed by you, Built by AI.**
 
-SWIFT Director is a browser studio for making music videos with AI models that run on your own machine. You bring the song and the characters and direct every shot; the models on a local ComfyUI server (built for a Lenovo ThinkStation PGX / DGX Spark) do the rendering. Nothing is sent to an outside service.
+SWIFT Director is a browser studio for making music videos with AI models that run on your own machine. You bring the song and the characters and direct every shot; the models on a local ComfyUI server (built for an NVIDIA DGX Spark class machine) do the rendering. Nothing is sent to an outside service.
 
 It has two ways of working. **Storyboard** is the hands-on workspace: split the song into segments and set each shot yourself. **Assisted Storyboard** has the AI listen to the song, propose the cuts, a story, a cast and the key frames for you to approve or change.
 
-The repository, the containers and the folder on the PGX keep the name `PGX-Storyboard`.
-
-Load a song, split it into 5 to 15 second segments, give each one a begin shot, a prompt and a number of runs, and render the clips on the PGX.
+Load a song, split it into 5 to 15 second segments, give each one a begin shot, a prompt and a number of runs, and render the clips on your own server.
 
 ## Start it
 
-On the PGX:
+On the server (the machine that runs ComfyUI):
 
 ```
-git clone https://github.com/Streamlined-Workflows/PGX-Storyboard ~/PGX-Storyboard
-~/PGX-Storyboard/run.sh
+git clone https://github.com/Streamlined-Workflows/SWIFT_Director ~/SWIFT_Director
+~/SWIFT_Director/run.sh
 ```
 
-Then open `http://thinkstationpgx-0e76.local:8190` from any computer on the same network.
+Then open `http://<server-name>.local:8190` from any computer on the same network.
 
-It runs as a Docker container named `storyboard` that starts on boot. It expects ComfyUI on the same machine at port 8188.
+It runs as a Docker container named `swift-director` that starts on boot (with `swift-director-assist` beside it for song analysis). It expects ComfyUI on the same machine at port 8188.
 
 ## Update it
 
 ```
-~/PGX-Storyboard/update.sh
+~/SWIFT_Director/update.sh
 ```
 
 ## What each part does
@@ -47,7 +45,7 @@ It runs as a Docker container named `storyboard` that starts on boot. It expects
 | Projects | Every saved project. Open, rename, duplicate or delete one; each keeps its own timeline, assets and clips |
 | Assets | The open project's actors, photos and audio. An actor is one character with a name, a description and any number of views (stills); photos are loose reference stills |
 | Library | Every video rendered in the open project, with download links |
-| System status | Ping test, and CPU, GPU, memory and disk meters for the PGX |
+| System status | Ping test, and CPU, GPU, memory and disk meters for the server |
 
 Each actor panel has two buttons. **Describe from images** sends up to four of the actor's views to the language model (it must be vision-capable) and writes the description. **Generate views from description** queues a close-up, a waist-up and a full-body still with FLUX.2 [dev] and the 8-step turbo LoRA, using up to three existing views as references so the new stills match; finished stills are copied into ComfyUI's input folder and added to the actor.
 
@@ -66,7 +64,7 @@ A guided pass that turns a song into a planned storyboard. Each step waits for a
 | Story | Writes a title, logline, visual style and one beat per segment. Approving copies each beat into its segment's empty prompt. | Ollama |
 | Cast, Shots | Not built yet. | |
 
-The language model is reached through Ollama on the PGX (`OLLAMA_URL`, default `http://127.0.0.1:11434`; `OLLAMA_MODEL`, default `qwen3.6:35b`). It is unloaded when a render is queued so its memory goes back to the video models.
+The language model is reached through Ollama on the server (`OLLAMA_URL`, default `http://127.0.0.1:11434`; `OLLAMA_MODEL`, default `qwen3.6:35b`). It is unloaded when a render is queued so its memory goes back to the video models.
 
 ## Timing, progress and batch renders
 
@@ -131,7 +129,7 @@ In Assisted Storyboard > Shots the language model also decides, for every segmen
 
 Click a picture (Assets, Library > Images, Assisted Storyboard key frames) to open the viewer, then **Fix an area**: paint over the problem, describe what should be there, and Generate fix. FLUX.2 repaints only the painted area (`workflows.build_fix`: noise-masked sampling with the original as reference, then pasted back through the mask). The result is saved as a new picture; the original is kept.
 
-**Hugging Face key.** If the PGX has no key, Check for updates first asks for a read-only Hugging Face token. It is verified with Hugging Face, then stored in `data/hf_token` (owner-only, never committed, never sent back to the browser). Skip checks everything else; models that need access show a yellow triangle and are not attempted. A key saved by `hf auth login` on the PGX is used automatically.
+**Hugging Face key.** If the server has no key, Check for updates first asks for a read-only Hugging Face token. It is verified with Hugging Face, then stored in `data/hf_token` (owner-only, never committed, never sent back to the browser). Skip checks everything else; models that need access show a yellow triangle and are not attempted. A key saved by `hf auth login` on the server is used automatically.
 
 ## SWIFT branding
 

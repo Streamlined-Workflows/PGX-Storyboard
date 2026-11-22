@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Song analysis service for the storyboard: lyrics with timestamps, tempo, beats, sections.
 
-Runs beside the storyboard on the PGX (port 8191, local only). The storyboard asks it to analyze a
+Runs beside SWIFT Director on the same machine (port 8191, local only). The storyboard asks it to analyze a
 song by URL and polls for the result. Speech-to-text runs on the CPU with faster-whisper; the first
 run downloads the speech model.
 """

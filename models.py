@@ -1,6 +1,6 @@
 """The AI models SWIFT Director uses: what each one is for, whether it is current, and updating it.
 
-Three kinds of model live on the PGX:
+Three kinds of model live on the server:
   file    - a weights file in ComfyUI's models folder, published on Hugging Face
   ollama  - the language model served by Ollama
   speech  - the speech-to-text model inside the song analysis service
@@ -195,7 +195,7 @@ def set_token(token):
         raise ValueError("Paste your Hugging Face key first.")
     if not token.startswith("hf_") or len(token) < 20 or any(c.isspace() for c in token):
         raise ValueError("That does not look like a Hugging Face key. They start with hf_ and have no spaces.")
-    req = urllib.request.Request(HF + "/api/whoami-v2", headers={"Authorization": "Bearer " + token, "User-Agent": "pgx-storyboard"})
+    req = urllib.request.Request(HF + "/api/whoami-v2", headers={"Authorization": "Bearer " + token, "User-Agent": "swift-director"})
     try:
         with urllib.request.urlopen(req, timeout=20) as r:
             who = json.load(r)
@@ -233,7 +233,7 @@ def hf_open(url, timeout=60):
     """Open a Hugging Face URL, following redirects by hand so the token is only ever sent to Hugging Face itself."""
     home = urllib.parse.urlsplit(HF).netloc
     for _ in range(8):
-        headers = {"User-Agent": "pgx-storyboard"}
+        headers = {"User-Agent": "swift-director"}
         if urllib.parse.urlsplit(url).netloc == home and hf_token():
             headers["Authorization"] = "Bearer " + hf_token()
         try:
@@ -349,7 +349,7 @@ def check_file(model, local, repo_cache):
     name = _local_name(model, local)
     if not name:
         return _set(mid, state="missing", file=model.get("default_file", model["file"]),
-                    detail="Not on the PGX." + (" Only needed if you use this feature." if model.get("optional") else ""))
+                    detail="Not on the server." + (" Only needed if you use this feature." if model.get("optional") else ""))
     path = local[name]
     _set(mid, file=name)
     if not hf_token() and any(r in GATED for r in model["repos"]):       # known to need a key: do not even ask
@@ -397,7 +397,7 @@ def check_ollama(model):
     try:
         mine = _ollama_local()
     except OSError as e:
-        return _set(mid, state="error", detail=f"Ollama is not answering on the PGX: {getattr(e, 'reason', e)}")
+        return _set(mid, state="error", detail=f"Ollama is not answering on the server: {getattr(e, 'reason', e)}")
     if not mine:
         return _set(mid, state="missing", detail="Not downloaded in Ollama yet.")
     try:
@@ -485,7 +485,7 @@ def update_file(model):
     dest, part = os.path.join(folder, name), os.path.join(folder, name + ".part")
     total = remote.get("size") or 0
     if total and shutil.disk_usage(folder).free < total + 2e9:
-        raise ValueError(f"Not enough free disk space on the PGX for this download ({_size(total)}).")
+        raise ValueError(f"Not enough free disk space on the server for this download ({_size(total)}).")
     digest, done, started = hashlib.sha256(), 0, time.time()
     try:
         with hf_open(f"{HF}/{repo}/resolve/main/{urllib.parse.quote(remote['path'])}", timeout=120) as resp, open(part, "wb") as out:

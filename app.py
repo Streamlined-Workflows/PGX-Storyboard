@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Storyboard server for the PGX. Standard library only.
+"""SWIFT Director server. Standard library only.
 
 Serves the browser page, keeps each project in data/projects/<id>.json, forwards uploads and
 media to ComfyUI, turns segments into ComfyUI jobs, and reports system load.
@@ -343,7 +343,7 @@ def actor_describe(pid, actor_id):
         try:
             images.append(base64.b64encode(comfy_bytes("/view?" + urllib.parse.urlencode({"filename": image, "type": "input"}))).decode())
         except OSError as e:
-            raise ValueError(f"Could not read the view {image} from the PGX: {e}")
+            raise ValueError(f"Could not read the view {image} from the server: {e}")
     return {"description": assist.describe_actor(actor.get("name", ""), images)}
 
 
@@ -405,7 +405,7 @@ def queue_still(project, prompt, refs, stem, graph=None, **fields):
     if reply.get("_http_error") or reply.get("node_errors") or not reply.get("prompt_id"):
         detail = json.dumps(reply.get("node_errors") or reply.get("error") or reply)
         if "not in" in detail and ".safetensors" in detail:
-            raise ValueError("The FLUX.2 image model files are not on the PGX yet. " + detail[:300])
+            raise ValueError("The FLUX.2 image model files are not on the server yet. " + detail[:300])
         raise ValueError("ComfyUI rejected the image job: " + detail[:500])
     job = {"id": rid, "prompt_id": reply["prompt_id"], "status": "queued", "seed": seed, "created": time.time(),
            "save_as": stem + ".png", "steps": workflows.IMAGE_STEPS, "passes": 1, **fields}
@@ -468,7 +468,7 @@ def queue_clip(project, seg, begin, rid):
     if reply.get("_http_error") or reply.get("node_errors") or not reply.get("prompt_id"):
         detail = json.dumps(reply.get("node_errors") or reply.get("error") or reply)
         if "not in" in detail and ".safetensors" in detail:
-            raise ValueError("A model file this shot needs is not on the PGX yet. " + detail[:400])
+            raise ValueError("A model file this shot needs is not on the server yet. " + detail[:400])
         raise ValueError("ComfyUI rejected the job: " + detail[:600])
     return {"prompt_id": reply["prompt_id"], "seed": seed, "status": "queued", "created": time.time(),
             "engine": workflows.engine(seg), "prompt": seg.get("prompt", ""), "begin": begin, **workflows.plan(seg)}
@@ -557,7 +557,7 @@ def assist_service(path, payload=None, timeout=15):
         with urllib.request.urlopen(req, timeout=timeout) as r:
             return json.loads(r.read() or b"{}")
     except OSError as e:
-        raise ValueError(f"The song analysis service is not running on the PGX ({e}). Run ~/PGX-Storyboard/run.sh to start it.")
+        raise ValueError(f"The song analysis service is not running on the server ({e}). Run ~/SWIFT_Director/run.sh to start it.")
 
 
 def song_key(project):

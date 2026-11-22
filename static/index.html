@@ -7,7 +7,7 @@
 <link rel="icon" type="image/svg+xml" href="/static/brand/swift-drop.svg">
 <link rel="stylesheet" href="/static/swift-tokens.css">
 <style>
-  /* Montserrat (SIL Open Font License 1.1), served from the PGX so the page needs no outside network. */
+  /* Montserrat (SIL Open Font License 1.1), served from the server so the page needs no outside network. */
   @font-face { font-family:Montserrat; font-weight:400; font-display:swap; src:url('/static/fonts/montserrat-latin-400-normal.woff2') format('woff2'); }
   @font-face { font-family:Montserrat; font-weight:400; font-style:italic; font-display:swap; src:url('/static/fonts/montserrat-latin-400-italic.woff2') format('woff2'); }
   @font-face { font-family:Montserrat; font-weight:500; font-display:swap; src:url('/static/fonts/montserrat-latin-500-normal.woff2') format('woff2'); }
@@ -263,7 +263,7 @@
 <header>
   <button id="navOpen" class="navbtn" type="button" aria-label="Show the menu" title="Show the menu" aria-controls="nav" aria-expanded="true">☰</button>
   <input id="projName" title="Project name" value="">
-  <span id="health" class="pill">checking PGX…</span>
+  <span id="health" class="pill">checking the server…</span>
   <span class="spacer"></span>
   <span id="saved" class="pill">loaded</span>
   <button id="cancel" class="ghost" title="Stop the running job and clear the queue">Stop all renders</button>
@@ -302,7 +302,7 @@
   <div id="v-assist" class="view">
     <section>
       <div class="row"><h2 style="margin:0;text-transform:none;letter-spacing:0;color:var(--text);font-size:16px">Assisted Storyboard</h2><span id="assistHealth" class="hint"></span></div>
-      <div class="hint" style="margin-top:6px">The PGX listens to the song, proposes segments on the beat, and drafts a story. You approve each step before the next.</div>
+      <div class="hint" style="margin-top:6px">SWIFT Director listens to the song, proposes segments on the beat, and drafts a story. You approve each step before the next.</div>
     </section>
     <section class="step">
       <div class="row" style="margin-bottom:8px"><h2 style="margin:0">Listen to the song</h2><span class="spacer"></span><span id="anStatus" class="hint"></span><button id="anBtn" class="primary">Analyze song</button></div>
@@ -311,7 +311,7 @@
         <div class="lyrics" id="lyricLines"></div>
         <div class="row"><button id="lyricSave">Save lyric edits</button><span class="hint">Sung vocals over loud music are hard to transcribe. Fix lines here, or paste the real lyrics below.</span></div>
         <label style="margin-top:12px">Paste the real lyrics (optional)</label>
-        <textarea id="lyricPaste" placeholder="Paste the full lyrics here and the PGX will match them to the timing it heard."></textarea>
+        <textarea id="lyricPaste" placeholder="Paste the full lyrics here and SWIFT Director will match them to the timing it heard."></textarea>
         <div class="row" style="margin-top:8px"><button id="lyricAlign">Match pasted lyrics to the timing</button><span id="alignStatus" class="hint"></span></div>
       </div>
     </section>
@@ -385,11 +385,11 @@
   <!-- ===== System ===== -->
   <div id="v-system" class="view">
     <section>
-      <div class="row" style="margin-bottom:12px"><h2 style="margin:0">Connection</h2><span class="spacer"></span><button id="pingBtn">Test ping to PGX</button></div>
+      <div class="row" style="margin-bottom:12px"><h2 style="margin:0">Connection</h2><span class="spacer"></span><button id="pingBtn">Test ping to the server</button></div>
       <div id="pingOut" class="hint">Not tested yet.</div>
     </section>
     <section>
-      <h2>PGX load</h2>
+      <h2>Server load</h2>
       <div class="meters">
         <div class="meter"><label>CPU</label><div class="val" id="m-cpu">–</div><div class="track"><i id="t-cpu"></i></div><div class="hint" id="d-cpu"></div></div>
         <div class="meter"><label>GPU</label><div class="val" id="m-gpu">–</div><div class="track"><i id="t-gpu"></i></div><div class="hint" id="d-gpu"></div></div>
@@ -422,7 +422,7 @@
 </div>
 <div id="hfModal"><div class="box">
   <h2 style="margin:0 0 8px">Hugging Face key</h2>
-  <div class="hint">Some models (LTX-2.5, and any other licensed one) can only be checked and updated with a Hugging Face account that has accepted their license. Paste a <b>read-only</b> key from huggingface.co &gt; Settings &gt; Access Tokens. It is tested with Hugging Face first, then kept on the PGX only.</div>
+  <div class="hint">Some models (LTX-2.5, and any other licensed one) can only be checked and updated with a Hugging Face account that has accepted their license. Paste a <b>read-only</b> key from huggingface.co &gt; Settings &gt; Access Tokens. It is tested with Hugging Face first, then kept on the server only.</div>
   <input type="password" id="hfKey" placeholder="hf_…" autocomplete="off" spellcheck="false">
   <div id="hfMsg" class="hint" style="min-height:18px"></div>
   <div class="row" style="margin-top:12px"><button id="hfUse" class="primary">Use this key</button><button id="hfSkip">Skip</button><span class="spacer"></span><button id="hfCancel" class="ghost">Cancel</button></div>
@@ -450,8 +450,8 @@ async function api(path, opts) {
   let j;
   try { j = JSON.parse(text); }
   catch (e) {
-    if (r.status === 413) throw new Error('That file is too large for the PGX to accept (its limit is 100 MB).');
-    throw new Error(`Unexpected reply from the PGX (status ${r.status}): ${text.replace(/<[^>]+>/g, ' ').trim().slice(0, 160) || 'empty'}`);
+    if (r.status === 413) throw new Error('That file is too large for the server to accept (its limit is 100 MB).');
+    throw new Error(`Unexpected reply from the server (status ${r.status}): ${text.replace(/<[^>]+>/g, ' ').trim().slice(0, 160) || 'empty'}`);
   }
   if (!r.ok || j.error) throw new Error(j.error || ('Request failed: ' + r.status));
   return j;
@@ -645,7 +645,7 @@ async function renderProjects() {
     };
     d.querySelector('.dup').onclick = async () => { try { if (p.id === PID) await save(); await post('/api/projects/duplicate', { id: p.id }); renderProjects(); } catch (e) { toast(e.message); } };
     d.querySelector('.del').onclick = async () => {
-      if (!confirm(`Delete "${p.name}"? The project is moved to a trash folder on the PGX. Its rendered clips stay on disk.`)) return;
+      if (!confirm(`Delete "${p.name}"? The project is moved to a trash folder on the server. Its rendered clips stay on disk.`)) return;
       try {
         await post('/api/projects/delete', { id: p.id });
         if (p.id === PID) { PID = null; await boot(); show('projects'); } else renderProjects();
@@ -758,7 +758,7 @@ setInterval(syncPreview, 200);
 $('wave').onclick = e => { const dur = P.song?.duration; if (!dur) return; const r = e.target.getBoundingClientRect(); $('audio').currentTime = (e.clientX - r.left) / r.width * dur; drawWave(); };
 $('audio').ontimeupdate = () => { if (stopAt !== null && $('audio').currentTime >= stopAt) { $('audio').pause(); stopAt = null; } drawWave(); };
 
-/* Videos and very large files are reduced to their soundtrack in the browser, so only a small WAV is sent to the PGX. */
+/* Videos and very large files are reduced to their soundtrack in the browser, so only a small WAV is sent to the server. */
 async function soundtrack(file) {
   if (!file.type.startsWith('video/') && !/\.(mp4|mov|mkv|webm)$/i.test(file.name) && file.size < 60 * 1048576) return file;
   const ctx = new (window.AudioContext || window.webkitAudioContext)();
@@ -877,7 +877,7 @@ function actorPanel(a) {
   d.innerHTML = `<div class="head"><div><label>Actor name</label><input class="aname" value="${esc(a.name)}"></div>` +
     `<div><label>Description (who they are and how they look; used when shots are generated)</label><textarea class="adesc" placeholder="e.g. A starship pilot in her thirties with wavy red hair and a maroon flight uniform">${esc(a.description || '')}</textarea></div>` +
     `<div style="padding-top:18px"><label class="btn small">Add view<input type="file" accept="image/*" multiple hidden></label> <button class="ghost small delactor" title="Delete this actor">Delete</button></div></div>` +
-    `<div class="row" style="margin-bottom:10px"><button class="small describe" ${a.views.length ? '' : 'disabled'} title="The PGX looks at this actor's views and writes the description">Describe from images</button>` +
+    `<div class="row" style="margin-bottom:10px"><button class="small describe" ${a.views.length ? '' : 'disabled'} title="SWIFT Director looks at this actor's views and writes the description">Describe from images</button>` +
     `<button class="small generate" title="Makes a close-up, a waist-up and a full-body still with FLUX.2, copying the actor from their first pictures">Generate views</button>` +
     `<button class="small genrefs" ${refsOf(a).size ? '' : 'disabled'} title="Makes the same three views from the description, copying the actor only from the pictures you ticked as Reference">Generate from description and references${refsOf(a).size ? ' (' + refsOf(a).size + ')' : ''}</button>` +
     `<span style="display:inline-flex;gap:4px"><select class="oneview" title="Which single view to make"><option>close-up</option><option>waist up</option><option>full body</option><option>3/4 left</option><option>3/4 right</option><option>left</option><option>right</option><option>rear</option></select>` +
@@ -893,7 +893,7 @@ function actorPanel(a) {
     a.description = (await post('/api/actor/describe', { project: PID, actor_id: a.id })).description;
     dirty(); renderAssets();
   });
-  const generate = (btn, extra) => busy(btn, status, 'Sending to the PGX…', async () => {
+  const generate = (btn, extra) => busy(btn, status, 'Sending to the server…', async () => {
     if (!(a.description || '').trim() && !a.views.length && !(extraNote[a.id] || '').trim()) throw new Error('Write a description first, or add a view and use Describe from images.');
     await save();
     await post('/api/actor/generate', { project: PID, actor_id: a.id, extra: extraNote[a.id] || '', ...extra });
@@ -999,7 +999,7 @@ function resultCard(seg, r, inLibrary) {
   if (r.status === 'done' && url) media = `<video src="${url}" controls loop preload="metadata"></video>`;
   else if (r.status === 'error') media = `<div class="wait err">${esc(r.error || 'Failed')}</div>`;
   else if (r.status === 'waiting') media = `<div class="wait"><div>On hold</div><div class="hint">${esc(r.wait || 'Waiting for the segment before this one.')}</div></div>`;
-  else media = `<div class="wait"><div>${r.status === 'running' ? 'Rendering on the PGX…' : 'Waiting in the queue…'}</div><div class="pbar"><i id="pb-${r.id}"></i></div><div id="pt-${r.id}" class="hint"></div></div>`;
+  else media = `<div class="wait"><div>${r.status === 'running' ? 'Rendering on the server…' : 'Waiting in the queue…'}</div><div class="pbar"><i id="pb-${r.id}"></i></div><div id="pt-${r.id}" class="hint"></div></div>`;
   d.innerHTML = media + (inLibrary ? `<div class="title">${esc(seg.name || 'Segment')}</div>` : '') +
     `<div class="bar"><span>${esc(r.engine || '')}${inLibrary ? ' · ' + when(r.finished || r.created) : ' · seed ' + r.seed}</span><span class="spacer"></span>` +
     (r.status === 'done' ? `<button class="ghost small pick">${seg.chosen === r.id ? '★ picked' : '☆ pick'}</button>` : '') +
@@ -1011,7 +1011,7 @@ function resultCard(seg, r, inLibrary) {
   const go = d.querySelector('.goto');
   if (go) go.onclick = () => { show('storyboard'); document.querySelector(`.seg[data-id="${seg.id}"]`)?.scrollIntoView({ behavior:'smooth', block:'center' }); };
   d.querySelector('.del').onclick = async () => {
-    if (inLibrary && !confirm('Remove this clip from the project? The video file stays on the PGX.')) return;
+    if (inLibrary && !confirm('Remove this clip from the project? The video file stays on the server.')) return;
     try { mergeResults(await post('/api/result/delete', { project: PID, segment_id: seg.id, result_id: r.id })); redraw(); }
     catch (err) { toast(err.message); }
   };
@@ -1180,13 +1180,13 @@ async function poll(force) {
     const fresh = await api('/api/project?id=' + forPid); if (forPid !== PID) return;
     const a = mergeResults(fresh), b = mergeJobs(fresh);
     if (a || b) redrawClips();
-  } catch (e) { /* PGX busy; try again next tick */ }
+  } catch (e) { /* server busy; try again next tick */ }
 }
 
 async function health() {
   try {
     const h = await api('/api/health'), el = $('health');
-    if (h.comfy) { el.className = 'pill ok'; el.textContent = 'PGX ready · ' + h.running + ' rendering, ' + h.waiting + ' waiting'; }
+    if (h.comfy) { el.className = 'pill ok'; el.textContent = 'Server ready · ' + h.running + ' rendering, ' + h.waiting + ' waiting'; }
     else { el.className = 'pill bad'; el.textContent = 'ComfyUI not reachable'; }
     return h;
   } catch (e) { $('health').className = 'pill bad'; $('health').textContent = 'SWIFT Director server not reachable'; return null; }
@@ -1197,7 +1197,7 @@ $('cancel').onclick = async () => { if (!confirm('Stop the running job and clear
 $('renderAll').onclick = async ev => {
   if (!P.segments.length) return toast('Add a segment first.');
   const runs = P.segments.reduce((n, s) => n + Math.max(1, Math.min(8, +s.runs || 1)), 0);
-  if (!confirm(`Queue every segment's listed runs? That is ${runs} clips across ${P.segments.length} segments. They render one after another on the PGX, and you can close this page while they run.`)) return;
+  if (!confirm(`Queue every segment's listed runs? That is ${runs} clips across ${P.segments.length} segments. They render one after another on the server, and you can close this page while they run.`)) return;
   const btn = ev.target; btn.disabled = true; btn.textContent = 'Queuing…';
   try {
     await save();
@@ -1308,7 +1308,7 @@ async function makeShots(targets, btn) {
   if (!rows.length) { toast('Every picture is locked. Unlock the ones you want to redo.'); return; }
   if (!targets) { shotRows().filter(r => r.cont && r.seg.begin_image).forEach(r => { r.seg.begin_image = null; }); dirty(); }   /* continuing segments carry no begin shot of their own */
   if (!targets && rows.some(r => r.seg[r.slot]) && !confirm('Some of these shots already have a picture. Replace them all?')) return;
-  await busy(btn, $('shotsStatus'), 'Sending to the PGX…', async () => {
+  await busy(btn, $('shotsStatus'), 'Sending to the server…', async () => {
     clearTimeout(shotsTimer); await save(); await post('/api/assist/shots_save', { project: PID, shots: A().shots });
     await post('/api/assist/shot_images', { project: PID, targets: targets || null }); await poll(true); renderShots();
   });
@@ -1420,7 +1420,7 @@ async function refreshSystem() {
     const s = await api('/api/system');
     meter('cpu', s.cpu?.percent, s.cpu ? `${s.cpu.cores} cores` + (s.cpu.load != null ? ` · load ${s.cpu.load.toFixed(2)}` : '') : '');
     meter('gpu', s.gpu?.percent, s.gpu ? [s.gpu.name, s.gpu.temperature != null ? s.gpu.temperature + ' °C' : '', s.gpu.power != null ? s.gpu.power.toFixed(0) + ' W' : ''].filter(Boolean).join(' · ')
-      : 'GPU reading unavailable. Run ~/PGX-Storyboard/run.sh once on the PGX to enable it.');
+      : 'GPU reading unavailable. Run ~/SWIFT_Director/run.sh once on the server to enable it.');
     meter('mem', s.memory?.percent, s.memory ? `${gb(s.memory.used)} of ${gb(s.memory.total)} in use` : '');
     meter('disk', s.disk?.percent, s.disk ? `${gb(s.disk.total - s.disk.used)} free of ${gb(s.disk.total)}` : '');
     $('queueOut').textContent = s.comfy.ok ? `ComfyUI answered SWIFT Director in ${s.comfy.ms} ms · ${s.comfy.running} rendering, ${s.comfy.waiting} waiting` : 'ComfyUI is not reachable: ' + (s.comfy.error || '');
@@ -1490,7 +1490,7 @@ function fxMaskFile() {                                  /* white where painted,
   const ox = out.getContext('2d'); ox.fillStyle = '#000'; ox.fillRect(0, 0, c.width, c.height); ox.filter = 'blur(6px)'; ox.drawImage(solid, 0, 0); ox.filter = 'none'; ox.drawImage(solid, 0, 0);
   return new Promise(res => out.toBlob(b => res(new File([b], 'fixmask_' + uid() + '.png', { type: 'image/png' })), 'image/png'));
 }
-$('fxGo').onclick = () => busy($('fxGo'), $('fxStatus'), 'Sending to the PGX…', async () => {
+$('fxGo').onclick = () => busy($('fxGo'), $('fxStatus'), 'Sending to the server…', async () => {
   if (!$('fxText').value.trim()) throw new Error('Describe what the painted area should look like.');
   const file = await fxMaskFile(); if (!file) throw new Error('Paint over the area to fix first.');
   const mask = await upload(file);
@@ -1532,9 +1532,9 @@ function node(tag, cls, text) { const e = document.createElement(tag); if (cls) 
 
 function renderModels(data) {
   modelsData = data;
-  const line = $('hfLine'); line.textContent = data.signed_in ? 'Hugging Face key: saved on the PGX. ' : 'Hugging Face key: none. ';
+  const line = $('hfLine'); line.textContent = data.signed_in ? 'Hugging Face key: saved on the server. ' : 'Hugging Face key: none. ';
   const change = node('button', 'ghost small', data.signed_in ? 'Change key' : 'Enter key'); change.onclick = () => askKey(false); line.append(change);
-  if (data.key_from_panel) { const forget = node('button', 'ghost small', 'Forget key'); forget.onclick = async () => { try { renderModels(await post('/api/models/forget_token')); toast('Key removed from the PGX.'); } catch (e) { toast(e.message); } }; line.append(forget); }
+  if (data.key_from_panel) { const forget = node('button', 'ghost small', 'Forget key'); forget.onclick = async () => { try { renderModels(await post('/api/models/forget_token')); toast('Key removed from the server.'); } catch (e) { toast(e.message); } }; line.append(forget); }
   const wrap = $('models'), all = data.groups.flatMap(g => g.models), active = data.checking || all.some(m => m.state === 'updating' || m.state === 'checking');
   wrap.textContent = '';
   data.groups.forEach(g => {
@@ -1566,7 +1566,7 @@ function renderModels(data) {
     : !checked ? 'Every model SWIFT Director uses and what it does here. Press Check for updates to compare each one with the version published today.'
     : stale ? `${stale} model${stale > 1 ? 's have' : ' has'} an update available.`
     : all.some(m => m.state === 'needs_key') ? 'Checked everything that does not need a key. Models with a yellow triangle require Hugging Face access: press Check for updates again and enter your key.'
-    : all.some(m => m.state === 'missing' && !m.optional) ? 'Some models SWIFT Director needs are not on the PGX. Press Download next to each one.'
+    : all.some(m => m.state === 'missing' && !m.optional) ? 'Some models SWIFT Director needs are not on the server. Press Download next to each one.'
     : all.some(m => m.state === 'error') ? 'Everything that could be checked is up to date. Some models could not be checked; see the notes below.'
     : 'Everything is up to date.';
   if (stale && !data.checking && all.some(m => m.state === 'needs_key')) $('modelsNote').textContent += ' Models with a yellow triangle require Hugging Face access to check.';
@@ -1575,7 +1575,7 @@ function renderModels(data) {
 }
 async function loadModels() { try { renderModels(await api('/api/models')); } catch (e) { $('modelsNote').textContent = e.message; } }
 async function runCheck() { $('modelsBtn').disabled = true; try { renderModels(await post('/api/models/check')); setTimeout(loadModels, 600); } catch (e) { toast(e.message); $('modelsBtn').disabled = false; } }
-/* Without a key on the PGX, Check for updates asks for one first; Skip checks the rest. */
+/* Without a key on the server, Check for updates asks for one first; Skip checks the rest. */
 let keyThenCheck = false;
 function askKey(thenCheck) { keyThenCheck = thenCheck; $('hfKey').value = ''; $('hfMsg').textContent = ''; $('hfMsg').className = 'hint'; $('hfSkip').style.display = thenCheck ? '' : 'none'; $('hfUse').disabled = false; $('hfModal').classList.add('on'); $('hfKey').focus(); }
 const closeKey = () => { $('hfModal').classList.remove('on'); $('hfKey').value = ''; };
@@ -1600,7 +1600,7 @@ $('pingBtn').onclick = async () => {
     try { await api('/api/ping?n=' + i + '&t=' + Date.now()); times.push(performance.now() - t0); } catch (e) { /* counted as lost */ }
     await new Promise(r => setTimeout(r, 150));
   }
-  if (!times.length) { out.className = 'err'; out.textContent = 'No reply from the PGX. Check that it is on and on the same network.'; return; }
+  if (!times.length) { out.className = 'err'; out.textContent = 'No reply from the server. Check that it is on and on the same network.'; return; }
   const avg = times.reduce((a, b) => a + b, 0) / times.length;
   out.textContent = `${times.length} of 5 replies from ${location.host} · average ${avg.toFixed(0)} ms · fastest ${Math.min(...times).toFixed(0)} ms · slowest ${Math.max(...times).toFixed(0)} ms`;
 };
