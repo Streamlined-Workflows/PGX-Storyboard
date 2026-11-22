@@ -130,3 +130,8 @@ Click a picture (Assets, Library > Images, Full assist key frames) to open the v
 ## SWIFT branding
 
 The UI uses the SWIFT theme: `static/swift-tokens.css` (a vendored copy of the SWIFT tokens; do not edit the values, copy again from the source), the official wordmark and drop in `static/brand/` (unchanged), and Montserrat served locally from `static/fonts/` (SIL Open Font License). `static/index.html` defines no colours of its own: its variables map onto `--swift-*` tokens, and the "SWIFT skin" block at the end of its stylesheet applies them.
+
+## Internal Design Notes:
+
+Branding, themes, logos, shared components and UI standards for this app come from
+[SWIFT_UI_and_Branding](https://github.com/Streamlined-Workflows/SWIFT_UI_and_Branding). Nothing about the SWIFT look is defined in this repository.
