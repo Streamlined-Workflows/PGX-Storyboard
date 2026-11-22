@@ -17,7 +17,7 @@
   /* The page's own names, each mapped onto a SWIFT token (swift-tokens.css). No colour is defined here. */
   :root { color-scheme:dark;
           --bg:var(--swift-base); --panel:var(--swift-card); --panel2:var(--swift-elevated); --line:var(--swift-ring); --text:var(--swift-text); --dim:var(--swift-text-muted);
-          --accent:var(--swift-danger); --accent2:var(--swift-green); --ok:var(--swift-green); --warn:var(--swift-warn); --side:216px; }
+          --accent:var(--swift-danger); --accent2:var(--swift-green); --ok:var(--swift-green); --warn:var(--swift-warn); --side:252px; }
   * { box-sizing:border-box; }
   body { margin:0; background:var(--bg); color:var(--text); font:14px/1.5 var(--swift-font); -webkit-font-smoothing:antialiased; }
   nav { position:fixed; left:0; top:0; bottom:0; width:var(--side); background:var(--panel); border-right:1px solid var(--line); padding:14px 10px; display:flex; flex-direction:column; gap:4px; z-index:6; }
@@ -167,16 +167,40 @@
   a { color:var(--swift-link); } a:hover { color:var(--swift-link-hover); }
   nav { background:var(--swift-base); border-right:1px solid var(--swift-ring); padding:14px 10px; }
   nav .brand { display:grid; gap:8px; padding:4px 8px 14px; margin-bottom:8px; border-bottom:1px solid var(--swift-ring); }
-  nav .brand img { height:44px; width:auto; justify-self:start; }
-  nav .brand b { color:var(--swift-text-strong); font-weight:700; font-size:15px; letter-spacing:.02em; line-height:1.15; }
+  nav .brand .mark { display:flex; align-items:center; gap:10px; min-width:0; padding-right:36px; }
+  nav .brand img { height:38px; width:auto; flex:none; }
+  nav .brand b { color:var(--swift-text-strong); font-weight:700; font-size:21px; letter-spacing:.01em; line-height:1.1; }
+  nav .brand b.word { font-weight:800; letter-spacing:.04em; }      /* the stand-in when the logo cannot load */
   nav .brand span { font-size:11px; color:var(--swift-text-muted); }
   /* The slogan: never smaller than 12px, wraps instead of clipping, and keeps its contrast (gray-300 on black). */
-  nav .brand .slogan { font-size:12px; line-height:1.45; color:var(--swift-text); font-weight:500; overflow-wrap:break-word; }
+  nav .brand .slogan { font-size:12px; line-height:1.45; color:var(--swift-text); font-weight:500; overflow-wrap:break-word; text-wrap:balance; }
   nav button { position:relative; border-radius:var(--swift-radius-xl); font-weight:600; padding:10px 12px; }
   nav button:hover { background:var(--swift-elevated); color:var(--swift-text-strong); border-color:transparent; }
   nav button.on { background:var(--swift-highlight); border-color:var(--swift-ring-strong); color:var(--swift-text-strong); box-shadow:var(--swift-glow); }
   nav button.on::before { content:''; position:absolute; left:-10px; top:9px; bottom:9px; width:3px; border-radius:0 3px 3px 0; background:var(--swift-green); box-shadow:var(--swift-glow); }
   header { background:var(--swift-base); border-bottom:1px solid var(--swift-ring); }
+  /* ---- Collapsible menu. Desktop: the menu hides and the workspace takes the full width.
+          Phone: the menu is either the whole screen or hidden; it starts hidden and closes when a section is chosen. ---- */
+  nav { transition:transform var(--swift-duration-fast, 180ms) ease; overflow-y:auto; }
+  #app { transition:margin-left var(--swift-duration-fast, 180ms) ease; }
+  button.navbtn { flex:none; width:38px; height:38px; padding:0; display:grid; place-items:center; font-size:17px; line-height:1; border-radius:var(--swift-radius-lg); color:var(--swift-text); border:1px solid var(--swift-ring-strong); background:transparent; }
+  button.navbtn:hover { background:var(--swift-highlight); color:var(--swift-text-strong); }
+  nav #navClose { position:absolute; top:14px; right:10px; width:30px; height:30px; padding:0; font-size:13px; text-align:center; border:1px solid var(--swift-ring); color:var(--swift-text-muted); }
+  nav #navClose::before { content:none; }
+  #navOpen { display:none; }
+  body.nav-closed { --side:0px; }
+  body.nav-closed nav { transform:translateX(-100%); visibility:hidden; }
+  body.nav-closed #navOpen { display:grid; }
+  @media (max-width:760px) {
+    :root { --side:0px; }                                  /* the workspace always gets the full width */
+    nav { width:100vw; border-right:none; z-index:30; padding:16px 14px; }
+    nav button[data-view] { padding:14px 14px; font-size:16px; }
+    nav .brand img { height:46px; } nav .brand b { font-size:24px; } nav .brand .slogan { font-size:14px; }
+    nav #navClose { width:40px; height:40px; font-size:16px; top:14px; right:14px; }
+    header { padding:10px 12px; gap:8px; flex-wrap:wrap; } #projName { min-width:0; flex:1; }
+    main { padding:14px 12px 70px; }
+  }
+  @media (prefers-reduced-motion: reduce) { nav, #app { transition:none; } }
   #projName { color:var(--swift-text-strong); font-weight:700; }
   #app { background-image:var(--swift-glow-radial); background-repeat:no-repeat; min-height:100vh; }
   section { border-radius:var(--swift-radius-2xl); box-shadow:var(--swift-glow); padding:18px; }
@@ -219,8 +243,13 @@
 </style>
 </head>
 <body>
-<nav>
-  <div class="brand"><img src="/static/brand/swift-wordmark.svg" alt="S.W.I.F.T."><b>SWIFT Director</b><span class="slogan">Your story. Your vision. Directed by you, Built by AI.</span></div>
+<nav id="nav" aria-label="SWIFT Director sections">
+  <button id="navClose" class="navbtn" type="button" aria-label="Hide the menu" title="Hide the menu">✕</button>
+  <div class="brand">
+    <!-- The logo stands in for the word SWIFT. If it cannot load, the word takes its place. -->
+    <div class="mark" role="img" aria-label="SWIFT Director"><img src="/static/brand/swift-wordmark.svg" alt="" onerror="this.replaceWith(Object.assign(document.createElement('b'), { className: 'word', textContent: 'SWIFT' }))"><b>Director</b></div>
+    <span class="slogan">Your story. Your vision. Directed by you, Built by AI.</span>
+  </div>
   <button data-view="storyboard" class="on">Storyboard</button>
   <button data-view="assist">Assisted Storyboard</button>
   <button data-view="projects">Projects</button>
@@ -232,6 +261,7 @@
 
 <div id="app">
 <header>
+  <button id="navOpen" class="navbtn" type="button" aria-label="Show the menu" title="Show the menu" aria-controls="nav" aria-expanded="true">☰</button>
   <input id="projName" title="Project name" value="">
   <span id="health" class="pill">checking PGX…</span>
   <span class="spacer"></span>
@@ -566,7 +596,20 @@ function show(name) {
   if (name === 'system') { refreshSystem(); loadModels(); }
   if (name === 'storyboard') { renderSegments(); }
 }
-document.querySelectorAll('nav button[data-view]').forEach(b => b.onclick = () => show(b.dataset.view));
+/* The menu: hidden or shown. On a phone it starts hidden and closes after a choice; on a desktop it remembers. */
+const phone = window.matchMedia('(max-width:760px)');
+function setNav(open, remember) {
+  document.body.classList.toggle('nav-closed', !open);
+  $('navOpen').setAttribute('aria-expanded', String(open));
+  if (remember && !phone.matches) { try { localStorage.setItem('sb.nav', open ? 'open' : 'closed'); } catch (e) { /* private mode */ } }
+}
+const navWasClosed = () => { try { return localStorage.getItem('sb.nav') === 'closed'; } catch (e) { return false; } };
+setNav(phone.matches ? false : !navWasClosed());
+phone.addEventListener('change', () => setNav(phone.matches ? false : !navWasClosed()));
+$('navOpen').onclick = () => { setNav(true, true); (document.querySelector('nav button.on') || $('navClose')).focus(); };
+$('navClose').onclick = () => { setNav(false, true); $('navOpen').focus(); };
+document.addEventListener('keydown', ev => { if (ev.key === 'Escape' && phone.matches && !document.body.classList.contains('nav-closed') && !$('viewer').classList.contains('on')) setNav(false); });
+document.querySelectorAll('nav button[data-view]').forEach(b => b.onclick = () => { show(b.dataset.view); if (phone.matches) setNav(false); });
 
 /* ---------- projects ---------- */
 async function openProject(id) {
