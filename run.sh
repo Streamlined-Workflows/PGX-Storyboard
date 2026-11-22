@@ -10,7 +10,8 @@ MODELS_DIR="${COMFY_MODELS:-$HOME/dgx-spark-playbooks/nvidia/playbook-comfyui/mo
 mkdir -p "$HOME/.cache/huggingface"
 [ -d "$MODELS_DIR" ] || echo "Note: $MODELS_DIR not found, so the AI Models panel will show every file as missing."
 # --gpus all gives the container nvidia-smi, which the System status page reads GPU load from.
-docker run -d --name swift-director --restart unless-stopped --network host --gpus all \
+# --pid host lets System status list which programs on this machine are using memory and the GPU.
+docker run -d --name swift-director --restart unless-stopped --network host --gpus all --pid host \
   -v "$PWD":/app -v "$MODELS_DIR":/models -v "$HOME/.cache/huggingface":/hf:ro \
   -w /app -e PORT=8190 python:3.12-slim python app.py >/dev/null
 

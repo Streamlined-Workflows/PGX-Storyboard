@@ -109,6 +109,9 @@
   .meters { display:grid; grid-template-columns:repeat(auto-fit,minmax(210px,1fr)); gap:14px; }
   .meter { background:var(--panel2); border:1px solid var(--line); border-radius:10px; padding:14px; }
   .meter .val { font-size:28px; font-weight:700; font-variant-numeric:tabular-nums; }
+  .usehead { margin:18px 0 8px; font-size:14px; } .usesub { margin:12px 0 2px; font-size:12px; letter-spacing:.08em; text-transform:uppercase; color:var(--dim); }
+  .userow { display:flex; gap:14px; align-items:flex-start; justify-content:space-between; padding:9px 0; border-top:1px solid var(--line); }
+  .userow .useamt { font-weight:700; font-variant-numeric:tabular-nums; white-space:nowrap; }
   .meter .track { height:10px; background:var(--bg); border-radius:5px; overflow:hidden; margin:8px 0 6px; }
   .mgroup { margin-top:18px; } .mgroup h3 { margin:0 0 2px; font-size:14px; }
   .model { display:grid; grid-template-columns:26px 1fr auto; gap:4px 10px; align-items:start; padding:11px 0; border-top:1px solid var(--line); }
@@ -401,6 +404,8 @@
         <div class="meter"><label>Memory (shared by CPU and GPU)</label><div class="val" id="m-mem">–</div><div class="track"><i id="t-mem"></i></div><div class="hint" id="d-mem"></div></div>
         <div class="meter"><label>Disk</label><div class="val" id="m-disk">–</div><div class="track"><i id="t-disk"></i></div><div class="hint" id="d-disk"></div></div>
       </div>
+      <h3 class="usehead">What is using memory and the GPU</h3>
+      <div id="usage" class="hint">Checking…</div>
     </section>
     <section><h2>Render queue</h2><div id="queueOut" class="hint">–</div></section>
     <section>
@@ -600,7 +605,7 @@ function show(name) {
   if (name === 'projects') renderProjects();
   if (name === 'assets') { renderAssets(); if (scope.assets === 'all') loadAll().then(renderAssets); }
   if (name === 'library') { renderLibrary(); if (scope.library === 'all') loadAll().then(renderLibrary); }
-  if (name === 'system') { refreshSystem(); loadModels(); if (window.IdentityStudio) window.IdentityStudio.showModels($('identityModels')); }
+  if (name === 'system') { refreshSystem(); refreshUsage(); loadModels(); if (window.IdentityStudio) window.IdentityStudio.showModels($('identityModels')); }
   if (name === 'storyboard') { renderSegments(); }
   if (name === 'identity' && window.IdentityStudio) window.IdentityStudio.show();
 }
@@ -1436,6 +1441,27 @@ async function refreshSystem() {
   } catch (e) { $('queueOut').textContent = 'SWIFT Director server not reachable.'; $('queueOut').className = 'err'; }
 }
 setInterval(refreshSystem, 2000);
+/* What is behind the memory and GPU numbers: loaded models first, then the largest programs. */
+async function refreshUsage() {
+  if (currentView !== 'system' || document.hidden) return;
+  let u; try { u = await api('/api/system/usage'); } catch (e) { return; }
+  const box = $('usage'); box.textContent = ''; box.className = '';
+  const row = (name, detail, amount) => { const r = node('div', 'userow'), l = node('div'); l.append(node('b', '', name)); if (detail) l.append(node('div', 'hint', detail)); r.append(l, node('div', 'useamt', amount)); return r; };
+  if (u.models.length) {
+    box.append(node('div', 'usesub', 'Models loaded right now'));
+    u.models.forEach(m => {
+      const left = m.until ? Math.round((new Date(m.until) - Date.now()) / 60000) : null;
+      box.append(row(`${m.holder}: ${m.name}`, m.note + (left != null && left >= 0 && left < 1440 ? ` Released in about ${Math.max(1, left)} min if unused.` : ''), gb(m.bytes)));
+    });
+  }
+  box.append(node('div', 'usesub', u.whole_server ? 'Largest programs on the server' : 'Largest programs'));
+  if (u.programs.length) u.programs.forEach(p => box.append(row(p.name, p.count > 1 ? p.count + ' processes' : '', gb(p.memory) + (p.gpu ? ' · GPU ' + gb(p.gpu) : ''))));
+  else box.append(node('div', 'hint', 'Nothing large is running.'));
+  if (!u.whole_server) box.append(node('div', 'hint', 'Only SWIFT Director itself is visible. Run ~/SWIFT_Director/update.sh once on the server so this list can show ComfyUI, Ollama and everything else.'));
+  else if (!u.models.length) box.append(node('div', 'hint', 'No models are loaded at the moment.'));
+  box.append(node('div', 'hint', 'On this machine the CPU and GPU share one pool of memory, so a model on the GPU also counts as memory in use.'));
+}
+setInterval(refreshUsage, 5000);
 
 /* ---------- picture viewer: zoom and pan ---------- */
 const V = { s: 1, x: 0, y: 0, fit: 1 };

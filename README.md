@@ -46,13 +46,13 @@ It runs as a Docker container named `swift-director` that starts on boot (with `
 | Assets | The open project's actors, photos and audio. An actor is one character with a name, a description and any number of views (stills); photos are loose reference stills |
 | Library | Every video rendered in the open project, with download links |
 | Identity Studio | A separate workspace for logos and app identities. See [Identity Studio](#identity-studio) |
-| System status | Ping test, and CPU, GPU, memory and disk meters for the server |
+| System status | Ping test, and CPU, GPU, memory and disk meters for the server. Under the meters, a list of what is using memory and the GPU: the models Ollama and ComfyUI have loaded, and the largest programs on the server |
 
 Each actor panel has two buttons. **Describe from images** sends up to four of the actor's views to the language model (it must be vision-capable) and writes the description. **Generate views from description** queues a close-up, a waist-up and a full-body still with FLUX.2 [dev] and the 8-step turbo LoRA, using up to three existing views as references so the new stills match; finished stills are copied into ComfyUI's input folder and added to the actor.
 
 Assets and Library each have an **All / Project** toggle. All also lists what other projects hold: actors, photos and audio can be added to the open project (a copy that points at the same image and audio files), and clips can be watched, downloaded, or their project opened.
 
-Projects are stored as `data/projects/<id>.json`. Deleted projects are moved to `data/trash/`. The GPU meter reads `nvidia-smi`, which is why `run.sh` starts the container with `--gpus all`.
+Projects are stored as `data/projects/<id>.json`. Deleted projects are moved to `data/trash/`. The GPU meter reads `nvidia-smi`, which is why `run.sh` starts the container with `--gpus all`. The list of largest programs reads the server's process list, which is why `run.sh` also uses `--pid host`; without it the container can see only itself.
 
 ## Assisted Storyboard
 

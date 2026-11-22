@@ -23,6 +23,7 @@ import uuid
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 import assist
+import usage
 import models
 from identity_studio import api as identity_api
 import workflows
@@ -962,6 +963,8 @@ class Handler(BaseHTTPRequestHandler):
                 return self.send_json({"ok": True, "time": time.time()})
             if url.path == "/api/system":
                 return self.send_json(system_status())
+            if url.path == "/api/system/usage":
+                return self.send_json(usage.report())
             if url.path == "/api/models":
                 return self.send_json(models.listing())
             if url.path == "/api/assist/status":
