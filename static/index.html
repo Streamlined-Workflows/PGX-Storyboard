@@ -110,6 +110,13 @@
   .mbar { height:5px; background:var(--bg); border-radius:3px; overflow:hidden; margin-top:5px; max-width:340px; }
   .mbar i { display:block; height:100%; background:var(--accent2); transition:width .4s; }
   .meter .track i { display:block; height:100%; width:0; background:var(--ok); transition:width .5s, background .5s; }
+  #viewer { position:fixed; inset:0; z-index:50; background:rgba(8,9,12,.94); display:none; flex-direction:column; }
+  #viewer.on { display:flex; }
+  #viewer .vbar { display:flex; gap:8px; align-items:center; padding:10px 14px; border-bottom:1px solid var(--line); }
+  #viewer .vstage { flex:1; overflow:hidden; position:relative; cursor:grab; touch-action:none; }
+  #viewer .vstage.drag { cursor:grabbing; }
+  #viewer .vstage img { position:absolute; left:0; top:0; transform-origin:0 0; max-width:none; user-select:none; -webkit-user-drag:none; image-rendering:auto; }
+  #v-assets .card img, .keyframe img { cursor:zoom-in; }
   .step { counter-increment:step; }
   .castrow { display:grid; grid-template-columns:22px 54px 150px 1fr; gap:10px; align-items:center; padding:7px 0; border-top:1px solid var(--line); }
   .castrow img, .castrow .noimg { width:54px; height:54px; object-fit:cover; border-radius:6px; background:var(--bg); border:1px solid var(--line); }
@@ -289,6 +296,12 @@
     </section>
   </div>
 </main>
+</div>
+<div id="viewer">
+  <div class="vbar"><b id="vName"></b><span class="hint" id="vInfo"></span><span class="spacer"></span>
+    <button class="small" id="vOut" title="Zoom out (-)">−</button><span id="vZoom" style="min-width:52px;text-align:center;font-variant-numeric:tabular-nums"></span><button class="small" id="vIn" title="Zoom in (+)">+</button>
+    <button class="small" id="vFit" title="Fit the whole picture (0)">Fit</button><button class="small" id="vFull" title="Actual pixels (1)">100%</button><button class="small" id="vClose" title="Close (Esc)">✕ Close</button></div>
+  <div class="vstage" id="vStage"><img id="vImg" alt="" draggable="false"></div>
 </div>
 <div id="toast"></div>
 
@@ -1238,6 +1251,47 @@ async function refreshSystem() {
   } catch (e) { $('queueOut').textContent = 'Storyboard server not reachable.'; $('queueOut').className = 'err'; }
 }
 setInterval(refreshSystem, 2000);
+
+/* ---------- picture viewer: zoom and pan ---------- */
+const V = { s: 1, x: 0, y: 0, fit: 1 };
+function vPaint() { $('vImg').style.transform = `translate(${V.x}px,${V.y}px) scale(${V.s})`; $('vZoom').textContent = Math.round(V.s * 100) + '%'; }
+function vZoomTo(scale, cx, cy) {                       /* keep the point under (cx, cy) where it is */
+  const st = $('vStage').getBoundingClientRect(); cx ??= st.width / 2; cy ??= st.height / 2;
+  const next = Math.max(V.fit * 0.5, Math.min(16, scale)), k = next / V.s;
+  V.x = cx - (cx - V.x) * k; V.y = cy - (cy - V.y) * k; V.s = next; vPaint();
+}
+function vFit() {
+  const st = $('vStage').getBoundingClientRect(), im = $('vImg'); if (!im.naturalWidth) return;
+  V.fit = V.s = Math.min(st.width / im.naturalWidth, st.height / im.naturalHeight, 1);
+  V.x = (st.width - im.naturalWidth * V.s) / 2; V.y = (st.height - im.naturalHeight * V.s) / 2; vPaint();
+}
+function openViewer(src, name) {
+  $('vName').textContent = name || 'Picture'; $('vInfo').textContent = ''; $('vImg').style.visibility = 'hidden';
+  $('vImg').onload = () => { $('vInfo').textContent = `${$('vImg').naturalWidth} × ${$('vImg').naturalHeight} · scroll to zoom, drag to move, double-click for 100%`; vFit(); $('vImg').style.visibility = ''; };
+  $('viewer').classList.add('on'); $('vImg').src = src;
+}
+const closeViewer = () => $('viewer').classList.remove('on');
+$('vClose').onclick = closeViewer; $('vFit').onclick = vFit; $('vFull').onclick = () => vZoomTo(1);
+$('vIn').onclick = () => vZoomTo(V.s * 1.4); $('vOut').onclick = () => vZoomTo(V.s / 1.4);
+$('vStage').addEventListener('wheel', ev => { ev.preventDefault(); const st = $('vStage').getBoundingClientRect(); vZoomTo(V.s * Math.exp(-ev.deltaY * 0.0015), ev.clientX - st.left, ev.clientY - st.top); }, { passive: false });
+$('vStage').addEventListener('dblclick', ev => { const st = $('vStage').getBoundingClientRect(); Math.abs(V.s - V.fit) < 0.01 ? vZoomTo(1, ev.clientX - st.left, ev.clientY - st.top) : vFit(); });
+$('vStage').addEventListener('pointerdown', ev => {
+  const stage = $('vStage'), from = { x: ev.clientX - V.x, y: ev.clientY - V.y }; stage.setPointerCapture(ev.pointerId); stage.classList.add('drag');
+  const move = e => { V.x = e.clientX - from.x; V.y = e.clientY - from.y; vPaint(); };
+  const up = () => { stage.classList.remove('drag'); stage.removeEventListener('pointermove', move); stage.removeEventListener('pointerup', up); stage.removeEventListener('pointercancel', up); };
+  stage.addEventListener('pointermove', move); stage.addEventListener('pointerup', up); stage.addEventListener('pointercancel', up);
+});
+document.addEventListener('keydown', ev => {
+  if (!$('viewer').classList.contains('on')) return;
+  if (ev.key === 'Escape') closeViewer(); else if (ev.key === '+' || ev.key === '=') vZoomTo(V.s * 1.4); else if (ev.key === '-') vZoomTo(V.s / 1.4); else if (ev.key === '0') vFit(); else if (ev.key === '1') vZoomTo(1);
+});
+window.addEventListener('resize', () => { if ($('viewer').classList.contains('on')) vFit(); });
+document.addEventListener('click', ev => {                /* any picture in Assets, and the key frames in Full assist */
+  const img = ev.target.closest('#v-assets .card img, .keyframe img'); if (!img) return;
+  const card = img.closest('.card, .keyframe'), actor = img.closest('.actor')?.querySelector('.aname')?.value;
+  const label = card.querySelector('input:not([type])')?.value || card.querySelector('.title, b')?.textContent || '';
+  openViewer(img.src, [actor, label].filter(Boolean).join(' · '));
+});
 
 /* ---------- AI models ---------- */
 let modelsTimer = null;
