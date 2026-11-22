@@ -719,7 +719,7 @@ function moveStill(image, label, target) {
   return true;
 }
 
-const oneView = {};
+const oneView = {}, extraNote = {};          /* per-actor choices that are not saved with the project */
 const refPick = {};                      /* actor id -> Set of view images ticked as references */
 const refsOf = a => { const set = refPick[a.id] ||= new Set(); [...set].forEach(i => { if (!a.views.some(v => v.image === i)) set.delete(i); }); return set; };
 function viewCard(actor, v) {
@@ -742,6 +742,8 @@ function actorPanel(a) {
     `<button class="small genrefs" ${refsOf(a).size ? '' : 'disabled'} title="Makes the same three views from the description, copying the actor only from the pictures you ticked as Reference">Generate from description and references${refsOf(a).size ? ' (' + refsOf(a).size + ')' : ''}</button>` +
     `<span style="display:inline-flex;gap:4px"><select class="oneview" title="Which single view to make"><option>close-up</option><option>waist up</option><option>full body</option><option>3/4 left</option><option>3/4 right</option><option>left</option><option>right</option><option>rear</option></select>` +
     `<button class="small genone" title="Makes just this one view. Uses the ticked Reference pictures, or the actor's first pictures if none are ticked">Generate specific view</button></span><span class="hint astatus"></span></div>` +
+    `<div style="margin:-2px 0 10px"><label>Addition for this generation (optional; applies to all three buttons and is not saved into the description)</label>` +
+    `<input class="aextra" style="width:100%" placeholder="e.g. wearing an open-faced space helmet; her hair is visible inside it but does not hang through the helmet"></div>` +
     (a.views.length ? `<div class="hint" style="margin:-4px 0 8px">Tick Reference on the pictures to copy this actor from (up to 4). Left and right mean the side of the picture the actor faces.</div>` : '') +
     `<div class="cards views"></div>`;
   const status = d.querySelector('.astatus');
@@ -752,9 +754,9 @@ function actorPanel(a) {
     dirty(); renderAssets();
   });
   const generate = (btn, extra) => busy(btn, status, 'Sending to the PGX…', async () => {
-    if (!(a.description || '').trim() && !a.views.length) throw new Error('Write a description first, or add a view and use Describe from images.');
+    if (!(a.description || '').trim() && !a.views.length && !(extraNote[a.id] || '').trim()) throw new Error('Write a description first, or add a view and use Describe from images.');
     await save();
-    await post('/api/actor/generate', { project: PID, actor_id: a.id, ...extra });
+    await post('/api/actor/generate', { project: PID, actor_id: a.id, extra: extraNote[a.id] || '', ...extra });
     await poll(true); renderAssets();
   });
   const ticked = () => refsOf(a).size ? { refs: [...refsOf(a)] } : {};
@@ -762,6 +764,7 @@ function actorPanel(a) {
   d.querySelector('.generate').onclick = ev => generate(ev.target, {});
   d.querySelector('.genrefs').onclick = ev => { if (!(a.description || '').trim()) return toast('Write a description first: it decides the clothing and colours.'); generate(ev.target, ticked()); };
   d.querySelector('.genone').onclick = ev => generate(ev.target, { ...ticked(), views: [d.querySelector('.oneview').value] });
+  d.querySelector('.aextra').value = extraNote[a.id] || ''; d.querySelector('.aextra').oninput = ev => { extraNote[a.id] = ev.target.value; };
   d.querySelector('.aname').oninput = ev => { a.name = ev.target.value; dirty(); };
   d.querySelector('.adesc').oninput = ev => { a.description = ev.target.value; dirty(); };
   d.querySelector('input[type=file]').onchange = async ev => {

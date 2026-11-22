@@ -280,8 +280,10 @@ def describe_actor(name, images_b64):
     return text[:1200]
 
 
-def view_prompt(description, framing, has_refs):
+def view_prompt(description, framing, has_refs, extra=""):
+    """`extra` is a one-off addition for this generation (a prop, a change of outfit); it wins over the description and the references."""
     who = (description or "").strip().rstrip(".")
+    extra = (extra or "").strip().rstrip(".")
     if has_refs and who:      # the written description is the authority on clothing and colours, so an actor can be re-dressed
         lead = ("The same person as in the reference image: keep their face, hair and build exactly. "
                 f"Their clothing and its colours follow this description, even where the reference image differs: {who}")
@@ -289,6 +291,8 @@ def view_prompt(description, framing, has_refs):
         lead = "The same character as in the reference image"
     else:
         lead = who
+    if extra:
+        lead += f". For this picture also: {extra}. This addition takes priority where it differs from the description" + (" or the reference image" if has_refs else "")
     return (f"{framing}. {lead}. Plain dark studio backdrop, soft cinematic lighting, sharp focus, "
             "consistent character design, single character, no text.")
 

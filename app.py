@@ -334,9 +334,9 @@ def actor_describe(pid, actor_id):
     return {"description": assist.describe_actor(actor.get("name", ""), images)}
 
 
-def actor_generate(pid, actor_id, refs=None, views=None):
+def actor_generate(pid, actor_id, refs=None, views=None, extra=""):
     """Queue stills of an actor. `views` names the framings (default: the three standard ones). `refs` names which of
-    the actor's pictures to use as references (default: the first three); an empty list means description only."""
+    the actor's pictures to use as references (default: the first three); an empty list means description only. `extra` is a one-off addition to the description."""
     with LOCK:
         project = load_project(pid)
         actor = find_actor(project, actor_id)
@@ -346,7 +346,8 @@ def actor_generate(pid, actor_id, refs=None, views=None):
         wanted = [v for v in (views or assist.STANDARD_VIEWS) if v in dict(assist.VIEW_FRAMINGS)]
         if not wanted:
             raise ValueError("Choose which view to generate.")
-        if not description and not refs:
+        extra = str(extra or "").strip()[:600]
+        if not description and not refs and not extra:
             raise ValueError("Write a description for this actor first, or add a view of them.")
         threading.Thread(target=assist.unload, daemon=True).start()
         made = []
@@ -354,7 +355,7 @@ def actor_generate(pid, actor_id, refs=None, views=None):
             if label not in wanted:
                 continue
             stem = f"{workflows.safe_name(actor.get('name') or 'actor')}_{workflows.safe_name(label)}"
-            made.append(queue_still(project, assist.view_prompt(description, framing, bool(refs)), refs, stem,
+            made.append(queue_still(project, assist.view_prompt(description, framing, bool(refs), extra), refs, stem,
                                     kind="actor_view", actor_id=actor_id, label=label))
         return {"jobs": made}
 
@@ -937,7 +938,7 @@ class Handler(BaseHTTPRequestHandler):
             if path == "/api/actor/describe":
                 return self.send_json(actor_describe(pid, payload.get("actor_id")))
             if path == "/api/actor/generate":
-                return self.send_json(actor_generate(pid, payload.get("actor_id"), payload.get("refs"), payload.get("views")))
+                return self.send_json(actor_generate(pid, payload.get("actor_id"), payload.get("refs"), payload.get("views"), payload.get("extra")))
             if path == "/api/image_jobs/clear":
                 return self.send_json(image_jobs_clear(pid, payload.get("ids")))
             if path == "/api/assist/analyze":
