@@ -1090,6 +1090,8 @@ class Handler(BaseHTTPRequestHandler):
                                 seg["chosen"] = None
                     save_project(project)
                 return self.send_json(project)
+            if path == "/api/system/free":
+                return self.send_json(usage.free(comfy_json))
             if path == "/api/cancel":
                 comfy_json("/interrupt", {})
                 comfy_json("/queue", {"clear": True})

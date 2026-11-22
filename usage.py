@@ -1,8 +1,7 @@
 """What is using the server's memory and GPU, in terms a person can act on.
 
-Three sources, each optional (a missing one is simply left out):
+Two sources, each optional (a missing one is simply left out):
   * Ollama's own list of loaded language models and when each will be released.
-  * ComfyUI's report of how much GPU memory it is holding for image and video models.
   * The server's process list (memory per program), plus nvidia-smi's GPU memory per program.
 
 The process list covers the whole server only when the container shares the host's process list
@@ -26,6 +25,31 @@ KNOWN = (("ollama", "Ollama (language model)"),
          ("app.py", "SWIFT Director"),
          ("dockerd", "Docker"), ("containerd", "Docker"),
          ("gnome-shell", "Desktop"), ("xorg", "Desktop"), ("chrome", "Web browser"), ("firefox", "Web browser"))
+
+
+NOTES = {
+    "ComfyUI (image and video models)": "The models from its last jobs, kept loaded so the next job starts quickly. It does not let go of them by itself while idle. Free memory releases them; the next job then takes longer to start while they load again.",
+    "Ollama (language model)": "The language model used by Assisted Storyboard. Ollama releases it by itself after a few idle minutes.",
+    "Song analysis (speech model)": "The speech model that listens to the song. Loaded while a song is analysed.",
+}
+
+
+def free(comfy_json):
+    """Ask ComfyUI to unload its models and Ollama to unload the language model.
+    Refuses while anything is rendering or waiting, so it can never disturb a job."""
+    queue = comfy_json("/queue", timeout=5)
+    busy = len(queue.get("queue_running", [])) + len(queue.get("queue_pending", []))
+    if busy:
+        raise ValueError(f"{busy} job{'s are' if busy != 1 else ' is'} rendering or waiting. Memory can be freed when the queue is empty.")
+    comfy_json("/free", {"unload_models": True, "free_memory": True})
+    try:
+        for m in _get(OLLAMA + "/api/ps").get("models") or []:
+            req = urllib.request.Request(OLLAMA + "/api/generate", data=json.dumps({"model": m.get("name"), "keep_alive": 0}).encode(),
+                                         headers={"Content-Type": "application/json"})
+            urllib.request.urlopen(req, timeout=10).read()
+    except (OSError, ValueError):
+        pass
+    return {"ok": True}
 
 
 def _get(url, timeout=3):
@@ -107,8 +131,12 @@ def programs(procs, gpu):
         if pid not in procs:
             g = groups.setdefault("Another program (not visible from here)", {"name": "Another program (not visible from here)", "memory": 0, "gpu": 0, "count": 0})
             g["gpu"] += used; g["count"] += 1
-    rows = [g for g in groups.values() if max(g["memory"], g["gpu"]) >= MIN_BYTES]
-    return sorted(rows, key=lambda g: max(g["memory"], g["gpu"]), reverse=True)[:8]
+    # On this machine GPU memory is counted apart from a program's ordinary memory, so its real footprint is the two added.
+    for g in groups.values():
+        g["total"] = g["memory"] + g["gpu"]
+        g["note"] = NOTES.get(g["name"], "")
+    rows = [g for g in groups.values() if g["total"] >= MIN_BYTES]
+    return sorted(rows, key=lambda g: g["total"], reverse=True)[:8]
 
 
 def loaded_models():
@@ -122,14 +150,7 @@ def loaded_models():
                          "note": "The language model used by Assisted Storyboard. Ollama releases it by itself after a few idle minutes, and SWIFT Director asks it to before a render."})
     except (OSError, ValueError):
         pass
-    try:
-        dev = (_get(COMFY + "/system_stats").get("devices") or [{}])[0]
-        held = int(dev.get("torch_vram_total") or 0)
-        if held:
-            rows.append({"holder": "ComfyUI", "name": "Image and video models kept ready", "bytes": held, "gpu_bytes": held, "until": "",
-                         "note": "ComfyUI keeps the last models it used in memory so the next job starts quickly. It swaps them out when a different job needs the room."})
-    except (OSError, ValueError, IndexError, TypeError):
-        pass
+    # ComfyUI's own figure for what it holds reads as zero on this machine, so its row comes from the program list instead.
     return rows
 
 

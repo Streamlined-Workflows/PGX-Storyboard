@@ -404,7 +404,7 @@
         <div class="meter"><label>Memory (shared by CPU and GPU)</label><div class="val" id="m-mem">–</div><div class="track"><i id="t-mem"></i></div><div class="hint" id="d-mem"></div></div>
         <div class="meter"><label>Disk</label><div class="val" id="m-disk">–</div><div class="track"><i id="t-disk"></i></div><div class="hint" id="d-disk"></div></div>
       </div>
-      <h3 class="usehead">What is using memory and the GPU</h3>
+      <div class="row usehead"><h3 style="margin:0;font-size:14px">What is using memory and the GPU</h3><span class="spacer"></span><span id="freeMsg" class="hint"></span><button id="freeBtn" title="Unload the models ComfyUI and Ollama are holding. Only works when nothing is rendering or waiting.">Free memory</button></div>
       <div id="usage" class="hint">Checking…</div>
     </section>
     <section><h2>Render queue</h2><div id="queueOut" class="hint">–</div></section>
@@ -1455,12 +1455,17 @@ async function refreshUsage() {
     });
   }
   box.append(node('div', 'usesub', u.whole_server ? 'Largest programs on the server' : 'Largest programs'));
-  if (u.programs.length) u.programs.forEach(p => box.append(row(p.name, p.count > 1 ? p.count + ' processes' : '', gb(p.memory) + (p.gpu ? ' · GPU ' + gb(p.gpu) : ''))));
+  if (u.programs.length) u.programs.forEach(p => box.append(row(p.name, [p.note, p.gpu ? `${gb(p.memory)} of ordinary memory plus ${gb(p.gpu)} on the GPU.` : '', p.count > 1 ? p.count + ' processes.' : ''].filter(Boolean).join(' '), gb(p.total ?? p.memory))));
   else box.append(node('div', 'hint', 'Nothing large is running.'));
   if (!u.whole_server) box.append(node('div', 'hint', 'Only SWIFT Director itself is visible. Run ~/SWIFT_Director/update.sh once on the server so this list can show ComfyUI, Ollama and everything else.'));
-  else if (!u.models.length) box.append(node('div', 'hint', 'No models are loaded at the moment.'));
   box.append(node('div', 'hint', 'On this machine the CPU and GPU share one pool of memory, so a model on the GPU also counts as memory in use.'));
 }
+$('freeBtn').onclick = async () => {
+  const b = $('freeBtn'), m = $('freeMsg'); b.disabled = true; m.className = 'hint'; m.textContent = 'Asking ComfyUI and Ollama to unload…';
+  try { await post('/api/system/free', {}); m.textContent = 'Asked. The numbers drop over the next few seconds.'; setTimeout(refreshUsage, 2500); setTimeout(() => { refreshUsage(); m.textContent = ''; }, 9000); }
+  catch (e) { m.className = 'err'; m.textContent = e.message; }
+  b.disabled = false;
+};
 setInterval(refreshUsage, 5000);
 
 /* ---------- picture viewer: zoom and pan ---------- */
