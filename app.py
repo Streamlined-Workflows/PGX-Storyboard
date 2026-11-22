@@ -960,6 +960,10 @@ class Handler(BaseHTTPRequestHandler):
             pid = payload.get("project")
             if path == "/api/models/check":
                 return self.send_json(models.start_check())
+            if path == "/api/models/token":
+                return self.send_json(models.set_token(payload.get("token")))
+            if path == "/api/models/forget_token":
+                return self.send_json(models.forget_token())
             if path == "/api/models/update":
                 return self.send_json(models.start_update(payload.get("id")))
             if path == "/api/projects":

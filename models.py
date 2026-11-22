@@ -31,6 +31,9 @@ ASSIST = os.environ.get("ASSIST_URL", "http://127.0.0.1:8191").rstrip("/")
 COMFY = os.environ.get("COMFY_URL", "http://127.0.0.1:8188").rstrip("/")
 HASH_CACHE = os.path.join(DATA_DIR, "model_hashes.json")
 STATE_FILE = os.path.join(DATA_DIR, "model_status.json")
+TOKEN_FILE = os.path.join(DATA_DIR, "hf_token")          # a key entered in the AI models panel; data/ is never committed
+GATED = {"Lightricks/LTX-2.5"}                           # repos known to need a signed-in account that accepted the license
+FINAL = ("current", "outdated", "missing", "error", "needs_key")
 CHUNK = 8 * 1024 * 1024
 
 WAN21 = "Comfy-Org/Wan_2.1_ComfyUI_repackaged"
@@ -156,7 +159,7 @@ def _set(mid, **fields):
     with LOCK:
         entry = STATUS.setdefault(mid, {"state": "unknown"})
         entry.update(fields)
-        if fields.get("state") in ("current", "outdated", "missing", "error"):
+        if fields.get("state") in FINAL:
             entry["checked"] = time.time()
             entry.pop("progress", None)
             _save(STATE_FILE, STATUS)
@@ -170,11 +173,52 @@ def hf_token():
     token = os.environ.get("HF_TOKEN", "").strip()
     if token:
         return token
+    for path in (TOKEN_FILE, HF_TOKEN_FILE):
+        try:
+            with open(path) as f:
+                token = f.read().strip()
+            if token:
+                return token
+        except OSError:
+            pass
+    return ""
+
+
+class NeedsKey(ValueError):
+    """Hugging Face would not show this repo without a (working) key."""
+
+
+def set_token(token):
+    """Check a Hugging Face key with Hugging Face itself and keep it only if it works."""
+    token = str(token or "").strip()
+    if not token:
+        raise ValueError("Paste your Hugging Face key first.")
+    if not token.startswith("hf_") or len(token) < 20 or any(c.isspace() for c in token):
+        raise ValueError("That does not look like a Hugging Face key. They start with hf_ and have no spaces.")
+    req = urllib.request.Request(HF + "/api/whoami-v2", headers={"Authorization": "Bearer " + token, "User-Agent": "pgx-storyboard"})
     try:
-        with open(HF_TOKEN_FILE) as f:
-            return f.read().strip()
+        with urllib.request.urlopen(req, timeout=20) as r:
+            who = json.load(r)
+    except urllib.error.HTTPError as e:
+        if e.code in (401, 403):
+            raise ValueError("Hugging Face rejected that key. Check that you copied all of it and that it has not been revoked.")
+        raise ValueError(f"Hugging Face answered with error {e.code} while checking the key. Try again.")
+    except OSError as e:
+        raise ValueError(f"Could not reach Hugging Face to check the key: {getattr(e, 'reason', e)}")
+    os.makedirs(DATA_DIR, exist_ok=True)
+    fd = os.open(TOKEN_FILE, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, "w") as f:
+        f.write(token)
+    role = ((who.get("auth") or {}).get("accessToken") or {}).get("role") or ""
+    return {"ok": True, "name": who.get("name") or "your account", "role": role}
+
+
+def forget_token():
+    try:
+        os.remove(TOKEN_FILE)
     except OSError:
-        return ""
+        pass
+    return listing()
 
 
 class NoRedirect(urllib.request.HTTPRedirectHandler):
@@ -199,8 +243,10 @@ def hf_open(url, timeout=60):
                 url = urllib.parse.urljoin(url, e.headers["Location"])
                 continue
             if e.code in (401, 403):
-                raise ValueError("Hugging Face refused access. This model needs you to be signed in on the PGX "
-                                 "(run: hf auth login) and to have accepted its license on huggingface.co.")
+                if hf_token():
+                    raise ValueError("Hugging Face refused access with your key. Open this model's page on huggingface.co "
+                                     "while signed in and accept its license, then check again.")
+                raise NeedsKey("This model requires Hugging Face access to check. Press Check for updates and enter your key.")
             if e.code == 404:
                 raise FileNotFoundError(url)
             raise ValueError(f"Hugging Face answered with error {e.code}.")
@@ -279,6 +325,8 @@ def _find_remote(model, name, repo_cache):
             files = repo_files(repo, repo_cache)
         except FileNotFoundError:
             continue
+        except NeedsKey:
+            raise
         except ValueError as e:
             problem = problem or e
             continue
@@ -304,6 +352,8 @@ def check_file(model, local, repo_cache):
                     detail="Not on the PGX." + (" Only needed if you use this feature." if model.get("optional") else ""))
     path = local[name]
     _set(mid, file=name)
+    if not hf_token() and any(r in GATED for r in model["repos"]):       # known to need a key: do not even ask
+        raise NeedsKey("This model requires Hugging Face access to check. Press Check for updates and enter your key.")
     repo, remote = _find_remote(model, name, repo_cache)
     if not remote:
         return _set(mid, state="error", detail="Could not find this file on Hugging Face to compare against.")
@@ -406,6 +456,8 @@ def check_all():
             try:
                 kind = model.get("kind", "file")
                 check_ollama(model) if kind == "ollama" else check_speech(model) if kind == "speech" else check_file(model, local, repo_cache)
+            except NeedsKey as e:
+                _set(mid, state="needs_key", detail=str(e))
             except Exception as e:                      # one model failing must not stop the rest
                 _set(mid, state="error", detail=str(e)[:300])
     finally:
@@ -543,9 +595,10 @@ def listing():
                               "state": s.get("state", "unknown"), "detail": s.get("detail", ""),
                               "progress": s.get("progress"), "checked": s.get("checked")})
             groups.append({"id": gid, "title": title, "note": note, "models": items})
-        return {"groups": groups, "checking": _check_running, "signed_in": bool(hf_token())}
+        return {"groups": groups, "checking": _check_running, "signed_in": bool(hf_token()),
+                "key_from_panel": os.path.exists(TOKEN_FILE) and not os.environ.get("HF_TOKEN", "").strip()}
 
 
 for _mid, _entry in _load(STATE_FILE, {}).items():     # results of the last check survive a restart
-    if _mid in BY_ID and _entry.get("state") in ("current", "outdated", "missing", "error"):
+    if _mid in BY_ID and _entry.get("state") in FINAL:
         STATUS[_mid] = _entry

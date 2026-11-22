@@ -124,3 +124,5 @@ In Full assist > Shots the language model also decides, for every segment after 
 ## Fixing part of a picture
 
 Click a picture (Assets, Library > Images, Full assist key frames) to open the viewer, then **Fix an area**: paint over the problem, describe what should be there, and Generate fix. FLUX.2 repaints only the painted area (`workflows.build_fix`: noise-masked sampling with the original as reference, then pasted back through the mask). The result is saved as a new picture; the original is kept.
+
+**Hugging Face key.** If the PGX has no key, Check for updates first asks for a read-only Hugging Face token. It is verified with Hugging Face, then stored in `data/hf_token` (owner-only, never committed, never sent back to the browser). Skip checks everything else; models that need access show a yellow triangle and are not attempted. A key saved by `hf auth login` on the PGX is used automatically.
