@@ -450,18 +450,17 @@ def release_waiting(project):
 
 def render_all(pid):
     """Queue every segment's listed runs. Segments that cannot render are reported, not fatal."""
-    queued, held, skipped = 0, 0, []
+    queued, skipped = 0, []
     for seg in load_project(pid)["segments"]:
         try:
-            made = render_segment(pid, seg["id"])
-            queued += sum(1 for r in made if r["status"] != "waiting")
-            held += sum(1 for r in made if r["status"] == "waiting")
+            queued += len(render_segment(pid, seg["id"], hold=False))
         except ValueError as e:
             skipped.append({"name": seg.get("name") or "Unnamed segment", "reason": str(e)})
-    return {"queued": queued, "held": held, "skipped": skipped}
+    return {"queued": queued, "skipped": skipped}
 
 
-def render_segment(pid, segment_id, runs=None):
+def render_segment(pid, segment_id, runs=None, hold=True):
+    """Queue a segment's runs. With hold=False (overnight batches) a segment that would have to wait is skipped instead."""
     with LOCK:
         project = load_project(pid)
         seg = next((s for s in project["segments"] if s["id"] == segment_id), None)
@@ -470,6 +469,9 @@ def render_segment(pid, segment_id, runs=None):
         begin, wait = resolve_begin(project, seg)
         if not begin and not wait:
             raise ValueError("This segment has no begin shot yet.")
+        if wait and not hold:
+            index = project["segments"].index(seg)
+            raise ValueError(f'continues from "{project["segments"][index - 1].get("name") or "the segment before it"}", which has no picked clip yet')
         threading.Thread(target=assist.unload, daemon=True).start()      # give the language model's memory back
         count = max(1, min(8, int(runs or seg.get("runs") or 1)))
         made = []
@@ -663,13 +665,18 @@ def assist_shots_save(pid, shots):
         current["first"]["text"] = str((shots.get("first") or {}).get("text", current["first"]["text"]))[:1500]
         edits = {e.get("segment_id"): e for e in shots.get("ends", []) if isinstance(e, dict)}
         for end in current["ends"]:
-            if end.get("segment_id") in edits:
-                end["text"] = str(edits[end["segment_id"]].get("text", end["text"]))[:1500]
+            edit = edits.get(end.get("segment_id"))
+            if edit:
+                end["text"] = str(edit.get("text", end["text"]))[:1500]
+                if edit.get("start") in ("new", "continue"):
+                    end["start"] = edit["start"]
+                end.setdefault("begin", {"text": "", "who": []})
+                end["begin"]["text"] = str((edit.get("begin") or {}).get("text", end["begin"].get("text", "")))[:1500]
         return update_assist(pid, shots=current)
 
 
 def assist_shot_images(pid, targets):
-    """Queue the key frame images. `targets` is a list of "first" and segment ids, or None for every frame."""
+    """Queue key frame images. `targets` lists "first", "begin:<segment id>" and segment ids (end frames); None means every frame."""
     with LOCK:
         project = load_project(pid)
         story = approved_story(project)
@@ -681,7 +688,11 @@ def assist_shot_images(pid, targets):
         if not project["segments"]:
             raise ValueError("There are no segments on the storyboard.")
         plan = [("first", project["segments"][0], "begin_image", shots["first"], "Opening frame")]
-        plan += [(e.get("segment_id"), segments.get(e.get("segment_id")), "end_image", e, None) for e in shots["ends"]]
+        for i, e in enumerate(shots["ends"]):
+            seg = segments.get(e.get("segment_id"))
+            if seg and seg is not project["segments"][0] and e.get("start") == "new":      # a new scene opens on its own picture
+                plan.append(("begin:" + seg["id"], seg, "begin_image", e.get("begin") or {}, f"{seg.get('name') or 'Segment'} begin"))
+            plan.append((e.get("segment_id"), seg, "end_image", e, None))
         busy = {(j.get("segment_id"), j.get("slot")) for j in project["image_jobs"] if j.get("kind") == "shot" and j.get("status") in PENDING}
         threading.Thread(target=assist.unload, daemon=True).start()
         made = []

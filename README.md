@@ -118,3 +118,5 @@ After a story is approved, step 4 (Cast) lets you tick which actors appear and w
 - **New angle**: the segment has its own begin shot and starts on it.
 - **Continue**: the begin shot is empty. The segment starts from the previous segment's end shot if it has one; otherwise from the last frame of the clip picked on the previous segment. Until a clip is picked there, renders of this segment are created "on hold" and start by themselves once you pick. Every clip saves its final frame for this.
 - Singing segments cannot have an end shot (the lip sync engine only takes a start image).
+
+In Full assist > Shots the language model also decides, for every segment after the first, whether it **continues** the previous shot or cuts to a **new scene** (place, subject or time changes, or the music turns sharply), with a one-line reason. New scenes get their own begin-frame description and image; continuing segments have their begin shot cleared. Each decision can be flipped by hand. **Render all** skips segments that would have to wait for a pick and lists them.

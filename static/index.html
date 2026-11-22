@@ -1000,7 +1000,7 @@ $('renderAll').onclick = async ev => {
     const out = await post('/api/render_all', { project: PID });
     await poll(true);
     const skipped = out.skipped.map(s => `${s.name}: ${s.reason}`).join('  |  ');
-    toast(`Queued ${out.queued} clips.` + (out.held ? ` ${out.held} on hold until you pick a clip on the segment before them.` : '') + (skipped ? ` Skipped — ${skipped}` : ''));
+    toast(`Queued ${out.queued} clips.` + (skipped ? ` Skipped — ${skipped}` : ''));
   } catch (err) { toast(err.message); }
   btn.disabled = false; btn.textContent = 'Render all segments';
 };
@@ -1100,7 +1100,8 @@ $('castRecBtn').onclick = () => busy($('castRecBtn'), $('castStatus'), 'Reading 
 let shotsTimer = null;
 function saveShots() { clearTimeout(shotsTimer); shotsTimer = setTimeout(() => post('/api/assist/shots_save', { project: PID, shots: A().shots }).catch(e => toast(e.message)), 700); }
 async function makeShots(targets, btn) {
-  const rows = shotRows().filter(r => !r.off && (!targets || targets.includes(r.key)));
+  const rows = shotRows().filter(r => !r.off && !r.cont && (!targets || targets.includes(r.key)));
+  if (!targets) { shotRows().filter(r => r.cont && r.seg.begin_image).forEach(r => { r.seg.begin_image = null; }); dirty(); }   /* continuing segments carry no begin shot of their own */
   if (!targets && rows.some(r => r.seg[r.slot]) && !confirm('Some of these shots already have a picture. Replace them all?')) return;
   await busy(btn, $('shotsStatus'), 'Sending to the PGX…', async () => {
     clearTimeout(shotsTimer); await save(); await post('/api/assist/shots_save', { project: PID, shots: A().shots });
@@ -1110,8 +1111,11 @@ async function makeShots(targets, btn) {
 function shotRows() {
   const shots = A().shots; if (!shots || !P.segments.length) return [];
   const rows = [{ key: 'first', seg: P.segments[0], slot: 'begin_image', shot: shots.first, title: 'Opening frame', sub: 'Begin shot of segment 1' }];
-  shots.ends.forEach(e => { const i = P.segments.findIndex(s => s.id === e.segment_id); if (i >= 0) rows.push({ key: e.segment_id, seg: P.segments[i], slot: 'end_image', shot: e,
-    title: `${i + 1}. ${P.segments[i].name}`, off: P.segments[i].type === 'singing', sub: P.segments[i].type === 'singing' ? 'Singing: no end shot. The next segment continues from the last frame of the clip you pick here.' : 'End shot' + (i + 1 < P.segments.length ? `, and where segment ${i + 2} begins` : '') }); });
+  shots.ends.forEach(e => { const i = P.segments.findIndex(s => s.id === e.segment_id); if (i < 0) return;
+    if (i > 0) rows.push({ key: 'begin:' + e.segment_id, seg: P.segments[i], slot: 'begin_image', shot: e.begin ||= { text: '', who: [] }, entry: e, cont: e.start !== 'new',
+      title: `${i + 1}. ${P.segments[i].name}`, sub: e.start === 'new' ? 'New scene: begin shot' : 'Continues from the shot before' });
+    rows.push({ key: e.segment_id, seg: P.segments[i], slot: 'end_image', shot: e,
+    title: `${i + 1}. ${P.segments[i].name}`, off: P.segments[i].type === 'singing', sub: P.segments[i].type === 'singing' ? 'Singing: no end shot. The next segment continues from the last frame of the clip you pick here.' : 'End shot' + (i + 1 < P.segments.length ? `, and where segment ${i + 2} begins if it continues` : '') }); });
   return rows;
 }
 function renderShots() {
@@ -1126,6 +1130,14 @@ function renderShots() {
     const row = node('div', 'keyframe'), left = node('div'), mid = node('div'), right = node('div');
     left.append(node('b', '', r.title), node('div', 'hint', r.sub));
     if (r.off) { row.style.opacity = '.6'; row.append(left, node('div', 'hint', r.shot.text || ''), right); out.append(row); return; }
+    if (r.entry) {                                            /* how this segment starts: the system's call, which you can flip */
+      row.style.borderTop = '2px solid var(--line)';
+      const tog = node('div', 'toggle'), c = node('button', r.cont ? 'on' : '', 'Continue'), n = node('button', r.cont ? '' : 'on', 'New scene'); tog.style.marginTop = '6px';
+      const flip = to => { r.entry.start = to; if (to === 'continue') { r.seg.begin_image = null; dirty(); } saveShots(); document.activeElement.blur(); renderShots(); };
+      c.onclick = () => flip('continue'); n.onclick = () => flip('new'); tog.append(c, n); left.append(tog);
+      if (r.entry.reason) left.append(node('div', 'hint', r.entry.reason));
+      if (r.cont) { row.append(left, node('div', 'hint', 'Starts on the exact frame the segment before it ends on: its end shot, or the last frame of the clip you pick there.'), right); out.append(row); return; }
+    }
     if (r.shot.who && r.shot.who.length) left.append(node('div', 'hint', 'In frame: ' + r.shot.who.join(', ')));
     const text = node('textarea'); text.value = r.shot.text || ''; text.oninput = () => { r.shot.text = text.value; saveShots(); };
     mid.append(text);
