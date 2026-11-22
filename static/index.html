@@ -276,8 +276,13 @@ const post = (path, body) => api(path, { method:'POST', headers:{'Content-Type':
 function toast(msg) { const t = $('toast'); t.textContent = msg; t.style.display = 'block'; clearTimeout(t._h); t._h = setTimeout(() => t.style.display = 'none', 7000); }
 
 async function api(path, opts) {
-  const r = await fetch(path, opts);
-  const j = await r.json().catch(() => ({ error: 'Bad reply from server' }));
+  const r = await fetch(path, opts), text = await r.text();
+  let j;
+  try { j = JSON.parse(text); }
+  catch (e) {
+    if (r.status === 413) throw new Error('That file is too large for the PGX to accept (its limit is 100 MB).');
+    throw new Error(`Unexpected reply from the PGX (status ${r.status}): ${text.replace(/<[^>]+>/g, ' ').trim().slice(0, 160) || 'empty'}`);
+  }
   if (!r.ok || j.error) throw new Error(j.error || ('Request failed: ' + r.status));
   return j;
 }
@@ -563,11 +568,34 @@ setInterval(syncPreview, 200);
 $('wave').onclick = e => { const dur = P.song?.duration; if (!dur) return; const r = e.target.getBoundingClientRect(); $('audio').currentTime = (e.clientX - r.left) / r.width * dur; drawWave(); };
 $('audio').ontimeupdate = () => { if (stopAt !== null && $('audio').currentTime >= stopAt) { $('audio').pause(); stopAt = null; } drawWave(); };
 
+/* Videos and very large files are reduced to their soundtrack in the browser, so only a small WAV is sent to the PGX. */
+async function soundtrack(file) {
+  if (!file.type.startsWith('video/') && !/\.(mp4|mov|mkv|webm)$/i.test(file.name) && file.size < 60 * 1048576) return file;
+  const ctx = new (window.AudioContext || window.webkitAudioContext)();
+  let buf;
+  try { buf = await ctx.decodeAudioData(await file.arrayBuffer()); }
+  catch (e) { throw new Error(`Could not read the audio in ${file.name}. Try exporting it as an MP3 or WAV.`); }
+  finally { ctx.close(); }
+  const ch = Math.min(2, buf.numberOfChannels), n = buf.length, data = new DataView(new ArrayBuffer(44 + n * ch * 2));
+  const put = (o, t) => { for (let i = 0; i < t.length; i++) data.setUint8(o + i, t.charCodeAt(i)); };
+  put(0, 'RIFF'); data.setUint32(4, 36 + n * ch * 2, true); put(8, 'WAVEfmt '); data.setUint32(16, 16, true); data.setUint16(20, 1, true);
+  data.setUint16(22, ch, true); data.setUint32(24, buf.sampleRate, true); data.setUint32(28, buf.sampleRate * ch * 2, true);
+  data.setUint16(32, ch * 2, true); data.setUint16(34, 16, true); put(36, 'data'); data.setUint32(40, n * ch * 2, true);
+  const chans = []; for (let c = 0; c < ch; c++) chans.push(buf.getChannelData(c));
+  for (let i = 0, o = 44; i < n; i++) for (let c = 0; c < ch; c++, o += 2) { const v = Math.max(-1, Math.min(1, chans[c][i])); data.setInt16(o, v < 0 ? v * 32768 : v * 32767, true); }
+  return new File([data], stem(file.name) + '.wav', { type: 'audio/wav' });
+}
+
 async function addAudio(files, makeSong) {
   let last = null;
   for (const f of files) {
-    try { const filename = await upload(f); last = { id: uid(), name: f.name.replace(/\.[^.]+$/, ''), filename, duration: 0 }; P.audio.push(last); }
-    catch (err) { toast(err.message); }
+    try {
+      $('saved').textContent = 'reading audio…';
+      const audio = await soundtrack(f);
+      $('saved').textContent = 'uploading…';
+      const filename = await upload(audio); last = { id: uid(), name: stem(f.name), filename, duration: 0 }; P.audio.push(last);
+    }
+    catch (err) { toast(err.message); $('saved').textContent = 'upload failed'; }
   }
   if (last && (makeSong || !P.song)) await setSong(last.filename); else { renderSongPick(); dirty(); }
   if (currentView === 'assets') renderAssets();
