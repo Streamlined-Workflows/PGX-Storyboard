@@ -99,3 +99,12 @@ There is no login. Keep ports 8190 and 8188 on your home network only; do not fo
 ## Audio patch for NVIDIA's ComfyUI container
 
 NVIDIA's ComfyUI image for DGX Spark ships a placeholder in place of `torchaudio`, so any node that processes audio fails. `patch-comfy-audio.sh` copies two small pure-PyTorch files from `comfy-patches/` into the container (`resample` and `MelSpectrogram`, checked against the real library) and restarts ComfyUI. Run it again if the container is ever rebuilt.
+
+## AI models panel
+
+System status > AI models lists every model the storyboard uses, with what it does here. **Check for updates** compares each one with the version published today:
+
+- Files in ComfyUI's models folder are compared by SHA-256 with the same file on Hugging Face. The first check reads every file once (several minutes); results are cached in `data/model_hashes.json`, so later checks are quick.
+- The Ollama model is compared with the Ollama library; the speech model with its Hugging Face repo.
+
+**Update** downloads the new file beside the old one, verifies it, then swaps it in and asks ComfyUI to unload the old copy. `run.sh` mounts the models folder (`COMFY_MODELS` overrides the path) and `~/.cache/huggingface` (read-only, for the token saved by `hf auth login`, needed for FLUX.2 and LTX-2.5). The list lives in `models.py`.

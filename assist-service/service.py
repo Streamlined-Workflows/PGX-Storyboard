@@ -109,6 +109,43 @@ def run_job(key, url):
             job.update(state="error", error=f"{type(e).__name__}: {e}"[:500])
 
 
+MODEL_UPDATE = {"state": "idle", "error": ""}
+
+
+def speech_repo():
+    from faster_whisper.utils import _MODELS
+    return _MODELS.get(WHISPER_MODEL, WHISPER_MODEL)
+
+
+def model_info():
+    """Which version of the speech model is on disk, and which one is published now."""
+    try:
+        from huggingface_hub import HfApi, constants
+        repo = speech_repo()
+        local = None
+        try:
+            with open(os.path.join(constants.HF_HUB_CACHE, "models--" + repo.replace("/", "--"), "refs", "main")) as f:
+                local = f.read().strip()
+        except OSError:
+            pass
+        return {"repo": repo, "local": local, "remote": HfApi().model_info(repo).sha,
+                "update": MODEL_UPDATE["state"], "update_error": MODEL_UPDATE["error"]}
+    except Exception as e:
+        return {"error": f"Could not check the speech model: {type(e).__name__}: {e}"[:300]}
+
+
+def update_model():
+    global _model
+    try:
+        from faster_whisper.utils import download_model
+        download_model(WHISPER_MODEL)
+        with RUN_LOCK:               # not while a song is being transcribed
+            _model = None            # the next analysis loads the new files
+        MODEL_UPDATE.update(state="idle", error="")
+    except Exception as e:
+        MODEL_UPDATE.update(state="error", error=f"{type(e).__name__}: {e}"[:300])
+
+
 class Handler(BaseHTTPRequestHandler):
     def log_message(self, fmt, *args):
         pass
@@ -126,11 +163,18 @@ class Handler(BaseHTTPRequestHandler):
         if url.path == "/status":
             key = urllib.parse.parse_qs(url.query).get("key", [""])[0]
             return self.send_json(JOBS.get(key) or {"state": "none"})
+        if url.path == "/model":
+            return self.send_json(model_info())
         if url.path == "/health":
             return self.send_json({"ok": True, "model": WHISPER_MODEL})
         self.send_json({"error": "Not found"}, 404)
 
     def do_POST(self):
+        if self.path == "/model/update":
+            if MODEL_UPDATE["state"] != "running":
+                MODEL_UPDATE.update(state="running", error="")
+                threading.Thread(target=update_model, daemon=True).start()
+            return self.send_json(MODEL_UPDATE)
         if self.path != "/analyze":
             return self.send_json({"error": "Not found"}, 404)
         payload = json.loads(self.rfile.read(int(self.headers.get("Content-Length") or 0)) or b"{}")

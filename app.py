@@ -23,6 +23,7 @@ import uuid
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 import assist
+import models
 import workflows
 
 ROOT = os.path.dirname(os.path.abspath(__file__))
@@ -657,6 +658,8 @@ class Handler(BaseHTTPRequestHandler):
                 return self.send_json({"ok": True, "time": time.time()})
             if url.path == "/api/system":
                 return self.send_json(system_status())
+            if url.path == "/api/models":
+                return self.send_json(models.listing())
             if url.path == "/api/assist/status":
                 return self.send_json(assist_status(query.get("project", [""])[0]))
             if url.path == "/api/assist/health":
@@ -697,6 +700,10 @@ class Handler(BaseHTTPRequestHandler):
         try:
             payload = json.loads(body or b"{}")
             pid = payload.get("project")
+            if path == "/api/models/check":
+                return self.send_json(models.start_check())
+            if path == "/api/models/update":
+                return self.send_json(models.start_update(payload.get("id")))
             if path == "/api/projects":
                 return self.send_json(save_project(empty_project(str(payload.get("name") or "Untitled project")[:80])))
             if path == "/api/projects/duplicate":
