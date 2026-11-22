@@ -71,6 +71,13 @@ def normalize(project):
     project.setdefault("audio", [])
     project.setdefault("photos", [])
     project.setdefault("image_jobs", [])
+    if "generated" not in project:          # the Library's record of every picture made here; older projects are rebuilt from what survives
+        made = re.compile(r"_[0-9a-f]{8}\.png$")
+        found = [{"image": v["image"], "label": f"{a.get('name') or 'Actor'} · {v.get('label') or 'view'}", "kind": "actor_view", "actor_id": a.get("id")}
+                 for a in project.get("actors", []) for v in a.get("views", []) if made.search(v.get("image") or "")]
+        found += [{"image": ph["image"], "label": ph.get("name") or "Shot", "kind": "shot"}
+                  for ph in project.get("photos", []) if made.search(ph.get("image") or "")]
+        project["generated"] = [dict(g, id=new_id(), created=None) for g in found]
     if any("views" not in a for a in project["actors"]):
         migrate_actors(project)
     song = project.get("song")
@@ -173,7 +180,8 @@ def everything():
                   "id": r["id"], "files": r.get("files", []), "engine": r.get("engine", ""),
                   "finished": r.get("finished") or r.get("created")}
                  for s in p["segments"] for r in s.get("results", []) if r.get("status") == "done" and r.get("files")]
-        out.append({"id": p["id"], "name": p["name"], "actors": p["actors"], "photos": p["photos"], "audio": p["audio"], "clips": clips})
+        out.append({"id": p["id"], "name": p["name"], "actors": p["actors"], "photos": p["photos"], "audio": p["audio"], "clips": clips,
+                    "images": p.get("generated", [])})
     return out
 
 
@@ -298,6 +306,11 @@ def refresh_statuses(pid):
                 try:
                     res.update(status="done", image=import_output(picture, res.get("save_as") or picture["filename"]),
                                finished=time.time())
+                    actor = next((a for a in project.get("actors", []) if a.get("id") == res.get("actor_id")), None)
+                    project["generated"].append({
+                        "id": res["id"], "image": res["image"], "kind": res.get("kind"), "created": res["finished"], "seed": res.get("seed"),
+                        "actor_id": res.get("actor_id"), "segment_id": res.get("segment_id"),
+                        "label": f"{actor.get('name') or 'Actor'} · {res.get('label')}" if actor else res.get("label") or "Picture"})
                 except (OSError, ValueError, KeyError) as e:
                     res.update(status="error", error=f"Could not save the generated image: {e}")
             else:
@@ -377,6 +390,15 @@ def queue_still(project, prompt, refs, stem, **fields):
     project["image_jobs"].append(job)
     save_project(project, touch=False)
     return job
+
+
+def generated_remove(pid, gid):
+    """Take a picture out of the Library list. The file itself, and any actor or shot using it, are left alone."""
+    with LOCK:
+        project = load_project(pid)
+        project["generated"] = [g for g in project.get("generated", []) if g.get("id") != gid]
+        save_project(project, touch=False)
+        return {"generated": project["generated"]}
 
 
 def image_jobs_clear(pid, ids):
@@ -939,6 +961,8 @@ class Handler(BaseHTTPRequestHandler):
                 return self.send_json(actor_describe(pid, payload.get("actor_id")))
             if path == "/api/actor/generate":
                 return self.send_json(actor_generate(pid, payload.get("actor_id"), payload.get("refs"), payload.get("views"), payload.get("extra")))
+            if path == "/api/generated/remove":
+                return self.send_json(generated_remove(pid, payload.get("id")))
             if path == "/api/image_jobs/clear":
                 return self.send_json(image_jobs_clear(pid, payload.get("ids")))
             if path == "/api/assist/analyze":

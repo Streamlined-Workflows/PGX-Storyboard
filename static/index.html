@@ -49,6 +49,8 @@
   #strip .cell.still img { opacity:.45; }
   #strip .cell span { position:absolute; left:4px; bottom:2px; font-size:10px; color:#fff; text-shadow:0 1px 2px #000; white-space:nowrap; }
   .cards { display:flex; gap:12px; flex-wrap:wrap; }
+  .card.big { width:232px; } .card.big img { height:134px; cursor:zoom-in; } .card.big .cap { padding:6px 8px 2px; font-size:12px; font-weight:600; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .card.big .sub { padding:0 8px 4px; font-size:11px; color:var(--dim); }
   .card { width:150px; background:var(--panel2); border:1px solid var(--line); border-radius:8px; overflow:hidden; }
   .card img { width:100%; height:86px; object-fit:cover; display:block; background:var(--bg); }
   .card input { width:100%; border:none; border-radius:0; background:none; font-size:12px; padding:5px 7px; }
@@ -266,8 +268,9 @@
     <div class="row"><div class="toggle scope" data-scope="library"><button data-v="all">All</button><button data-v="project" class="on">Project</button></div>
       <span class="hint" id="libraryScopeHint">Showing this project's clips.</span></div>
     <section>
-      <div class="row" style="margin-bottom:12px"><h2 style="margin:0">Library</h2><span id="libCount" class="hint"></span><span class="spacer"></span>
-        <div class="toggle"><button id="libAll" class="on">All clips</button><button id="libPicked">Picked only</button></div></div>
+      <div class="row" style="margin-bottom:12px"><h2 style="margin:0">Library</h2>
+        <div class="toggle"><button id="libClips" class="on">Clips</button><button id="libImages">Images</button></div><span id="libCount" class="hint"></span><span class="spacer"></span>
+        <div class="toggle" id="libFilter"><button id="libAll" class="on">All clips</button><button id="libPicked">Picked only</button></div></div>
       <div id="library" class="results" style="margin-top:0"></div>
     </section>
     <div id="otherLibrary" style="display:grid;gap:18px"></div>
@@ -364,6 +367,7 @@ function mergeResults(fresh) {
 
 /* Generated stills arrive as finished jobs; add each one to its actor, then tell the server it was taken. */
 function mergeJobs(fresh) {
+  P.generated = fresh.generated || P.generated || [];
   const jobs = fresh.image_jobs || [], before = JSON.stringify(P.image_jobs || []);
   const taken = [];
   for (const j of jobs) {
@@ -947,7 +951,41 @@ function updateAllHint() {
 }
 
 /* ---------- library ---------- */
+let libTab = 'clips';
+function imageCard(g, projectName) {            /* one generated picture; projectName is set for pictures from another project */
+  const d = node('div', 'card big'), img = node('img'), acts = node('div', 'acts'), have = P.photos.some(ph => ph.image === g.image) || P.actors.some(a => a.views.some(v => v.image === g.image));
+  img.src = view(g.image); img.alt = ''; img.onclick = () => openViewer(img.src, [projectName, g.label].filter(Boolean).join(' · '));
+  const add = node('button', 'ghost small', have ? 'In this project' : 'Add to Photos'); add.disabled = have; add.title = 'Photos can be chosen as a begin or end shot';
+  add.onclick = () => { P.photos.push({ id: uid(), name: g.label || 'Picture', image: g.image }); dirty(); renderLibrary(); toast('Added to Photos.'); };
+  acts.append(add);
+  if (!projectName) { const del = node('button', 'ghost small', '✕'); del.title = 'Remove from the Library list. Actors and shots that use this picture keep it.';
+    del.onclick = async () => { try { P.generated = (await post('/api/generated/remove', { project: PID, id: g.id })).generated; renderLibrary(); } catch (e) { toast(e.message); } }; acts.append(del); }
+  d.append(img, node('div', 'cap', g.label || 'Picture'), node('div', 'sub', ({ actor_view: 'Actor view', shot: 'Shot' }[g.kind] || 'Picture') + (g.created ? ' · ' + new Date(g.created * 1000).toLocaleString([], { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }) : '')), acts);
+  return d;
+}
+function renderLibraryImages() {
+  const wrap = $('library'), items = (P.generated || []).slice().sort((a, b) => (b.created || 0) - (a.created || 0)), all = scope.library === 'all';
+  $('libCount').textContent = items.length ? `${items.length} image${items.length === 1 ? '' : 's'} in this project` : '';
+  wrap.innerHTML = items.length ? '' : '<span class="hint">No images yet. Every actor view and shot you generate in this project appears here, even after you remove it from the actor.</span>';
+  items.forEach(g => wrap.appendChild(imageCard(g)));
+  const other = $('otherLibrary'); other.innerHTML = '';
+  $('libraryScopeHint').textContent = all ? 'Showing images from every project.' : "Showing this project's images.";
+  if (!all) return;
+  const list = others().filter(p => (p.images || []).length);
+  if (!list.length) { other.innerHTML = '<section><span class="hint">No other project has generated images yet.</span></section>'; return; }
+  list.forEach(p => {
+    const sec = node('section'), head = node('div', 'row'), grid = node('div', 'results'), open = node('button', 'small', 'Open this project'); head.style.marginBottom = '12px'; grid.style.marginTop = '0';
+    const h = node('h2', '', 'From ' + p.name); h.style.margin = '0'; open.onclick = async () => { if (await openProject(p.id)) show('library'); };
+    head.append(h, node('span', 'hint', `${p.images.length} image${p.images.length === 1 ? '' : 's'}`), node('span', 'spacer'), open);
+    p.images.slice().sort((a, b) => (b.created || 0) - (a.created || 0)).forEach(g => grid.appendChild(imageCard(g, p.name)));
+    sec.append(head, grid); other.append(sec);
+  });
+}
+function setLibTab(tab) { libTab = tab; $('libClips').classList.toggle('on', tab === 'clips'); $('libImages').classList.toggle('on', tab === 'images'); $('libFilter').style.display = tab === 'clips' ? '' : 'none'; renderLibrary(); }
+$('libClips').onclick = () => setLibTab('clips'); $('libImages').onclick = () => setLibTab('images');
+
 function renderLibrary() {
+  if (libTab === 'images') return renderLibraryImages();
   const wrap = $('library'), items = [];
   for (const s of P.segments) for (const r of (s.results || [])) if (r.status !== 'error' && (!libPickedOnly || s.chosen === r.id)) items.push([s, r]);
   items.sort((a, b) => (b[1].finished || b[1].created || 0) - (a[1].finished || a[1].created || 0));
