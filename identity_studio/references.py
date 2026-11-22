@@ -16,7 +16,9 @@ import xml.etree.ElementTree as ET
 MAX_BYTES = 20 * 1024 * 1024          # per raster file
 MAX_SVG_BYTES = 2 * 1024 * 1024
 MAX_PER_PROJECT = 24
-USES = ("keep exactly", "style guide", "inspiration")
+# "insert" keeps the reference's own pixels and has the rest of the picture drawn around it.
+# The other three hand the reference to the image model as guidance, and the model redraws it.
+USES = ("insert", "keep exactly", "style guide", "inspiration")
 TYPES = {"png": "image/png", "jpg": "image/jpeg", "webp": "image/webp", "svg": "image/svg+xml"}
 
 SVG_NS = "http://www.w3.org/2000/svg"
@@ -39,6 +41,11 @@ def sniff(data):
     if head.startswith(b"<svg") or (head.startswith(b"<?xml") and b"<svg" in data[:65536].lower()) or head.startswith(b"<!--") and b"<svg" in data[:65536].lower():
         return "svg"
     return None
+
+
+def has_transparency(data):
+    """True for a PNG saved with an alpha channel: a cut-out mark rather than a photograph."""
+    return data[:8] == b"\x89PNG\r\n\x1a\n" and data[12:16] == b"IHDR" and len(data) > 25 and data[25] in (4, 6)
 
 
 def _local(tag):

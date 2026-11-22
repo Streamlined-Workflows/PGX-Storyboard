@@ -8,6 +8,7 @@ What a reference can and cannot do here: FLUX.2 treats a reference image as stro
 usually keeps a mark's shape and colour, but it redraws it, so "keep exactly" is a request, not a
 guarantee. Exact placement of an uploaded vector belongs to a later composition step.
 """
+import base64
 import random
 import struct
 
@@ -41,8 +42,9 @@ def png_size(data):
     return None
 
 
-def concept_prompt(settings, refs, direction=""):
-    """The words sent to the image model for one brief. `refs` are the references in use, in order."""
+def concept_prompt(settings, refs, direction="", inserted=None):
+    """The words sent to the image model for one brief. `refs` are the references in use, in order.
+    `inserted` is a reference whose own pixels are already in the picture and must be built around."""
     s = settings
     subject = s["app_name"] or "a software product"
     parts = [f"A logo design for {subject}."]
@@ -52,6 +54,10 @@ def concept_prompt(settings, refs, direction=""):
         parts.append(f"The logo shows: {s['description'].rstrip('.')}.")
     if direction:
         parts.append(f"For this version: {direction.rstrip('.')}.")
+    if inserted is not None:
+        parts.append("The existing mark already in the centre of the picture stays exactly as it is. Design the rest of the logo "
+                     "around it so the mark is the heart of the composition. Do not draw over the mark, do not repeat it, and do not put the new elements inside it."
+                     + (f" About the mark: {inserted['note'].rstrip('.')}." if inserted.get("note") else ""))
     for i, ref in enumerate(refs, 1):
         how = {"keep exactly": f"Reference image {i} is an existing mark. Reproduce that mark faithfully: the same shape, proportions and colours, not redesigned.",
                "style guide": f"Match the visual style of reference image {i}: its line weight, shapes and colour treatment.",
@@ -79,7 +85,7 @@ def plan(project, direction=""):
     s = project["settings"]
     if not (s["app_name"] or s["description"] or s["purpose"]):
         raise ValueError("Fill in the brief first: at least the application name or what the logo should show.")
-    on = [r for r in project["references"] if isinstance(r, dict) and r.get("enabled", True)]
+    on = [r for r in project["references"] if isinstance(r, dict) and r.get("enabled", True) and r.get("use") != "insert"]
     notes = []
     if len(on) > MAX_REFS:
         notes.append(f"{len(on)} references are switched on; the first {MAX_REFS} are used. Switch some off to choose which.")
@@ -93,11 +99,76 @@ def plan(project, direction=""):
     return concept_prompt(s, refs, str(direction or "").strip()[:500]), refs, notes
 
 
-def queue_concepts(store, jobs, pid, direction=""):
+def inserts(project):
+    return [r for r in project["references"] if isinstance(r, dict) and r.get("enabled", True) and r.get("use") == "insert"]
+
+
+def _png(data_url, size, what):
+    """Decode a PNG the page sent as a data URL and check it is the size generation will use."""
+    try:
+        data = base64.b64decode(str(data_url).split(",", 1)[-1], validate=True)
+    except (ValueError, TypeError):
+        data = b""
+    if references.sniff(data) != "png" or len(data) > references.MAX_BYTES or tuple(png_size(data) or ()) != tuple(size):
+        raise ValueError(f"The {what} for the inserted reference did not arrive properly. Reload the page and try again.")
+    return data
+
+
+def queue_inserted(store, jobs, pid, direction, placed):
+    """Concepts built around a reference whose own pixels are kept.
+
+    The page places the reference on a blank canvas and sends that canvas with a mask that is black
+    over the mark and white everywhere else. The inpainting graph then draws everything except the
+    mark, and pastes the original canvas back through the mask, so the mark's pixels are untouched.
+    """
+    if not can_fix():
+        raise ValueError("Inserting a reference is not connected on this server.")
+    project = store.load(pid)
+    marks = inserts(project)
+    ref = next((r for r in marks if r["id"] == (placed or {}).get("reference")), None)
+    if ref is None:
+        raise ValueError("The reference to insert was not found. Reload the page and try again.")
+    s = project["settings"]
+    if not (s["app_name"] or s["description"] or s["purpose"]):
+        raise ValueError("Fill in the brief first: at least the application name or what the logo should show.")
+    size = SIZES.get(s["layout"], (1024, 1024))
+    canvas, mask = _png(placed.get("canvas"), size, "picture"), _png(placed.get("mask"), size, "mask")
+    direction = str(direction or "").strip()[:500]
+    prompt = concept_prompt(s, [], direction, inserted=ref)
+    notes = [f"\"{ref['name']}\" is inserted unchanged and the rest is drawn around it."]
+    others = [r for r in project["references"] if isinstance(r, dict) and r.get("enabled", True) and r is not ref]
+    if others:
+        notes.append("The other enabled references are not used in a round that inserts one. Switch the inserted one off to use them.")
+    if s["background"] == "transparent":
+        notes.append("Concepts are drawn on a plain white background. A transparent background comes with the export step.")
+    image = jobs.comfy.upload(f"identity_{pid}_{ref['id']}_canvas.png", canvas)
+    mask_name = jobs.comfy.upload(f"identity_{pid}_{ref['id']}_around.png", mask)
+    if _build["before"]:
+        try:
+            _build["before"]()
+        except Exception:
+            pass
+    made = []
+    for _ in range(s["concept_count"]):
+        cid, seed = schemas.new_id(), random.randint(1, 2**31 - 1)
+        graph = _build["fix"](image, mask_name, prompt, seed, size[0], size[1], f"identity/{pid}/{cid}")
+        store.add_concept(pid, {"id": cid, "kind": "concept", "state": "waiting", "prompt": prompt, "direction": direction, "seed": seed,
+                                "width": size[0], "height": size[1], "references": [ref["id"]], "inserted": ref["id"], "parent": None, "error": ""})
+        job = jobs.add(pid, "concept", (s["app_name"] or project["name"]) + " concept", graph, meta={"concept": cid})
+        store.update_concept(pid, cid, job=job["id"])
+        made.append(cid)
+    return {"queued": len(made), "concepts": made, "notes": notes}
+
+
+def queue_concepts(store, jobs, pid, direction="", placed=None):
     """Queue one job per concept in the brief's "concepts per round". -> {concepts, notes}."""
     if not ready():
         raise ValueError("Concept generation is not connected on this server.")
     project = store.load(pid)
+    if inserts(project):
+        if not placed:
+            raise ValueError("A reference is set to be inserted, but the page did not send its picture. Reload the page and try again.")
+        return queue_inserted(store, jobs, pid, direction, placed)
     prompt, refs, notes = plan(project, direction)
     names = []
     for ref in refs:                                   # put each reference where ComfyUI can load it

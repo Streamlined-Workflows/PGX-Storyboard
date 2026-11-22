@@ -113,7 +113,9 @@ class Store:
                 raise ValueError(f"A project can hold {references.MAX_PER_PROJECT} references. Remove one first.")
             kind, safe, removed = references.check(data)
             ref = {"id": schemas.new_id(), "name": references.display_name(filename), "kind": kind,
-                   "bytes": len(safe), "use": references.USES[0] if kind == "svg" else references.USES[1],
+                   "bytes": len(safe),
+                   # a vector or a cut-out is almost always a finished mark, so it starts as "insert"
+                   "use": "insert" if kind == "svg" or references.has_transparency(safe) else "style guide",
                    "note": "", "enabled": True, "flat": False, "cleaned": removed, "added": time.time()}
             os.makedirs(self.reference_dir(pid), exist_ok=True)
             path = os.path.join(self.reference_dir(pid), f"{ref['id']}.{kind}")     # the name on disk is ours, never the upload's

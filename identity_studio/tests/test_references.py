@@ -86,7 +86,7 @@ class StoreTests(unittest.TestCase):
 
     def test_upload_read_back_edit_and_remove(self):
         ref = self.up("../../i-icon.svg", NASTY_SVG)
-        self.assertEqual((ref["name"], ref["kind"], ref["use"]), ("i-icon.svg", "svg", "keep exactly"))
+        self.assertEqual((ref["name"], ref["kind"], ref["use"]), ("i-icon.svg", "svg", "insert"))
         self.assertGreater(ref["cleaned"], 0)
         f = api.handle("GET", "/api/identity/reference", dict(self.q, id=ref["id"]))
         self.assertEqual(f.content_type, "image/svg+xml")
@@ -97,7 +97,7 @@ class StoreTests(unittest.TestCase):
         png = self.up("style.png", PNG)
         self.assertEqual(png["use"], "style guide")
         edited = api.handle("PUT", "/api/identity/reference", dict(self.q, id=ref["id"]), {"use": "nonsense", "note": " the i "})
-        self.assertEqual((edited["use"], edited["note"]), ("keep exactly", "the i"))
+        self.assertEqual((edited["use"], edited["note"]), ("insert", "the i"))
         self.assertEqual(len(api.handle("GET", "/api/identity/project", {"id": self.pid})["references"]), 2)
         api.handle("POST", "/api/identity/references/remove", payload={"project": self.pid, "id": ref["id"]})
         self.assertFalse(os.path.exists(f.path))

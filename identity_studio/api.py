@@ -23,7 +23,8 @@ It returns plain data and raises ValueError with a message a person can read.
 
     PUT   …/reference also takes {enabled: true|false}: whether generation uses that reference
     POST  /api/identity/reference/flat?project=…&id=…  a flattened PNG of the reference, made by the page
-    POST  /api/identity/concepts/generate              {project, direction?}   queues the brief's concepts
+    POST  /api/identity/concepts/generate              {project, direction?, insert?}   queues the brief's concepts
+          insert = {reference, canvas, mask}: PNG data URLs the page makes when a reference is set to "insert"
     GET   /api/identity/concept?project=…&id=…         a finished concept's picture
     POST  /api/identity/concepts/fix?project=…&id=…&prompt=…   the painted mask (PNG) as the body
     POST  /api/identity/concepts/remove                {project, id}
@@ -108,6 +109,7 @@ def handle(method, path, query=None, payload=None, raw=None):
             return {"module": "identity-studio", "schema": schemas.SCHEMA_VERSION, "phase": 1,
                     "styles": list(schemas.STYLES), "layouts": list(schemas.LAYOUTS),
                     "backgrounds": list(schemas.BACKGROUNDS), "platforms": list(schemas.PLATFORMS), "reference_uses": list(references.USES), "max_references": generate.MAX_REFS,
+                    "sizes": {k: list(v) for k, v in generate.SIZES.items()},
                     "ready": {"projects": True, "jobs": True, "generation": generate.ready(), "fix": generate.can_fix(), "references": True, "exports": False}}
         if route == "projects":
             return {"projects": s.list()}
@@ -134,7 +136,8 @@ def handle(method, path, query=None, payload=None, raw=None):
         if route == "reference/flat":
             return s.save_reference_flat(query.get("project", ""), query.get("id", ""), raw or b"")
         if route == "concepts/generate":
-            return generate.queue_concepts(s, jobs(), payload.get("project", ""), payload.get("direction", ""))
+            return generate.queue_concepts(s, jobs(), payload.get("project", ""), payload.get("direction", ""),
+                                           payload.get("insert") if isinstance(payload.get("insert"), dict) else None)
         if route == "concepts/fix":
             return generate.queue_fix(s, jobs(), query.get("project", ""), query.get("id", ""), raw or b"", query.get("prompt", ""))
         if route == "concepts/remove":

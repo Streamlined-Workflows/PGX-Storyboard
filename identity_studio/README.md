@@ -116,8 +116,12 @@ dropped and invalid values fall back to the current ones.
 ## Reference images
 
 A project can hold up to 24 references: PNG, JPEG or WebP up to 20 MB each, and SVG up to 2 MB.
-Each has a use ("keep exactly", "style guide" or "inspiration") and a note. Nothing reads them
-yet; concept generation and the composition step will.
+Each has a use and a note:
+
+- **Insert as it is** (`insert`): the reference's own pixels are placed in the centre of the picture
+  and everything else is drawn around them. The default for an SVG or a PNG with transparency.
+- **Follow closely (redrawn)** (`keep exactly`), **Style guide**, **Inspiration**: the reference is
+  given to the image model as guidance, and the model redraws it.
 
 Uploads are treated as untrusted:
 
@@ -170,6 +174,14 @@ References and the image model:
   belongs to a later composition step.
 - Concepts are drawn on plain white (or black for a dark background). Transparency comes with export.
 - Lettering from the model is often misspelled.
+
+**Insert as it is** works differently from the other uses. The page places the reference at 46%
+of the picture's shorter side, centred, on a blank canvas, and makes a mask that is black over the
+mark. The storyboard's inpainting graph then draws everything except the mark and pastes the
+original canvas back through the mask, so the mark's pixels are exactly the upload's. One
+reference is inserted per round, and the other enabled references sit that round out. A reference
+with no transparency is inserted as its whole rectangle. A small raster is enlarged and looks
+soft; the page warns when that happens.
 
 **Fix an area** uses the storyboard's inpainting graph: paint over the part to change, describe
 it, and a new concept is added. The original is kept.

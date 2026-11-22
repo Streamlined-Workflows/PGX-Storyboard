@@ -86,7 +86,7 @@ class GenerateTests(unittest.TestCase):
         png = api.handle("POST", P + "references", dict(q, name="style.png"), raw=PNG)
         off = api.handle("POST", P + "references", dict(q, name="old.png"), raw=PNG)
         api.handle("PUT", P + "reference", dict(q, id=off["id"]), {"enabled": False})
-        api.handle("PUT", P + "reference", dict(q, id=svg["id"]), {"note": "the dot is a drop"})
+        api.handle("PUT", P + "reference", dict(q, id=svg["id"]), {"note": "the dot is a drop", "use": "keep exactly"})
         with self.assertRaises(ValueError):                                           # the model cannot read an SVG
             api.handle("POST", P + "concepts/generate", payload=q)
         self.assertEqual(api.jobs().list(), [])
@@ -104,6 +104,41 @@ class GenerateTests(unittest.TestCase):
         self.assertIn("the dot is a drop", concept["prompt"])
         self.assertIn("style of reference image 2", concept["prompt"])
         self.assertTrue(any("keep exactly" in n for n in out["notes"]))
+
+    def png(self, w, h):
+        import base64, struct
+        return "data:image/png;base64," + base64.b64encode(b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR" + struct.pack(">II", w, h) + b"\x08\x06" + b"\x00" * 12).decode()
+
+    def test_insert_keeps_the_reference_and_draws_around_it(self):
+        self.brief(app_name="SWIFT Director", description="a movie reel", concept_count=2)
+        q = {"project": self.pid}
+        cutout = b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR" + b"\x00\x00\x00\x10" * 2 + b"\x08\x06" + b"\x00" * 12     # a PNG with transparency
+        mark = api.handle("POST", P + "references", dict(q, name="Swift-Icon.png"), raw=cutout)
+        photo = api.handle("POST", P + "references", dict(q, name="style.png"), raw=PNG)
+        self.assertEqual((mark["use"], photo["use"]), ("insert", "style guide"))    # a cut-out starts as insert
+        with self.assertRaises(ValueError):                                          # the page must send the placed picture
+            api.handle("POST", P + "concepts/generate", payload=q)
+        for bad in ({"reference": mark["id"], "canvas": self.png(512, 512), "mask": self.png(1024, 1024)},      # wrong size
+                    {"reference": mark["id"], "canvas": "data:image/png;base64,AAAA", "mask": self.png(1024, 1024)},
+                    {"reference": photo["id"], "canvas": self.png(1024, 1024), "mask": self.png(1024, 1024)}):   # not an insert reference
+            with self.assertRaises(ValueError):
+                api.handle("POST", P + "concepts/generate", payload=dict(q, insert=bad))
+        self.assertEqual(api.jobs().list(), [])
+        out = api.handle("POST", P + "concepts/generate", payload=dict(q, direction="film strip circling it",
+                         insert={"reference": mark["id"], "canvas": self.png(1024, 1024), "mask": self.png(1024, 1024)}))
+        self.assertEqual(out["queued"], 2)
+        self.assertEqual(sorted(self.comfy.uploads), sorted([f"identity_{self.pid}_{mark['id']}_canvas.png", f"identity_{self.pid}_{mark['id']}_around.png"]))
+        concept = self.project()["concepts"][0]
+        self.assertEqual((concept["inserted"], concept["references"]), (mark["id"], [mark["id"]]))
+        for part in ("stays exactly as it is", "a movie reel", "film strip circling it"):
+            self.assertIn(part, concept["prompt"])
+        self.assertNotIn("Reference image 1", concept["prompt"])                    # the model is not asked to redraw anything
+        self.assertTrue(any("not used" in n for n in out["notes"]))                 # says the style reference sat this round out
+        self.run_all()
+        self.assertEqual([c["state"] for c in self.project()["concepts"]], ["done", "done"])
+        api.handle("PUT", P + "reference", dict(q, id=mark["id"]), {"enabled": False})   # switched off: an ordinary round again
+        api.handle("POST", P + "concepts/generate", payload=q)
+        self.assertIn("style of reference image 1", self.project()["concepts"][-1]["prompt"])
 
     def test_more_than_four_references_uses_four_and_says_so(self):
         self.brief(app_name="SWIFT", concept_count=1)

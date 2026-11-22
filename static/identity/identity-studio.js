@@ -110,7 +110,9 @@
   }
 
   /* ---------- one identity project: its name, description and brief ---------- */
-  const options = (list, picked) => list.map(v => `<option value="${esc(v)}"${v === picked ? ' selected' : ''}>${esc(v)}</option>`).join('');
+  const options = (list, picked, words) => list.map(v => `<option value="${esc(v)}"${v === picked ? ' selected' : ''}>${esc(words && words[v] || v)}</option>`).join('');
+  const USE_WORDS = { 'insert':'Insert as it is', 'keep exactly':'Follow closely (redrawn)', 'style guide':'Style guide', 'inspiration':'Inspiration' };
+  const USE_HELP = { 'insert':'Your picture itself is placed in the centre, untouched, and the rest is drawn around it.', 'keep exactly':'The model copies this mark as closely as it can, but it redraws it and may change it.', 'style guide':'The model matches this picture\'s style, not its content.', 'inspiration':'A loose nudge only.' };
 
   async function showProject(id) {
     openId = id;
@@ -199,7 +201,8 @@
           <div class="hint">${esc(r.kind.toUpperCase())} · ${Math.max(1, Math.round(r.bytes / 1024))} KB${r.kind === 'svg' ? ' · vector' : ''}</div>
           ${r.cleaned ? `<div class="hint">${r.cleaned} unsafe or unsupported part${r.cleaned === 1 ? ' was' : 's were'} removed. Check it still looks right.</div>` : ''}
           <button class="ids-switch${r.enabled === false ? '' : ' on'}" type="button" role="switch" aria-checked="${r.enabled !== false}" aria-label="Use ${esc(r.name)} when generating"><span>${r.enabled === false ? 'Disabled' : 'Enabled'}</span></button>
-          <label>How to use it<select class="ids-use">${options(info.reference_uses, r.use)}</select></label>
+          <label>How to use it<select class="ids-use">${options(info.reference_uses, r.use, USE_WORDS)}</select></label>
+          <div class="hint ids-use-help">${esc(USE_HELP[r.use] || '')}</div>
           <label>Note<input class="ids-rnote" maxlength="500" placeholder="For example: the dot of the i is a water drop" value="${esc(r.note)}"></label>
           <div class="ids-acts"><button class="small ghost ids-rdel" type="button">Remove</button></div>
         </article>`);
@@ -207,7 +210,7 @@
         const sw = card.querySelector('.ids-switch');
         sw.onclick = async () => { await put({ enabled: r.enabled === false }); const on = r.enabled !== false; sw.classList.toggle('on', on); sw.setAttribute('aria-checked', on); sw.firstElementChild.textContent = on ? 'Enabled' : 'Disabled'; };
         if (!r.flat) flatten(r, card.querySelector('.ids-thumb img'));
-        card.querySelector('.ids-use').onchange = (ev) => put({ use: ev.target.value });
+        card.querySelector('.ids-use').onchange = async (ev) => { await put({ use: ev.target.value }); card.querySelector('.ids-use-help').textContent = USE_HELP[r.use] || ''; };
         card.querySelector('.ids-rnote').onchange = (ev) => put({ note: ev.target.value });
         card.querySelector('.ids-rdel').onclick = async () => {
           try { await call('POST', 'references/remove', { project: pid, id: r.id }); list.splice(list.indexOf(r), 1); draw(); } catch (e) { say(e.message); }
@@ -263,7 +266,7 @@
     };
     const look = c => { const name = (project.settings.app_name || project.name) + (c.kind === 'fix' ? ' · fixed' : ' · concept'); if (typeof window.openViewer === 'function') window.openViewer(src(c), name, fixer(c)); else window.open(src(c), '_blank', 'noopener'); };
     const draw = () => {
-      box.innerHTML = list.length ? '' : '<span class="hint">No concepts yet. Fill in the brief, enable the references you want followed, then press Generate concepts.</span>';
+      box.innerHTML = list.length ? '' : '<span class="hint">No concepts yet. Fill in the brief, enable the references you want used, then press Generate concepts.</span>';
       [...list].reverse().forEach(c => {
         const done = c.state === 'done';
         const card = el(`<article class="ids-concept">
@@ -282,12 +285,34 @@
     };
     const key = l => l.map(c => c.id + c.state).join();
     const reload = async () => { try { const fresh = (await call('GET', 'project?id=' + encodeURIComponent(pid))).concepts; if (key(fresh) !== key(list)) { list = fresh; draw(); } } catch (e) { /* the next tick tries again */ } };
+    /* For a reference set to "Insert as it is": put it in the centre of a blank picture of the size generation uses,
+       and make the mask that tells the model to draw everywhere except on the mark. */
+    const place = async (r, layout) => {
+      const [W, H] = info.sizes[layout] || [1024, 1024];
+      const img = new Image(); img.src = `${API}reference?${q}&id=${r.id}`;
+      await img.decode();
+      const iw = img.naturalWidth || 512, ih = img.naturalHeight || 512, k = Math.min(W, H) * 0.46 / Math.max(iw, ih);
+      const w = Math.round(iw * k), h = Math.round(ih * k), x = Math.round((W - w) / 2), y = Math.round((H - h) / 2);
+      const sheet = () => { const c = document.createElement('canvas'); c.width = W; c.height = H; return c; };
+      const canvas = sheet(), cx = canvas.getContext('2d'); cx.imageSmoothingQuality = 'high';
+      cx.fillStyle = project.settings.background === 'dark' ? '#000' : '#fff'; cx.fillRect(0, 0, W, H); cx.drawImage(img, x, y, w, h);
+      const shape = sheet(), sx = shape.getContext('2d'); sx.imageSmoothingQuality = 'high';
+      sx.drawImage(img, x, y, w, h); sx.globalCompositeOperation = 'source-in'; sx.fillStyle = '#000'; sx.fillRect(0, 0, W, H);   // the mark's silhouette, in black
+      const mask = sheet(), mx = mask.getContext('2d'); mx.fillStyle = '#fff'; mx.fillRect(0, 0, W, H);
+      for (const [dx, dy] of [[0, 0], [2, 0], [-2, 0], [0, 2], [0, -2]]) mx.drawImage(shape, dx, dy);                             // a 2-pixel guard band so the edge of the mark is never repainted
+      return { reference: r.id, canvas: canvas.toDataURL('image/png'), mask: mask.toDataURL('image/png'), soft: r.kind !== 'svg' && k > 1.5 ? `"${r.name}" is only ${iw} × ${ih} pixels, so it was enlarged and will look soft. Use an SVG or a larger PNG for a sharp result.` : '' };
+    };
     conceptTick = () => { if (box.isConnected && list.some(c => c.state === 'waiting')) reload(); };
     go.onclick = async () => {
       go.disabled = true; notes.textContent = 'Queuing…';
       try {
         await flush();
-        const out = await call('POST', 'concepts/generate', { project: pid, direction: page.querySelector('#idsDirection').value });
+        const body = { project: pid, direction: page.querySelector('#idsDirection').value };
+        const mark = (project.references || []).find(r => r.enabled !== false && r.use === 'insert');
+        let soft = '';
+        if (mark) { body.insert = await place(mark, page.querySelector('#idsLayout').value); soft = body.insert.soft; delete body.insert.soft; }
+        const out = await call('POST', 'concepts/generate', body);
+        if (soft) out.notes.push(soft);
         notes.textContent = `Queued ${out.queued} concept${out.queued === 1 ? '' : 's'}. ` + out.notes.join(' ');
         await reload(); refreshQueue();
       } catch (e) { notes.textContent = e.message; }
