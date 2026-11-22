@@ -24,6 +24,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 import assist
 import models
+from identity_studio import api as identity_api
 import workflows
 
 ROOT = os.path.dirname(os.path.abspath(__file__))
@@ -874,6 +875,17 @@ class Handler(BaseHTTPRequestHandler):
     def read_body(self):
         return self.rfile.read(int(self.headers.get("Content-Length") or 0))
 
+    def identity(self, method, url, body=None):
+        """Hand a /api/identity/ request to the Identity Studio module, which owns everything about it."""
+        try:
+            query = {k: v[0] for k, v in urllib.parse.parse_qs(url.query).items()}
+            payload = json.loads(body or b"{}") if body is not None else None
+            return self.send_json(identity_api.handle(method, url.path, query, payload))
+        except LookupError:
+            return self.send_json({"error": "Not found"}, 404)
+        except ValueError as e:
+            return self.send_json({"error": str(e)}, 400)
+
     def proxy(self, method, path, body=None):
         """Pass a request through to ComfyUI, including Range so media can seek."""
         headers = {k: self.headers[k] for k in ("Content-Type", "Range") if self.headers.get(k)}
@@ -897,8 +909,10 @@ class Handler(BaseHTTPRequestHandler):
         url = urllib.parse.urlsplit(self.path)
         query = urllib.parse.parse_qs(url.query)
         try:
-            if url.path.startswith("/static/"):            # the SWIFT tokens, logo and fonts
-                kinds = {".css": "text/css", ".svg": "image/svg+xml", ".woff2": "font/woff2"}
+            if identity_api.handles(url.path):
+                return self.identity("GET", url)
+            if url.path.startswith("/static/"):            # the SWIFT tokens, logo, fonts and the module scripts
+                kinds = {".css": "text/css", ".svg": "image/svg+xml", ".woff2": "font/woff2", ".js": "text/javascript"}
                 base = os.path.join(ROOT, "static")
                 path = os.path.realpath(os.path.join(base, urllib.parse.unquote(url.path[len("/static/"):])))
                 kind = kinds.get(os.path.splitext(path)[1].lower())
@@ -957,6 +971,8 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_PUT(self):
         url = urllib.parse.urlsplit(self.path)
+        if identity_api.handles(url.path):
+            return self.identity("PUT", url, self.read_body())
         if url.path == "/api/project":
             try:
                 pid = urllib.parse.parse_qs(url.query).get("id", [""])[0]
@@ -968,6 +984,8 @@ class Handler(BaseHTTPRequestHandler):
     def do_POST(self):
         path = urllib.parse.urlsplit(self.path).path
         body = self.read_body()
+        if identity_api.handles(path):
+            return self.identity("POST", urllib.parse.urlsplit(self.path), body)
         if path == "/api/upload":
             return self.proxy("POST", "/upload/image", body)
         try:
@@ -1067,5 +1085,5 @@ class Handler(BaseHTTPRequestHandler):
 
 if __name__ == "__main__":
     migrate_legacy()
-    print(f"Storyboard on http://0.0.0.0:{PORT}  ->  ComfyUI at {COMFY}", flush=True)
+    print(f"SWIFT Director on http://0.0.0.0:{PORT}  ->  ComfyUI at {COMFY}", flush=True)
     ThreadingHTTPServer(("0.0.0.0", PORT), Handler).serve_forever()
