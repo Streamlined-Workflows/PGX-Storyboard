@@ -27,7 +27,9 @@ It returns plain data and raises ValueError with a message a person can read.
           insert = {reference, canvas, mask}: PNG data URLs the page makes when a reference is set to "insert"
     GET   /api/identity/concept?project=…&id=…         a finished concept's picture
     POST  /api/identity/concepts/fix?project=…&id=…&prompt=…   the painted mask (PNG) as the body
-    POST  /api/identity/concepts/remove                {project, id}
+    POST  /api/identity/concepts/remove                {project, id}           refused while the concept is locked
+    POST  /api/identity/concepts/lock                  {project, id, locked}
+    POST  /api/identity/concepts/clean                 {project}   erases every concept that is not locked
 
 There is deliberately no route that accepts a ComfyUI graph from the browser. Jobs are created by
 module code (jobs().add), so the page can only ask for things the module knows how to build.
@@ -142,12 +144,16 @@ def handle(method, path, query=None, payload=None, raw=None):
             return generate.queue_fix(s, jobs(), query.get("project", ""), query.get("id", ""), raw or b"", query.get("prompt", ""))
         if route == "concepts/remove":
             concept = s.remove_concept(payload.get("project", ""), payload.get("id", ""))
-            if concept.get("job") and concept.get("state") == "waiting":
+            if concept.get("job") and concept.get("state") in ("waiting", "running"):
                 try:
                     jobs().cancel(concept["job"])
                 except ValueError:
                     pass
             return {"removed": concept["id"]}
+        if route == "concepts/lock":
+            return s.lock_concept(payload.get("project", ""), payload.get("id", ""), payload.get("locked") is True)
+        if route == "concepts/clean":
+            return s.clean_concepts(payload.get("project", ""))
         if route == "references/remove":
             return s.remove_reference(payload.get("project", ""), payload.get("id", ""))
         if route == "projects/duplicate":

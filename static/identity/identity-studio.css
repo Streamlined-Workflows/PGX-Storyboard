@@ -57,3 +57,8 @@
 .ids .ids-cthumb { height:210px; cursor:zoom-in; } .ids .ids-cthumb img { max-height:210px; }
 .ids .ids-cthumb.ids-wait { cursor:default; background:var(--swift-surface); background-image:none; color:var(--swift-text-muted); font-size:12px; text-align:center; padding:12px; }
 @media (max-width:760px) { .ids .ids-concept { width:100%; } }
+.ids .ids-cthumb.ids-now { color:var(--swift-green-400); font-weight:700; box-shadow:inset 0 0 0 1px var(--swift-green); animation:ids-pulse 1.6s ease-in-out infinite; }
+@keyframes ids-pulse { 50% { opacity:.55; } }
+@media (prefers-reduced-motion:reduce) { .ids .ids-cthumb.ids-now { animation:none; } }
+.ids a.btn.small { padding:4px 9px; font-size:12px; text-decoration:none; border-radius:var(--swift-radius-lg); }
+.ids .ids-clean { display:flex; gap:12px; align-items:center; flex-wrap:wrap; margin:14px 0 4px; max-width:860px; }

@@ -58,7 +58,7 @@
 
   /* ---------- the list of identity projects ---------- */
   async function showList() {
-    openId = null; conceptTick = null;
+    openId = null; conceptTick = null; title('');
     root.innerHTML = '';
     const page = el(`<section class="ids-page">
       <div class="ids-head"><h2>Identity Studio</h2><span class="ids-grow"></span></div>
@@ -121,6 +121,7 @@
     try { if (!info) info = await call('GET', 'info'); p = await call('GET', 'project?id=' + encodeURIComponent(id)); }
     catch (e) { say(e.message); return showList(); }
     if (openId !== id) return;
+    title(p.name);
     const s = p.settings;
     const page = el(`<section class="ids-page">
       <div class="ids-head"><button class="small ids-back" type="button">← All identity projects</button><span class="ids-grow"></span><span class="pill ids-state" aria-live="polite">saved</span></div>
@@ -153,6 +154,7 @@
       </div>
       <div class="hint ids-gen-notes" aria-live="polite"></div>
       <div class="ids-concepts" aria-live="polite"></div>
+      <div class="ids-clean"><button class="small ids-cleanup" type="button">Clean up storage</button><span class="hint ids-clean-msg">Erases every concept in this project that is not locked, to free space on the server. Reference images are kept.</span></div>
       <p class="hint">Concept art for internal use. It is drawn with FLUX.2 [dev], which is licensed for non-commercial use; final artwork for a product that is sold should come from an artist.</p>
       <p class="hint ids-queue" aria-live="polite"></p>
       <div class="ids-jobs"></div>
@@ -179,7 +181,7 @@
       try { await call('PUT', 'project?id=' + encodeURIComponent(id), collect()); if (state.isConnected) state.textContent = 'saved'; }
       catch (e) { if (state.isConnected) state.textContent = 'not saved'; say(e.message); }
     };
-    const changed = () => { state.textContent = 'saving…'; swatches(); clearTimeout(saveTimer); saveTimer = setTimeout(save, 600); };
+    const changed = () => { state.textContent = 'saving…'; swatches(); title(page.querySelector('#idsName').value); clearTimeout(saveTimer); saveTimer = setTimeout(save, 600); };
     const briefOnly = (ev) => { if (!ev.target.closest('.ids-refs, .ids-drop, .ids-gen')) changed(); };
     page.addEventListener('input', briefOnly); page.addEventListener('change', briefOnly);
     references(page, id, p.references);
@@ -251,7 +253,8 @@
   }
 
   /* ---------- concepts: generate, look closely, fix an area ---------- */
-  const CONCEPT_WORDS = { waiting:'Waiting for the render queue', failed:'Failed', stopped:'Stopped', cancelled:'Cancelled' };
+  const CONCEPT_WORDS = { waiting:'Waiting for the render queue', running:'Currently rendering', failed:'Failed', stopped:'Stopped', cancelled:'Cancelled' };
+  const title = (name) => document.dispatchEvent(new CustomEvent('identity-title', { detail: name || '' }));
   function concepts(page, pid, project, flush) {
     const box = page.querySelector('.ids-concepts'), go = page.querySelector('.ids-go'), notes = page.querySelector('.ids-gen-notes');
     const q = 'project=' + encodeURIComponent(pid);
@@ -270,20 +273,24 @@
       [...list].reverse().forEach(c => {
         const done = c.state === 'done';
         const card = el(`<article class="ids-concept">
-          <div class="ids-thumb ids-cthumb${done ? '' : ' ids-wait'}">${done ? `<img alt="Concept" loading="lazy" src="${src(c)}">` : `<span>${esc(CONCEPT_WORDS[c.state] || c.state)}</span>`}</div>
+          <div class="ids-thumb ids-cthumb${done ? '' : ' ids-wait'}${c.state === 'running' ? ' ids-now' : ''}">${done ? `<img alt="Concept" loading="lazy" src="${src(c)}">` : `<span>${esc(CONCEPT_WORDS[c.state] || c.state)}</span>`}</div>
           <div class="hint">${c.kind === 'fix' ? 'Fix: ' + esc(c.direction) : c.direction ? esc(c.direction) : 'From the brief'}${c.references && c.references.length ? ` · ${c.references.length} reference${c.references.length === 1 ? '' : 's'}` : ''}</div>
           ${c.error ? `<div class="hint">${esc(c.error)}</div>` : ''}
-          <div class="ids-acts">${done ? '<button class="small primary ids-look" type="button">Look closer</button>' : ''}${done && info.ready.fix ? '<button class="small ids-fix" type="button">Fix an area</button>' : ''}<button class="small ghost ids-cdel" type="button">Remove</button></div>
+          <div class="ids-acts">${done ? '<button class="small primary ids-look" type="button">Look closer</button>' : ''}${done && info.ready.fix ? '<button class="small ids-fix" type="button">Fix an area</button>' : ''}${done ? `<a class="btn small ids-dl" href="${src(c)}" download="${esc(fileName(c))}">Download</a>` : ''}</div>
+          <div class="ids-acts">${done ? `<button class="small ids-lock${c.locked ? ' locked' : ''}" type="button" aria-pressed="${!!c.locked}" title="A locked concept cannot be removed and is kept when storage is cleaned up">${c.locked ? 'Locked' : 'Lock'}</button>` : ''}<button class="small ghost ids-cdel" type="button"${c.locked ? ' disabled title="Unlock it first"' : ''}>Remove</button></div>
         </article>`);
         if (done) {
           card.querySelector('.ids-cthumb').onclick = () => look(c); card.querySelector('.ids-look').onclick = () => look(c);
           const f = card.querySelector('.ids-fix'); if (f) f.onclick = () => { look(c); const b = document.getElementById('vFix'); if (b) setTimeout(() => { if (!document.getElementById('viewer').classList.contains('fixing')) b.click(); }, 350); };
         }
+        const lock = card.querySelector('.ids-lock');
+        if (lock) lock.onclick = async () => { try { await call('POST', 'concepts/lock', { project: pid, id: c.id, locked: !c.locked }); await reload(); } catch (e) { say(e.message); } };
         card.querySelector('.ids-cdel').onclick = async () => { try { await call('POST', 'concepts/remove', { project: pid, id: c.id }); await reload(); } catch (e) { say(e.message); } };
         box.appendChild(card);
       });
     };
-    const key = l => l.map(c => c.id + c.state).join();
+    const key = l => l.map(c => c.id + c.state + (c.locked ? 'L' : '')).join();
+    const fileName = c => ((page.querySelector('#idsApp').value || page.querySelector('#idsName').value || 'concept').replace(/[^A-Za-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'concept') + '-' + c.id.slice(0, 6) + '.png';
     const reload = async () => { try { const fresh = (await call('GET', 'project?id=' + encodeURIComponent(pid))).concepts; if (key(fresh) !== key(list)) { list = fresh; draw(); } } catch (e) { /* the next tick tries again */ } };
     /* For a reference set to "Insert as it is": put it in the centre of a blank picture of the size generation uses,
        and make the mask that tells the model to draw everywhere except on the mark. */
@@ -302,7 +309,21 @@
       for (const [dx, dy] of [[0, 0], [2, 0], [-2, 0], [0, 2], [0, -2]]) mx.drawImage(shape, dx, dy);                             // a 2-pixel guard band so the edge of the mark is never repainted
       return { reference: r.id, canvas: canvas.toDataURL('image/png'), mask: mask.toDataURL('image/png'), soft: r.kind !== 'svg' && k > 1.5 ? `"${r.name}" is only ${iw} × ${ih} pixels, so it was enlarged and will look soft. Use an SVG or a larger PNG for a sharp result.` : '' };
     };
-    conceptTick = () => { if (box.isConnected && list.some(c => c.state === 'waiting')) reload(); };
+    conceptTick = () => { if (box.isConnected && list.some(c => c.state === 'waiting' || c.state === 'running')) reload(); };
+    const clean = page.querySelector('.ids-cleanup'), cleanMsg = page.querySelector('.ids-clean-msg'), cleanText = cleanMsg.textContent;
+    clean.onclick = async () => {
+      const n = list.filter(c => !c.locked && c.state !== 'waiting' && c.state !== 'running').length;
+      if (!clean.dataset.sure) {                              // first press says what will happen, second press does it
+        if (!n) { cleanMsg.textContent = 'Nothing to clean up: every concept here is locked or still rendering.'; setTimeout(() => { if (cleanMsg.isConnected) cleanMsg.textContent = cleanText; }, 5000); return; }
+        clean.dataset.sure = '1'; clean.textContent = `Erase ${n} unlocked concept${n === 1 ? '' : 's'}?`; clean.classList.add('primary');
+        cleanMsg.textContent = `${list.filter(c => c.locked).length} locked will be kept. This cannot be undone.`;
+        setTimeout(() => { if (clean.isConnected && clean.dataset.sure) { delete clean.dataset.sure; clean.textContent = 'Clean up storage'; clean.classList.remove('primary'); cleanMsg.textContent = cleanText; } }, 6000);
+        return;
+      }
+      delete clean.dataset.sure; clean.textContent = 'Clean up storage'; clean.classList.remove('primary');
+      try { const out = await call('POST', 'concepts/clean', { project: pid }); cleanMsg.textContent = `Erased ${out.removed} concept${out.removed === 1 ? '' : 's'} and freed ${(out.bytes / 1048576).toFixed(1)} MB. ${out.kept} kept.`; await reload(); }
+      catch (e) { cleanMsg.textContent = e.message; }
+    };
     go.onclick = async () => {
       go.disabled = true; notes.textContent = 'Queuing…';
       try {

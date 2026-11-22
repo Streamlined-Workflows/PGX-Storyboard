@@ -186,6 +186,36 @@ class GenerateTests(unittest.TestCase):
         self.assertEqual(self.project()["concepts"], [])
         self.assertTrue(any("concept" in n for n in os.listdir(self.store.trash)))
 
+    def test_a_concept_says_when_it_is_the_one_being_rendered(self):
+        self.brief(app_name="SWIFT", concept_count=2)
+        api.handle("POST", P + "concepts/generate", payload={"project": self.pid})
+        api.jobs().tick(); self.comfy.begin("ident-1"); api.jobs().tick()
+        self.assertEqual([c["state"] for c in self.project()["concepts"]], ["running", "waiting"])
+        self.comfy.finish("ident-1"); api.jobs().tick()
+        self.assertEqual([c["state"] for c in self.project()["concepts"]], ["done", "waiting"])
+
+    def test_lock_protects_a_concept_and_clean_up_erases_the_rest(self):
+        self.brief(app_name="SWIFT", concept_count=3)
+        ids = api.handle("POST", P + "concepts/generate", payload={"project": self.pid})["concepts"]
+        self.run_all()
+        api.handle("POST", P + "concepts/generate", payload={"project": self.pid})          # three more, still waiting
+        q = {"project": self.pid}
+        api.handle("POST", P + "concepts/lock", payload=dict(q, id=ids[0], locked=True))
+        with self.assertRaises(ValueError):
+            api.handle("POST", P + "concepts/remove", payload=dict(q, id=ids[0]))
+        api.handle("POST", P + "concepts/remove", payload=dict(q, id=ids[1]))               # goes to the trash folder
+        self.assertTrue(any("concept" in n for n in os.listdir(self.store.trash)))
+        kept_file = api.handle("GET", P + "concept", dict(q, id=ids[0])).path
+        gone_file = api.handle("GET", P + "concept", dict(q, id=ids[2])).path
+        out = api.handle("POST", P + "concepts/clean", payload=q)
+        self.assertEqual((out["removed"], out["kept"]), (1, 4))                              # one unlocked finished; the locked one and three waiting stay
+        self.assertGreater(out["bytes"], 0)
+        self.assertTrue(os.path.isfile(kept_file)); self.assertFalse(os.path.exists(gone_file))
+        self.assertFalse(any("concept" in n for n in os.listdir(self.store.trash)))         # the trashed picture is erased too
+        self.assertEqual([c["state"] for c in self.project()["concepts"]], ["done", "waiting", "waiting", "waiting"])
+        api.handle("POST", P + "concepts/lock", payload=dict(q, id=ids[0], locked=False))
+        api.handle("POST", P + "concepts/remove", payload=dict(q, id=ids[0]))
+
     def test_prompt_wording_follows_layout_and_background(self):
         s = dict(self.project()["settings"], app_name="Folio", tagline="Cards, fast", layout="icon and text", background="dark", style="custom", style_notes="thin lines")
         text = generate.concept_prompt(s, [])

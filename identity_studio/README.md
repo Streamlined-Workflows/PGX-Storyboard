@@ -183,6 +183,12 @@ reference is inserted per round, and the other enabled references sit that round
 with no transparency is inserted as its whole rectangle. A small raster is enlarged and looks
 soft; the page warns when that happens.
 
+Each finished concept can be downloaded as a PNG and locked. A locked concept cannot be removed.
+**Clean up storage** erases every concept in the project that is not locked, along with that
+project's concept pictures in the trash folder; it does not use the trash, because its purpose is
+to free disk space. Concepts still waiting or rendering, and all reference images, are left alone.
+It cannot reach the copies ComfyUI keeps in its own output folder (`identity/<project id>/`).
+
 **Fix an area** uses the storyboard's inpainting graph: paint over the part to change, describe
 it, and a new concept is added. The original is kept.
 

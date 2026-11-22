@@ -6,7 +6,7 @@
 <title>SWIFT Director</title>
 <link rel="icon" type="image/svg+xml" href="/static/brand/swift-drop.svg">
 <link rel="stylesheet" href="/static/swift-tokens.css?v=5">
-<link rel="stylesheet" href="/static/identity/identity-studio.css?v=5">
+<link rel="stylesheet" href="/static/identity/identity-studio.css?v=7">
 <style>
   /* Montserrat (SIL Open Font License 1.1), served from the server so the page needs no outside network. */
   @font-face { font-family:Montserrat; font-weight:400; font-display:swap; src:url('/static/fonts/montserrat-latin-400-normal.woff2') format('woff2'); }
@@ -206,6 +206,7 @@
   }
   @media (prefers-reduced-motion: reduce) { nav, #app { transition:none; } }
   #projName { color:var(--swift-text-strong); font-weight:700; }
+  #identityTitle { font-size:16px; font-weight:700; color:var(--swift-text-strong); padding:8px 10px; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; } #identityTitle[hidden], #projName[hidden] { display:none; }
   #app { background-image:var(--swift-glow-radial); background-repeat:no-repeat; min-height:100vh; }
   section { border-radius:var(--swift-radius-2xl); box-shadow:var(--swift-glow); padding:18px; }
   h2 { font-size:12px; letter-spacing:.2em; font-weight:600; color:var(--swift-label); }
@@ -268,6 +269,7 @@
 <header>
   <button id="navOpen" class="navbtn" type="button" aria-label="Show the menu" title="Show the menu" aria-controls="nav" aria-expanded="true">☰</button>
   <input id="projName" title="Project name" value="">
+  <b id="identityTitle" hidden></b>
   <span id="health" class="pill">checking the server…</span>
   <span class="spacer"></span>
   <span id="saved" class="pill">loaded</span>
@@ -608,7 +610,16 @@ function show(name) {
   if (name === 'system') { refreshSystem(); refreshUsage(); loadModels(); if (window.IdentityStudio) window.IdentityStudio.showModels($('identityModels')); }
   if (name === 'storyboard') { renderSegments(); }
   if (name === 'identity' && window.IdentityStudio) window.IdentityStudio.show();
+  headerTitle();
 }
+/* In Identity Studio the header names the identity project, not the open storyboard (which that box would rename). */
+var identityName = '';   /* var: show() can run before this line is reached */
+function headerTitle() {
+  const on = currentView === 'identity';
+  $('projName').hidden = on; $('identityTitle').hidden = !on;
+  $('identityTitle').textContent = identityName ? identityName : 'Identity Studio';
+}
+document.addEventListener('identity-title', ev => { identityName = ev.detail || ''; headerTitle(); });
 /* The menu: hidden or shown. On a phone it starts hidden and closes after a choice; on a desktop it remembers. */
 const phone = window.matchMedia('(max-width:760px)');
 function setNav(open, remember) {
@@ -1666,7 +1677,7 @@ async function boot() {
   setInterval(poll, 4000); setInterval(health, 6000);
 })();
 </script>
-<script src="/static/identity/identity-studio.js?v=6"></script>
+<script src="/static/identity/identity-studio.js?v=7"></script>
 <script>if (window.IdentityStudio) IdentityStudio.mount(document.getElementById('v-identity'));</script>
 </body>
 </html>

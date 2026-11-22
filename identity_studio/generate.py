@@ -239,7 +239,7 @@ def on_job_change(store, jobs, job):
             store.update_concept(job["project_id"], cid, state="done", error="", width=size[0], height=size[1])
         elif job["state"] in ("failed", "stopped", "cancelled"):
             store.update_concept(job["project_id"], cid, state=job["state"], error=job.get("error", ""))
-        else:
-            store.update_concept(job["project_id"], cid, state="waiting", error="")
+        else:                                          # "running" while ComfyUI is drawing it, "waiting" before that
+            store.update_concept(job["project_id"], cid, state="running" if job["state"] == "running" else "waiting", error="")
     except ValueError:
         pass                                           # the project or concept was removed meanwhile

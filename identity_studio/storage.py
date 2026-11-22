@@ -210,11 +210,45 @@ class Store:
             raise ValueError("That concept has no picture yet.")
         return path, "image/png"
 
+    def lock_concept(self, pid, cid, locked):
+        """A locked concept cannot be removed and is kept when storage is cleaned up."""
+        return self.update_concept(pid, cid, locked=bool(locked))
+
+    def clean_concepts(self, pid):
+        """Erase every finished or abandoned concept that is not locked, and this project's concept
+        pictures in the trash folder. This frees disk space, so nothing here goes to the trash.
+        Concepts still waiting or rendering are left alone. -> {removed, kept, bytes}."""
+        with LOCK:
+            project = self.load(pid)
+            keep, gone, freed = [], 0, 0
+            for c in project["concepts"]:
+                if not isinstance(c, dict) or c.get("locked") or c.get("state") in ("waiting", "running"):
+                    keep.append(c)
+                    continue
+                path = os.path.join(self.concept_dir(pid), f"{c.get('id')}.png")
+                if schemas.valid_id(c.get("id")) and os.path.isfile(path):
+                    freed += os.path.getsize(path)
+                    os.remove(path)
+                gone += 1
+            project["concepts"] = keep
+            if project.get("approved_concept_id") not in [c.get("id") for c in keep if isinstance(c, dict)]:
+                project["approved_concept_id"] = None
+            if os.path.isdir(self.trash):
+                for name in os.listdir(self.trash):
+                    if name.startswith(f"{pid}-concept-") and name.endswith(".png"):
+                        path = os.path.join(self.trash, name)
+                        freed += os.path.getsize(path)
+                        os.remove(path)
+            self.save(project)
+            return {"removed": gone, "kept": len(keep), "bytes": freed}
+
     def remove_concept(self, pid, cid):
         """Take a concept off the project. Its picture goes to the trash folder."""
         with LOCK:
             project = self.load(pid)
             concept = self._concept(project, cid)
+            if concept.get("locked"):
+                raise ValueError("That concept is locked. Unlock it before removing it.")
             project["concepts"].remove(concept)
             if project.get("approved_concept_id") == cid:
                 project["approved_concept_id"] = None
