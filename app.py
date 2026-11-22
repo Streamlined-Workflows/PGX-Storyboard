@@ -37,6 +37,7 @@ LOCK = threading.RLock()
 
 EDITABLE = ("name", "start", "end", "type", "begin_image", "end_image", "prompt", "runs", "chosen")
 PENDING = ("queued", "running")
+IMAGE_TYPES = (".png", ".jpg", ".jpeg", ".webp")
 COMFY_PORT = urllib.parse.urlsplit(COMFY).port or 8188
 ASSIST = os.environ.get("ASSIST_URL", "http://127.0.0.1:8191").rstrip("/")
 
@@ -190,6 +191,8 @@ def merge_project(pid, incoming):
                 out[key] = seg.get(key, kept.get(key))
             out["runs"] = max(1, min(8, int(out.get("runs") or 1)))
             out["type"] = "singing" if out.get("type") == "singing" else "story"
+            if out["type"] == "singing":
+                out["end_image"] = None                 # the lip sync engine only takes a start image
             segments.append(out)
         current["segments"] = segments
         for key in ("song", "actors", "audio", "photos"):
@@ -256,10 +259,11 @@ def refresh_statuses(pid):
     """Ask ComfyUI about every unfinished clip and still in a project and record what it says."""
     with LOCK:
         project = load_project(pid)
+        released = release_waiting(project)
         clips = [r for s in project["segments"] for r in s.get("results", []) if r.get("status") in PENDING]
         stills = [j for j in project["image_jobs"] if j.get("status") in PENDING]
         if not clips and not stills:
-            return project
+            return save_project(project, touch=False) if released else project
         try:
             queue = comfy_json("/queue", timeout=10)
         except OSError:
@@ -297,7 +301,13 @@ def refresh_statuses(pid):
                 except (OSError, ValueError, KeyError) as e:
                     res.update(status="error", error=f"Could not save the generated image: {e}")
             else:
-                res.update(status="done", files=files, finished=time.time())
+                pictures = [f for f in files if f["filename"].lower().endswith(IMAGE_TYPES)]
+                res.update(status="done", files=[f for f in files if f not in pictures] or files, finished=time.time())
+                if pictures:                # the clip's final frame, kept so the next segment can continue from it
+                    try:
+                        res["last_image"] = import_output(pictures[0], pictures[0]["filename"])
+                    except (OSError, ValueError, KeyError):
+                        res["last_frame"] = pictures[0]
         return save_project(project, touch=False)
 
 
@@ -368,23 +378,87 @@ def image_jobs_clear(pid, ids):
         return save_project(project, touch=False)
 
 
-def effective_begin(project, seg):
-    """A segment with no begin shot starts from the end shot of the segment before it."""
+def resolve_begin(project, seg):
+    """Where a segment starts: (image, None), or (None, why it has to wait).
+
+    A segment with its own begin shot is a new angle and uses that picture. A segment without one continues from the
+    segment before it: from that segment's end shot if it has one, otherwise from the last frame of the clip you
+    picked there. Until a clip is picked, the segment waits.
+    """
     if seg.get("begin_image"):
-        return seg["begin_image"]
+        return seg["begin_image"], None
     index = project["segments"].index(seg)
-    return project["segments"][index - 1].get("end_image") if index > 0 else None
+    if index == 0:
+        return None, None
+    prev = project["segments"][index - 1]
+    name = prev.get("name") or f"segment {index}"
+    if prev.get("type") != "singing" and prev.get("end_image"):
+        return prev["end_image"], None
+    picked = next((r for r in prev.get("results", []) if r.get("id") == prev.get("chosen") and r.get("status") == "done"), None)
+    if not picked:
+        return None, f'Waiting for you to pick a clip on "{name}". This segment continues from its last frame.'
+    if not picked.get("last_image") and picked.get("last_frame"):
+        picked["last_image"] = import_output(picked["last_frame"], picked["last_frame"]["filename"])
+    if not picked.get("last_image"):
+        raise ValueError(f'The clip picked on "{name}" was made before the storyboard kept last frames. Render "{name}" again '
+                         "and pick a new clip, or give this segment its own begin shot.")
+    return picked["last_image"], None
+
+
+def queue_clip(project, seg, begin, rid):
+    """Send one render of a segment to ComfyUI and return the fields that describe the queued job."""
+    seed = random.randint(1, 2**31 - 1)
+    settings = project.get("settings", {})
+    prefix = f"storyboard/{project['id']}/{workflows.safe_name(seg.get('name'))}_{rid}"
+    graph = workflows.build(dict(seg, begin_image=begin), (project.get("song") or {}).get("filename"), seed,
+                            width=int(settings.get("width", 832)), height=int(settings.get("height", 480)), prefix=prefix)
+    reply = comfy_json("/prompt", {"prompt": graph, "client_id": "storyboard"})
+    if reply.get("_http_error") or reply.get("node_errors") or not reply.get("prompt_id"):
+        detail = json.dumps(reply.get("node_errors") or reply.get("error") or reply)
+        if "not in" in detail and ".safetensors" in detail:
+            raise ValueError("A model file this shot needs is not on the PGX yet. " + detail[:400])
+        raise ValueError("ComfyUI rejected the job: " + detail[:600])
+    return {"prompt_id": reply["prompt_id"], "seed": seed, "status": "queued", "created": time.time(),
+            "engine": workflows.engine(seg), "prompt": seg.get("prompt", ""), "begin": begin, **workflows.plan(seg)}
+
+
+def release_waiting(project):
+    """Start any held renders whose starting picture is now known. Returns True if anything changed. Call with LOCK held."""
+    changed = False
+    for seg in project["segments"]:
+        held = [r for r in seg.get("results", []) if r.get("status") == "waiting"]
+        if not held:
+            continue
+        try:
+            begin, wait = resolve_begin(project, seg)
+            if wait:
+                if any(r.get("wait") != wait for r in held):
+                    for r in held:
+                        r["wait"] = wait
+                    changed = True
+                continue
+            for r in held:
+                r.update(queue_clip(project, seg, begin, r["id"]))
+                r.pop("wait", None)
+        except (ValueError, OSError) as e:
+            for r in held:
+                if r.get("status") == "waiting":
+                    r.update(status="error", error=str(e))
+        changed = True
+    return changed
 
 
 def render_all(pid):
     """Queue every segment's listed runs. Segments that cannot render are reported, not fatal."""
-    queued, skipped = 0, []
+    queued, held, skipped = 0, 0, []
     for seg in load_project(pid)["segments"]:
         try:
-            queued += len(render_segment(pid, seg["id"]))
+            made = render_segment(pid, seg["id"])
+            queued += sum(1 for r in made if r["status"] != "waiting")
+            held += sum(1 for r in made if r["status"] == "waiting")
         except ValueError as e:
             skipped.append({"name": seg.get("name") or "Unnamed segment", "reason": str(e)})
-    return {"queued": queued, "skipped": skipped}
+    return {"queued": queued, "held": held, "skipped": skipped}
 
 
 def render_segment(pid, segment_id, runs=None):
@@ -393,31 +467,31 @@ def render_segment(pid, segment_id, runs=None):
         seg = next((s for s in project["segments"] if s["id"] == segment_id), None)
         if seg is None:
             raise ValueError("Segment not found. Save the storyboard and try again.")
-        source = dict(seg, begin_image=effective_begin(project, seg))
+        begin, wait = resolve_begin(project, seg)
+        if not begin and not wait:
+            raise ValueError("This segment has no begin shot yet.")
         threading.Thread(target=assist.unload, daemon=True).start()      # give the language model's memory back
-        song = (project.get("song") or {}).get("filename")
-        settings = project.get("settings", {})
         count = max(1, min(8, int(runs or seg.get("runs") or 1)))
         made = []
         for _ in range(count):
             rid = new_id()
-            seed = random.randint(1, 2**31 - 1)
-            prefix = f"storyboard/{project['id']}/{workflows.safe_name(seg.get('name'))}_{rid}"
-            graph = workflows.build(source, song, seed, width=int(settings.get("width", 832)),
-                                    height=int(settings.get("height", 480)), prefix=prefix)
-            reply = comfy_json("/prompt", {"prompt": graph, "client_id": "storyboard"})
-            if reply.get("_http_error") or reply.get("node_errors") or not reply.get("prompt_id"):
-                detail = json.dumps(reply.get("node_errors") or reply.get("error") or reply)
-                if "not in" in detail and ".safetensors" in detail:
-                    raise ValueError("A model file this shot needs is not on the PGX yet. " + detail[:400])
-                raise ValueError("ComfyUI rejected the job: " + detail[:600])
-            result = {"id": rid, "prompt_id": reply["prompt_id"], "seed": seed, "status": "queued",
-                      "files": [], "created": time.time(), "engine": workflows.engine(seg),
-                      "prompt": seg.get("prompt", ""), **workflows.plan(seg)}
+            if wait:
+                result = {"id": rid, "status": "waiting", "wait": wait, "files": [], "created": time.time(),
+                          "engine": workflows.engine(seg), "prompt": seg.get("prompt", ""), **workflows.plan(seg)}
+            else:
+                result = {"id": rid, "files": [], **queue_clip(project, seg, begin, rid)}
             seg.setdefault("results", []).append(result)
             made.append(result)
             save_project(project)
         return made
+
+
+def cancel_waiting(pid):
+    with LOCK:
+        project = load_project(pid)
+        for seg in project["segments"]:
+            seg["results"] = [r for r in seg.get("results", []) if r.get("status") != "waiting"]
+        save_project(project, touch=False)
 
 
 # ---------- Full Assist ----------
@@ -612,6 +686,8 @@ def assist_shot_images(pid, targets):
         threading.Thread(target=assist.unload, daemon=True).start()
         made = []
         for key, seg, slot, shot, label in plan:
+            if seg and slot == "end_image" and seg.get("type") == "singing":
+                continue                    # singing clips have no end shot
             if not seg or not (shot.get("text") or "").strip() or (targets is not None and key not in targets) or (seg["id"], slot) in busy:
                 continue
             people = [cast[n] for n in shot.get("who", []) if n in cast and cast[n]["views"]][:4]
@@ -875,6 +951,8 @@ class Handler(BaseHTTPRequestHandler):
             if path == "/api/cancel":
                 comfy_json("/interrupt", {})
                 comfy_json("/queue", {"clear": True})
+                if pid:
+                    cancel_waiting(pid)
                 return self.send_json({"ok": True})
         except ValueError as e:
             return self.send_json({"error": str(e)}, 400)

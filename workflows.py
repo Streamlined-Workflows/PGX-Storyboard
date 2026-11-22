@@ -98,6 +98,9 @@ def _save(g, frames_link, total, fps, audio_link, prefix):
         video_inputs["audio"] = audio_link
     video = g.add("CreateVideo", **video_inputs)
     g.add("SaveVideo", video=g.out(video), filename_prefix=prefix, format="auto", codec="auto")
+    # Also keep the final frame as a picture, so the next segment can pick up exactly where this clip ends.
+    last = g.add("ImageFromBatch", image=frames_link, batch_index=total - 1, length=1)
+    g.add("SaveImage", images=g.out(last), filename_prefix=prefix + "_last")
 
 
 def build_story(seg, song, seed, width=832, height=480, prefix="storyboard/clip"):
@@ -222,7 +225,7 @@ def engine(seg):
     """Which engine renders this segment."""
     if seg.get("type") == "singing":
         return "singing"
-    return "story to end shot" if seg.get("end_image") else "story"
+    return "story to end shot" if seg.get("end_image") else "story"       # singing clips never have an end shot
 
 
 def build_singing(seg, song, seed, width=832, height=480, prefix="storyboard/clip"):
@@ -287,7 +290,7 @@ def build(seg, song, seed, **kw):
         raise ValueError("Segment end must be after its start.")
     kind = engine(seg)
     if kind == "singing":
-        return build_singing(seg, song, seed, **kw)
+        return build_singing(dict(seg, end_image=None), song, seed, **kw)
     if kind == "story to end shot":
         return build_story_to_end(seg, song, seed, **kw)
     return build_story(seg, song, seed, **kw)

@@ -664,9 +664,14 @@ function retime() {
 /* The begin shot a segment will actually render from: its own, or the previous segment's end shot. */
 function beginOf(i) {
   const s = P.segments[i];
-  if (s.begin_image) return { image: s.begin_image, inherited: false };
-  const prev = i > 0 ? P.segments[i - 1].end_image : null;
-  return { image: prev || null, inherited: !!prev };
+  if (s.begin_image) return { image: s.begin_image, inherited: false, note: i > 0 ? 'New angle: starts on its own begin shot.' : '' };
+  if (i === 0) return { image: null, inherited: false, note: 'The first segment needs a begin shot.' };
+  const prev = P.segments[i - 1], name = prev.name || 'segment ' + i;
+  if (prev.type !== 'singing' && prev.end_image) return { image: prev.end_image, inherited: true, first: 'Using previous end shot', note: `Continues from the end shot of "${name}".` };
+  const picked = (prev.results || []).find(r => r.id === prev.chosen && r.status === 'done');
+  if (picked && picked.last_image) return { image: picked.last_image, inherited: true, first: 'Using last frame of picked clip', note: `Continues from the last frame of the clip picked on "${name}".` };
+  if (picked) return { image: null, inherited: false, first: 'Continue from previous…', note: `The clip picked on "${name}" has no saved last frame (it was made before this was added). Render "${name}" again and pick a new clip, or choose a begin shot here.`, bad: true };
+  return { image: null, inherited: false, first: 'Continue from previous…', waiting: true, note: `Continues from "${name}". Rendering will wait until you pick a clip there; its last frame becomes this begin shot.` };
 }
 
 /* ---------- assets ---------- */
@@ -793,13 +798,18 @@ $('addSeg').onclick = () => {
   retime(); renderSegments(); dirty();
 };
 
-function shotBox(seg, key, label, inherited) {
+function shotBox(seg, key, label, inherited, firstText) {
+  if (key === 'end_image' && seg.type === 'singing') {      /* the lip sync engine only takes a start image */
+    const off = document.createElement('div'); off.className = 'shot'; off.style.opacity = '.55';
+    off.innerHTML = `<label>${label}</label><div class="empty">not used</div><div class="hint">Singing clips have no end shot</div>`;
+    return off;
+  }
   const own = seg[key], img = own || inherited || null;
   const opt = (image, text) => `<option value="${esc(image)}" ${image === own ? 'selected' : ''}>${esc(text)}</option>`;
   const actorOpts = P.actors.filter(a => a.views.length).map(a => `<optgroup label="${esc(a.name || 'Actor')}">` + a.views.map((v, i) => opt(v.image, v.label || 'View ' + (i + 1))).join('') + '</optgroup>').join('');
   const photoOpts = P.photos.length ? '<optgroup label="Photos">' + P.photos.map(ph => opt(ph.image, ph.name)).join('') + '</optgroup>' : '';
   const box = document.createElement('div'); box.className = 'shot' + (!own && inherited ? ' inherited' : '');
-  const first = own ? 'Clear' : (inherited ? 'Using previous end shot' : 'Choose a still…');
+  const first = own ? (firstText ? 'Clear (continue from previous)' : 'Clear') : (firstText || 'Choose a still…');
   box.innerHTML = `<label>${label}</label>` + (img ? `<img src="${view(img)}" alt="">` : `<div class="empty">none</div>`) +
     `<select><option value="">${first}</option>${actorOpts}${photoOpts}<option value="__upload">Upload new photo…</option></select><input type="file" accept="image/*" hidden>`;
   const sel = box.querySelector('select'), file = box.querySelector('input');
@@ -818,6 +828,7 @@ function resultCard(seg, r, inLibrary) {
   let media;
   if (r.status === 'done' && url) media = `<video src="${url}" controls loop preload="metadata"></video>`;
   else if (r.status === 'error') media = `<div class="wait err">${esc(r.error || 'Failed')}</div>`;
+  else if (r.status === 'waiting') media = `<div class="wait"><div>On hold</div><div class="hint">${esc(r.wait || 'Waiting for the segment before this one.')}</div></div>`;
   else media = `<div class="wait"><div>${r.status === 'running' ? 'Rendering on the PGX…' : 'Waiting in the queue…'}</div><div class="pbar"><i id="pb-${r.id}"></i></div><div id="pt-${r.id}" class="hint"></div></div>`;
   d.innerHTML = media + (inLibrary ? `<div class="title">${esc(seg.name || 'Segment')}</div>` : '') +
     `<div class="bar"><span>${esc(r.engine || '')}${inLibrary ? ' · ' + when(r.finished || r.created) : ' · seed ' + r.seed}</span><span class="spacer"></span>` +
@@ -826,7 +837,7 @@ function resultCard(seg, r, inLibrary) {
     `<button class="ghost small del" title="Remove">✕</button></div>`;
   const redraw = () => inLibrary ? renderLibrary() : renderSegments();
   const pick = d.querySelector('.pick');
-  if (pick) pick.onclick = () => { seg.chosen = seg.chosen === r.id ? null : r.id; redraw(); dirty(); };
+  if (pick) pick.onclick = async () => { seg.chosen = seg.chosen === r.id ? null : r.id; redraw(); await save(); poll(true); };   /* a pick can release the next segment */
   const go = d.querySelector('.goto');
   if (go) go.onclick = () => { show('storyboard'); document.querySelector(`.seg[data-id="${seg.id}"]`)?.scrollIntoView({ behavior:'smooth', block:'center' }); };
   d.querySelector('.del').onclick = async () => {
@@ -860,14 +871,13 @@ function renderSegments() {
           <div class="row" style="margin-top:8px">
             <div><label>Runs</label><input class="num runs" type="number" min="1" max="8" value="${seg.runs}"></div>
             <button class="primary go">Render</button>
-            <span class="hint">${seg.type === 'singing'
-              ? 'Singing: the mouth follows this part of the song.' + (seg.end_image ? ' A singing clip cannot steer toward an end shot; it is used as the next segment\'s begin shot.' : '')
-              : (seg.end_image ? 'Story: moves from the begin shot to the end shot.' : 'Story: animates the begin shot.')}${begin.inherited ? ' Begins from the previous segment\'s end shot.' : ''}</span>
+            <span class="${begin.bad ? 'warn' : 'hint'}">${seg.type === 'singing' ? 'Singing: the mouth follows this part of the song.'
+              : (seg.end_image ? 'Story: moves from the begin shot to the end shot.' : 'Story: animates the begin shot.')} ${esc(begin.note || '')}</span>
           </div>
         </div>
       </div>
       <div class="results"></div>`;
-    el.querySelector('.b').appendChild(shotBox(seg, 'begin_image', 'Begin shot', begin.inherited ? begin.image : null));
+    el.querySelector('.b').appendChild(shotBox(seg, 'begin_image', 'Begin shot', begin.inherited ? begin.image : null, begin.first));
     el.querySelector('.e').appendChild(shotBox(seg, 'end_image', 'End shot'));
     const bind = (sel, key, num) => el.querySelector(sel).oninput = ev => { seg[key] = num ? +ev.target.value : ev.target.value; dirty(); drawWave(); updateAllHint(); };
     bind('.name', 'name'); bind('.prompt', 'prompt'); bind('.runs', 'runs', true);
@@ -876,7 +886,7 @@ function renderSegments() {
     lenEl.onchange = () => renderSegments();
     if (startEl) startEl.oninput = () => { const keep = seg.end - seg.start; seg.start = Math.max(0, +startEl.value || 0); seg.end = seg.start + keep; retime(); refreshTimes(); drawWave(); dirty(); };
     el.querySelector('.t-story').onclick = () => { seg.type = 'story'; renderSegments(); dirty(); };
-    el.querySelector('.t-sing').onclick = () => { seg.type = 'singing'; renderSegments(); dirty(); };
+    el.querySelector('.t-sing').onclick = () => { seg.type = 'singing'; seg.end_image = null; renderSegments(); dirty(); };
     el.querySelector('.play').onclick = () => { if (!P.song) return toast('Choose a song first.'); const a = $('audio'); a.currentTime = seg.start; stopAt = seg.end; a.play(); };
     el.querySelector('.delseg').onclick = () => { if (confirm('Delete "' + (seg.name || 'this segment') + '" and its results?')) { P.segments = P.segments.filter(s => s !== seg); retime(); renderSegments(); dirty(); } };
     el.querySelector('.go').onclick = async ev => {
@@ -958,7 +968,7 @@ function connectProgress(port) {
 
 async function poll(force) {
   if (!PID) return;
-  const pending = P.segments.some(s => (s.results || []).some(r => r.status === 'queued' || r.status === 'running')) ||
+  const pending = P.segments.some(s => (s.results || []).some(r => r.status === 'queued' || r.status === 'running' || r.status === 'waiting')) ||
     (P.image_jobs || []).some(j => j.status === 'queued' || j.status === 'running');
   if (!pending && !force) return;
   const forPid = PID;
@@ -978,7 +988,7 @@ async function health() {
   } catch (e) { $('health').className = 'pill bad'; $('health').textContent = 'Storyboard server not reachable'; return null; }
 }
 
-$('cancel').onclick = async () => { if (!confirm('Stop the running job and clear everything waiting?')) return; try { await post('/api/cancel'); health(); } catch (e) { toast(e.message); } };
+$('cancel').onclick = async () => { if (!confirm('Stop the running job and clear everything waiting?')) return; try { await post('/api/cancel', { project: PID }); await poll(true); redrawClips(); health(); } catch (e) { toast(e.message); } };
 
 $('renderAll').onclick = async ev => {
   if (!P.segments.length) return toast('Add a segment first.');
@@ -990,7 +1000,7 @@ $('renderAll').onclick = async ev => {
     const out = await post('/api/render_all', { project: PID });
     await poll(true);
     const skipped = out.skipped.map(s => `${s.name}: ${s.reason}`).join('  |  ');
-    toast(`Queued ${out.queued} clips.` + (skipped ? ` Skipped — ${skipped}` : ''));
+    toast(`Queued ${out.queued} clips.` + (out.held ? ` ${out.held} on hold until you pick a clip on the segment before them.` : '') + (skipped ? ` Skipped — ${skipped}` : ''));
   } catch (err) { toast(err.message); }
   btn.disabled = false; btn.textContent = 'Render all segments';
 };
@@ -1090,7 +1100,7 @@ $('castRecBtn').onclick = () => busy($('castRecBtn'), $('castStatus'), 'Reading 
 let shotsTimer = null;
 function saveShots() { clearTimeout(shotsTimer); shotsTimer = setTimeout(() => post('/api/assist/shots_save', { project: PID, shots: A().shots }).catch(e => toast(e.message)), 700); }
 async function makeShots(targets, btn) {
-  const rows = shotRows().filter(r => !targets || targets.includes(r.key));
+  const rows = shotRows().filter(r => !r.off && (!targets || targets.includes(r.key)));
   if (!targets && rows.some(r => r.seg[r.slot]) && !confirm('Some of these shots already have a picture. Replace them all?')) return;
   await busy(btn, $('shotsStatus'), 'Sending to the PGX…', async () => {
     clearTimeout(shotsTimer); await save(); await post('/api/assist/shots_save', { project: PID, shots: A().shots });
@@ -1101,7 +1111,7 @@ function shotRows() {
   const shots = A().shots; if (!shots || !P.segments.length) return [];
   const rows = [{ key: 'first', seg: P.segments[0], slot: 'begin_image', shot: shots.first, title: 'Opening frame', sub: 'Begin shot of segment 1' }];
   shots.ends.forEach(e => { const i = P.segments.findIndex(s => s.id === e.segment_id); if (i >= 0) rows.push({ key: e.segment_id, seg: P.segments[i], slot: 'end_image', shot: e,
-    title: `${i + 1}. ${P.segments[i].name}`, sub: 'End shot' + (i + 1 < P.segments.length ? `, and where segment ${i + 2} begins` : '') }); });
+    title: `${i + 1}. ${P.segments[i].name}`, off: P.segments[i].type === 'singing', sub: P.segments[i].type === 'singing' ? 'Singing: no end shot. The next segment continues from the last frame of the clip you pick here.' : 'End shot' + (i + 1 < P.segments.length ? `, and where segment ${i + 2} begins` : '') }); });
   return rows;
 }
 function renderShots() {
@@ -1115,6 +1125,7 @@ function renderShots() {
   rows.forEach(r => {
     const row = node('div', 'keyframe'), left = node('div'), mid = node('div'), right = node('div');
     left.append(node('b', '', r.title), node('div', 'hint', r.sub));
+    if (r.off) { row.style.opacity = '.6'; row.append(left, node('div', 'hint', r.shot.text || ''), right); out.append(row); return; }
     if (r.shot.who && r.shot.who.length) left.append(node('div', 'hint', 'In frame: ' + r.shot.who.join(', ')));
     const text = node('textarea'); text.value = r.shot.text || ''; text.oninput = () => { r.shot.text = text.value; saveShots(); };
     mid.append(text);

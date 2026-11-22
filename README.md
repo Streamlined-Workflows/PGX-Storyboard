@@ -112,3 +112,9 @@ System status > AI models lists every model the storyboard uses, with what it do
 ## Full assist: cast and shots
 
 After a story is approved, step 4 (Cast) lets you tick which actors appear and what each plays, or ask the language model to recommend characters (each can be added as an actor with its description). Step 5 (Shots) writes the opening frame and one end frame per segment from that segment's lyrics, length, energy and story beat; the descriptions are editable. Generating the images runs FLUX.2 with one picture of each cast member in frame as a reference, then sets the opening frame as segment 1's begin shot and each end frame as its segment's end shot (they are also added to Photos).
+
+## How a segment begins
+
+- **New angle**: the segment has its own begin shot and starts on it.
+- **Continue**: the begin shot is empty. The segment starts from the previous segment's end shot if it has one; otherwise from the last frame of the clip picked on the previous segment. Until a clip is picked there, renders of this segment are created "on hold" and start by themselves once you pick. Every clip saves its final frame for this.
+- Singing segments cannot have an end shot (the lip sync engine only takes a start image).
