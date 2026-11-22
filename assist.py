@@ -253,7 +253,14 @@ VIEW_FRAMINGS = [
     ("close-up", "Close-up portrait, head and shoulders, facing the camera with a calm, neutral expression"),
     ("waist up", "Medium shot from the waist up, three-quarter view, relaxed natural pose"),
     ("full body", "Full-body shot, standing, the whole figure visible from head to feet"),
+    # asked for one at a time with "Generate specific view"
+    ("3/4 left", "Medium shot from the waist up, body and face turned three-quarters toward the left side of the frame"),
+    ("3/4 right", "Medium shot from the waist up, body and face turned three-quarters toward the right side of the frame"),
+    ("left", "Medium shot from the waist up in strict side profile, facing the left edge of the frame"),
+    ("right", "Medium shot from the waist up in strict side profile, facing the right edge of the frame"),
+    ("rear", "Medium shot from the waist up seen from directly behind, back to the camera, face not visible"),
 ]
+STANDARD_VIEWS = ("close-up", "waist up", "full body")
 
 
 def describe_actor(name, images_b64):

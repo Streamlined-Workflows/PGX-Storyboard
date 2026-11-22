@@ -706,10 +706,14 @@ function moveStill(image, label, target) {
   return true;
 }
 
+const oneView = {};
+const refPick = {};                      /* actor id -> Set of view images ticked as references */
+const refsOf = a => { const set = refPick[a.id] ||= new Set(); [...set].forEach(i => { if (!a.views.some(v => v.image === i)) set.delete(i); }); return set; };
 function viewCard(actor, v) {
-  const d = document.createElement('div'); d.className = 'card';
-  d.innerHTML = `<img src="${view(v.image)}" alt=""><input value="${esc(v.label)}" placeholder="View name, e.g. close-up"><select>${moveOptions(actor)}</select><div class="acts"><span></span><button class="ghost small del" title="Remove this view">✕</button></div>`;
+  const d = document.createElement('div'), refs = refsOf(actor); d.className = 'card'; if (refs.has(v.image)) d.style.outline = '2px solid var(--accent2)';
+  d.innerHTML = `<img src="${view(v.image)}" alt=""><input value="${esc(v.label)}" placeholder="View name, e.g. close-up"><select>${moveOptions(actor)}</select><div class="acts"><label class="hint" style="display:flex;gap:4px;align-items:center;padding:2px 6px;cursor:pointer" title="Tick the pictures FLUX.2 should copy this actor from"><input type="checkbox" class="ref" ${refs.has(v.image) ? 'checked' : ''}>Reference</label><button class="ghost small del" title="Remove this view">✕</button></div>`;
   d.querySelector('input').oninput = ev => { v.label = ev.target.value; dirty(); };
+  d.querySelector('.ref').onchange = ev => { if (ev.target.checked && refs.size >= 4) { ev.target.checked = false; return toast('Up to 4 reference pictures.'); } ev.target.checked ? refs.add(v.image) : refs.delete(v.image); renderAssets(); };
   d.querySelector('select').onchange = ev => { if (moveStill(v.image, v.label, ev.target.value)) { actor.views = actor.views.filter(x => x !== v); if (!actor.views.length) P.actors = P.actors.filter(x => x !== actor); dirty(); } renderAssets(); };
   d.querySelector('.del').onclick = () => { actor.views = actor.views.filter(x => x !== v); dirty(); renderAssets(); };
   return d;
@@ -721,7 +725,11 @@ function actorPanel(a) {
     `<div><label>Description (who they are and how they look; used when shots are generated)</label><textarea class="adesc" placeholder="e.g. A starship pilot in her thirties with wavy red hair and a maroon flight uniform">${esc(a.description || '')}</textarea></div>` +
     `<div style="padding-top:18px"><label class="btn small">Add view<input type="file" accept="image/*" multiple hidden></label> <button class="ghost small delactor" title="Delete this actor">Delete</button></div></div>` +
     `<div class="row" style="margin-bottom:10px"><button class="small describe" ${a.views.length ? '' : 'disabled'} title="The PGX looks at this actor's views and writes the description">Describe from images</button>` +
-    `<button class="small generate" title="Makes a close-up, a waist-up and a full-body still with FLUX.2">Generate views from description</button><span class="hint astatus"></span></div>` +
+    `<button class="small generate" title="Makes a close-up, a waist-up and a full-body still with FLUX.2, copying the actor from their first pictures">Generate views</button>` +
+    `<button class="small genrefs" ${refsOf(a).size ? '' : 'disabled'} title="Makes the same three views from the description, copying the actor only from the pictures you ticked as Reference">Generate from description and references${refsOf(a).size ? ' (' + refsOf(a).size + ')' : ''}</button>` +
+    `<span style="display:inline-flex;gap:4px"><select class="oneview" title="Which single view to make"><option>close-up</option><option>waist up</option><option>full body</option><option>3/4 left</option><option>3/4 right</option><option>left</option><option>right</option><option>rear</option></select>` +
+    `<button class="small genone" title="Makes just this one view. Uses the ticked Reference pictures, or the actor's first pictures if none are ticked">Generate specific view</button></span><span class="hint astatus"></span></div>` +
+    (a.views.length ? `<div class="hint" style="margin:-4px 0 8px">Tick Reference on the pictures to copy this actor from (up to 4). Left and right mean the side of the picture the actor faces.</div>` : '') +
     `<div class="cards views"></div>`;
   const status = d.querySelector('.astatus');
   d.querySelector('.describe').onclick = ev => busy(ev.target, status, 'Looking at the views… this can take a minute.', async () => {
@@ -730,12 +738,17 @@ function actorPanel(a) {
     a.description = (await post('/api/actor/describe', { project: PID, actor_id: a.id })).description;
     dirty(); renderAssets();
   });
-  d.querySelector('.generate').onclick = ev => busy(ev.target, status, 'Sending to the PGX…', async () => {
+  const generate = (btn, extra) => busy(btn, status, 'Sending to the PGX…', async () => {
     if (!(a.description || '').trim() && !a.views.length) throw new Error('Write a description first, or add a view and use Describe from images.');
     await save();
-    await post('/api/actor/generate', { project: PID, actor_id: a.id });
+    await post('/api/actor/generate', { project: PID, actor_id: a.id, ...extra });
     await poll(true); renderAssets();
   });
+  const ticked = () => refsOf(a).size ? { refs: [...refsOf(a)] } : {};
+  d.querySelector('.oneview').value = oneView[a.id] || 'close-up'; d.querySelector('.oneview').onchange = ev => { oneView[a.id] = ev.target.value; };
+  d.querySelector('.generate').onclick = ev => generate(ev.target, {});
+  d.querySelector('.genrefs').onclick = ev => { if (!(a.description || '').trim()) return toast('Write a description first: it decides the clothing and colours.'); generate(ev.target, ticked()); };
+  d.querySelector('.genone').onclick = ev => generate(ev.target, { ...ticked(), views: [d.querySelector('.oneview').value] });
   d.querySelector('.aname').oninput = ev => { a.name = ev.target.value; dirty(); };
   d.querySelector('.adesc').oninput = ev => { a.description = ev.target.value; dirty(); };
   d.querySelector('input[type=file]').onchange = async ev => {
