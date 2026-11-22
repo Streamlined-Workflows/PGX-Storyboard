@@ -3,12 +3,23 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>PGX Storyboard</title>
+<title>SWIFT Storyboard</title>
+<link rel="icon" type="image/svg+xml" href="/static/brand/swift-drop.svg">
+<link rel="stylesheet" href="/static/swift-tokens.css">
 <style>
-  :root { --bg:#12141a; --panel:#1b1e27; --panel2:#232733; --line:#323747; --text:#e8eaf0; --dim:#9aa1b5;
-          --accent:#e0483e; --accent2:#4aa3ff; --ok:#3fbf7f; --warn:#e0a93e; --side:190px; }
+  /* Montserrat (SIL Open Font License 1.1), served from the PGX so the page needs no outside network. */
+  @font-face { font-family:Montserrat; font-weight:400; font-display:swap; src:url('/static/fonts/montserrat-latin-400-normal.woff2') format('woff2'); }
+  @font-face { font-family:Montserrat; font-weight:400; font-style:italic; font-display:swap; src:url('/static/fonts/montserrat-latin-400-italic.woff2') format('woff2'); }
+  @font-face { font-family:Montserrat; font-weight:500; font-display:swap; src:url('/static/fonts/montserrat-latin-500-normal.woff2') format('woff2'); }
+  @font-face { font-family:Montserrat; font-weight:600; font-display:swap; src:url('/static/fonts/montserrat-latin-600-normal.woff2') format('woff2'); }
+  @font-face { font-family:Montserrat; font-weight:700; font-display:swap; src:url('/static/fonts/montserrat-latin-700-normal.woff2') format('woff2'); }
+  @font-face { font-family:Montserrat; font-weight:800; font-display:swap; src:url('/static/fonts/montserrat-latin-800-normal.woff2') format('woff2'); }
+  /* The page's own names, each mapped onto a SWIFT token (swift-tokens.css). No colour is defined here. */
+  :root { color-scheme:dark;
+          --bg:var(--swift-base); --panel:var(--swift-card); --panel2:var(--swift-elevated); --line:var(--swift-ring); --text:var(--swift-text); --dim:var(--swift-text-muted);
+          --accent:var(--swift-danger); --accent2:var(--swift-green); --ok:var(--swift-green); --warn:var(--swift-warn); --side:216px; }
   * { box-sizing:border-box; }
-  body { margin:0; background:var(--bg); color:var(--text); font:14px/1.45 system-ui,Segoe UI,Roboto,sans-serif; }
+  body { margin:0; background:var(--bg); color:var(--text); font:14px/1.5 var(--swift-font); -webkit-font-smoothing:antialiased; }
   nav { position:fixed; left:0; top:0; bottom:0; width:var(--side); background:var(--panel); border-right:1px solid var(--line); padding:14px 10px; display:flex; flex-direction:column; gap:4px; z-index:6; }
   nav h1 { font-size:15px; margin:2px 8px 14px; letter-spacing:.3px; }
   nav button { text-align:left; background:none; border:1px solid transparent; color:var(--dim); padding:9px 10px; border-radius:8px; font:inherit; cursor:pointer; }
@@ -149,11 +160,65 @@
   .story b { display:block; font-size:16px; margin-bottom:6px; }
   .busy { color:var(--accent2); }
   #toast { position:fixed; bottom:18px; left:calc(50% + var(--side) / 2); transform:translateX(-50%); background:var(--accent); color:#fff; padding:10px 16px; border-radius:8px; max-width:70vw; display:none; z-index:9; }
+
+  /* ---------- SWIFT skin: how the tokens are applied (after the layout rules above, so these win) ---------- */
+  html { scrollbar-color:rgba(255,255,255,.16) transparent; }
+  :focus-visible { outline:3px solid var(--swift-focus); outline-offset:2px; }
+  a { color:var(--swift-link); } a:hover { color:var(--swift-link-hover); }
+  nav { background:var(--swift-base); border-right:1px solid var(--swift-ring); padding:14px 10px; }
+  nav .brand { display:grid; gap:8px; padding:4px 8px 14px; margin-bottom:8px; border-bottom:1px solid var(--swift-ring); }
+  nav .brand img { height:44px; width:auto; justify-self:start; }
+  nav .brand b { color:var(--swift-text-strong); font-weight:700; font-size:15px; letter-spacing:.02em; line-height:1.15; }
+  nav .brand span { font-size:11px; color:var(--swift-text-muted); }
+  nav button { position:relative; border-radius:var(--swift-radius-xl); font-weight:600; padding:10px 12px; }
+  nav button:hover { background:var(--swift-elevated); color:var(--swift-text-strong); border-color:transparent; }
+  nav button.on { background:var(--swift-highlight); border-color:var(--swift-ring-strong); color:var(--swift-text-strong); box-shadow:var(--swift-glow); }
+  nav button.on::before { content:''; position:absolute; left:-10px; top:9px; bottom:9px; width:3px; border-radius:0 3px 3px 0; background:var(--swift-green); box-shadow:var(--swift-glow); }
+  header { background:var(--swift-base); border-bottom:1px solid var(--swift-ring); }
+  #projName { color:var(--swift-text-strong); font-weight:700; }
+  #app { background-image:var(--swift-glow-radial); background-repeat:no-repeat; min-height:100vh; }
+  section { border-radius:var(--swift-radius-2xl); box-shadow:var(--swift-glow); padding:18px; }
+  h2 { font-size:12px; letter-spacing:.2em; font-weight:600; color:var(--swift-label); }
+  h3, .mgroup h3, .story b, .keyframe b, .castrow b, .idea b, .proj b { color:var(--swift-text-strong); }
+  b, strong { color:var(--swift-text-strong); }
+  button, .btn { background:transparent; color:var(--swift-link); border:1px solid var(--swift-ring-strong); border-radius:var(--swift-radius-xl); font-weight:600; }
+  button:hover, .btn:hover { background:var(--swift-highlight); border-color:var(--swift-ring-strong); }
+  button.primary { background:var(--swift-green); border-color:var(--swift-green); color:var(--swift-on-primary); font-weight:700; }
+  button.primary:hover { background:var(--swift-green-600); border-color:var(--swift-green-600); }
+  button.ghost { border-color:transparent; color:var(--swift-text-muted); } button.ghost:hover { color:var(--swift-text-strong); }
+  button.small { border-radius:var(--swift-radius-lg); }
+  button:disabled { opacity:.45; } button:disabled:hover { background:transparent; } button.primary:disabled:hover { background:var(--swift-green); }
+  button.locked { background:var(--swift-highlight); color:var(--swift-green-400); }
+  input, select, textarea { background:var(--swift-base); border:1px solid var(--swift-border); border-radius:var(--swift-radius-lg); color:var(--swift-text-strong); }
+  input::placeholder, textarea::placeholder { color:var(--swift-gray-500); }
+  input:focus, select:focus, textarea:focus { border-color:var(--swift-green); box-shadow:0 0 0 1px var(--swift-green); }
+  input[type=range], input[type=checkbox] { accent-color:var(--swift-green); box-shadow:none; }
+  .card input, .card select { border:none; box-shadow:none; }
+  .pill { background:var(--swift-elevated); border:1px solid var(--swift-ring); } .pill.ok { color:var(--swift-green-400); } .pill.bad { color:var(--swift-danger); border-color:var(--swift-danger); }
+  .hint { color:var(--swift-text-muted); } .busy { color:var(--swift-green-400); }
+  .toggle { border-color:var(--swift-ring-strong); border-radius:var(--swift-radius-lg); }
+  .toggle button { color:var(--swift-text-muted); } .toggle button:hover { background:var(--swift-elevated); }
+  .toggle button.on, .toggle button.on:hover { background:var(--swift-green); color:var(--swift-on-primary); font-weight:700; }
+  .seg, .actor, .meter, .proj, .card, .idea, .result { border-color:var(--swift-ring); border-radius:var(--swift-radius-xl); }
+  .result { background:var(--swift-card); } .result.chosen, .proj.current { border-color:var(--swift-green); box-shadow:0 0 0 1px var(--swift-green), var(--swift-glow); }
+  .shot { border-color:var(--swift-divider); border-radius:var(--swift-radius-lg); }
+  .audiorow, .model, .castrow, .keyframe, table.plan td { border-top-color:var(--swift-divider); }
+  table.plan th { color:var(--swift-label); text-transform:uppercase; letter-spacing:.12em; font-size:11px; font-weight:600; }
+  .meter .val { color:var(--swift-text-strong); font-weight:800; }
+  .model .mark { background:transparent; border-color:var(--swift-gray-600); }
+  .model .mark.current { color:var(--swift-on-primary); } .model .mark.outdated, .model .mark.missing { color:var(--swift-on-primary); }
+  .model .mark.needs_key { color:var(--swift-notice-ink); }
+  .model .mname { color:var(--swift-text-strong); } .model .mfile { font-family:var(--swift-mono); }
+  #wave, #strip, #monitor { border-color:var(--swift-ring); border-radius:var(--swift-radius-xl); }
+  #viewer { background:rgba(0,0,0,.95); } #viewer .fixbar { background:var(--swift-surface); } #viewer .vbar, #viewer .fixbar { border-bottom-color:var(--swift-ring); }
+  #hfModal { background:rgba(0,0,0,.8); }
+  #hfModal .box { background:var(--swift-surface); border-color:var(--swift-ring); border-radius:var(--swift-radius-2xl); box-shadow:var(--swift-shadow), var(--swift-glow); }
+  #toast { background:var(--swift-surface); color:var(--swift-text-strong); border:1px solid var(--swift-ring-strong); border-radius:var(--swift-radius-xl); box-shadow:var(--swift-shadow), var(--swift-glow); }
 </style>
 </head>
 <body>
 <nav>
-  <h1>PGX Storyboard</h1>
+  <div class="brand"><img src="/static/brand/swift-wordmark.svg" alt="S.W.I.F.T."><b>Storyboard</b><span>Music video studio · runs on your PGX</span></div>
   <button data-view="storyboard" class="on">Storyboard</button>
   <button data-view="assist">Full assist</button>
   <button data-view="projects">Projects</button>
@@ -334,7 +399,7 @@
 <div id="toast"></div>
 
 <script>
-const COLORS = ['#e0483e','#4aa3ff','#3fbf7f','#e0a93e','#b07cff','#ff7ab8','#39c5c8','#ff9a4a'];
+const COLORS = ['#4ade80','#38bdf8','#fbbf24','#c084fc','#2dd4bf','#f472b6','#a3e635','#fb923c'];
 let PID = null, P = { song:null, settings:{}, actors:[], photos:[], audio:[], segments:[] };
 let peaks = null, saveTimer = null, stopAt = null, currentView = 'storyboard', libPickedOnly = false;
 const $ = id => document.getElementById(id);

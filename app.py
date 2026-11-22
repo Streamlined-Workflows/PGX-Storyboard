@@ -897,6 +897,21 @@ class Handler(BaseHTTPRequestHandler):
         url = urllib.parse.urlsplit(self.path)
         query = urllib.parse.parse_qs(url.query)
         try:
+            if url.path.startswith("/static/"):            # the SWIFT tokens, logo and fonts
+                kinds = {".css": "text/css", ".svg": "image/svg+xml", ".woff2": "font/woff2"}
+                base = os.path.join(ROOT, "static")
+                path = os.path.realpath(os.path.join(base, urllib.parse.unquote(url.path[len("/static/"):])))
+                kind = kinds.get(os.path.splitext(path)[1].lower())
+                if not kind or not path.startswith(base + os.sep) or not os.path.isfile(path):
+                    return self.send_error(404)
+                with open(path, "rb") as f:
+                    body = f.read()
+                self.send_response(200)
+                self.send_header("Content-Type", kind)
+                self.send_header("Content-Length", str(len(body)))
+                self.send_header("Cache-Control", "max-age=3600")
+                self.end_headers()
+                return self.wfile.write(body)
             if url.path in ("/", "/index.html"):
                 with open(os.path.join(ROOT, "static", "index.html"), "rb") as f:
                     body = f.read()
