@@ -653,6 +653,18 @@ def assist_shots(pid):
     shots = assist.write_shots(story, data["analysis"], data.get("lines", []), project["segments"], cast_members(project))
     for seg, end in zip(project["segments"], shots["ends"]):
         end["segment_id"] = seg["id"]
+    old = (load_project(pid).get("assist") or {}).get("shots") or {}       # locked frames survive a rewrite, words and all
+    if (old.get("first") or {}).get("locked"):
+        shots["first"] = old["first"]
+        if shots["ends"]:
+            shots["ends"][0]["begin"] = old["first"]
+    kept = {e.get("segment_id"): e for e in old.get("ends", [])}
+    for end in shots["ends"]:
+        was = kept.get(end["segment_id"]) or {}
+        if was.get("locked"):
+            end.update(text=was.get("text", ""), who=was.get("who", []), locked=True)
+        if (was.get("begin") or {}).get("locked") and end is not shots["ends"][0]:
+            end.update(start="new", begin=was["begin"])
     return update_assist(pid, shots=shots)
 
 
@@ -663,6 +675,7 @@ def assist_shots_save(pid, shots):
         if not current or not isinstance(shots, dict):
             raise ValueError("Write the shots first.")
         current["first"]["text"] = str((shots.get("first") or {}).get("text", current["first"]["text"]))[:1500]
+        current["first"]["locked"] = bool((shots.get("first") or {}).get("locked", current["first"].get("locked")))
         edits = {e.get("segment_id"): e for e in shots.get("ends", []) if isinstance(e, dict)}
         for end in current["ends"]:
             edit = edits.get(end.get("segment_id"))
@@ -672,6 +685,8 @@ def assist_shots_save(pid, shots):
                     end["start"] = edit["start"]
                 end.setdefault("begin", {"text": "", "who": []})
                 end["begin"]["text"] = str((edit.get("begin") or {}).get("text", end["begin"].get("text", "")))[:1500]
+                end["locked"] = bool(edit.get("locked", end.get("locked")))
+                end["begin"]["locked"] = bool((edit.get("begin") or {}).get("locked", end["begin"].get("locked")))
         return update_assist(pid, shots=current)
 
 
@@ -699,6 +714,8 @@ def assist_shot_images(pid, targets):
         for key, seg, slot, shot, label in plan:
             if seg and slot == "end_image" and seg.get("type") == "singing":
                 continue                    # singing clips have no end shot
+            if targets is None and shot.get("locked"):
+                continue                    # locked pictures are kept when everything else is regenerated
             if not seg or not (shot.get("text") or "").strip() or (targets is not None and key not in targets) or (seg["id"], slot) in busy:
                 continue
             people = [cast[n] for n in shot.get("who", []) if n in cast and cast[n]["views"]][:4]

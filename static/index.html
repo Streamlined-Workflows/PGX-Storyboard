@@ -116,6 +116,7 @@
   .castrow input[type=text] { width:100%; }
   .idea { background:var(--panel2); border:1px solid var(--line); border-radius:8px; padding:10px 12px; margin-top:8px; }
   .keyframe { display:grid; grid-template-columns:150px 1fr 200px; gap:12px; padding:10px 0; border-top:1px solid var(--line); align-items:start; }
+  button.locked { border-color:var(--ok); color:var(--ok); }
   .keyframe textarea { width:100%; min-height:84px; }
   .keyframe img, .keyframe .noimg { width:200px; aspect-ratio:16/9; object-fit:cover; border-radius:6px; background:var(--bg); border:1px solid var(--line); display:block; }
   .step h2::before { content:counter(step) ". "; }
@@ -1100,7 +1101,8 @@ $('castRecBtn').onclick = () => busy($('castRecBtn'), $('castStatus'), 'Reading 
 let shotsTimer = null;
 function saveShots() { clearTimeout(shotsTimer); shotsTimer = setTimeout(() => post('/api/assist/shots_save', { project: PID, shots: A().shots }).catch(e => toast(e.message)), 700); }
 async function makeShots(targets, btn) {
-  const rows = shotRows().filter(r => !r.off && !r.cont && (!targets || targets.includes(r.key)));
+  const rows = shotRows().filter(r => !r.off && !r.cont && (targets ? targets.includes(r.key) : !r.shot.locked));
+  if (!rows.length) { toast('Every picture is locked. Unlock the ones you want to redo.'); return; }
   if (!targets) { shotRows().filter(r => r.cont && r.seg.begin_image).forEach(r => { r.seg.begin_image = null; }); dirty(); }   /* continuing segments carry no begin shot of their own */
   if (!targets && rows.some(r => r.seg[r.slot]) && !confirm('Some of these shots already have a picture. Replace them all?')) return;
   await busy(btn, $('shotsStatus'), 'Sending to the PGX…', async () => {
@@ -1123,6 +1125,7 @@ function renderShots() {
   if (out.contains(document.activeElement) && document.activeElement.tagName === 'TEXTAREA') return;      // do not redraw under someone typing
   $('shotsBtn').disabled = !ready; $('shotsBtn').textContent = rows.length ? 'Rewrite the shots' : 'Write the shots';
   $('shotsBtn').className = rows.length ? '' : 'primary'; $('shotsGenBtn').style.display = rows.length ? '' : 'none'; $('shotsGenBtn').className = 'primary';
+  const locks = rows.filter(r => !r.off && !r.cont && r.shot.locked).length; $('shotsGenBtn').textContent = locks ? `Generate unlocked images (${locks} locked)` : 'Generate all images';
   if (!rows.length) { out.className = 'hint'; out.textContent = ready ? 'Writes the opening frame and the end frame of every segment from its lyrics, beat and story beat. Then generates the images and puts them on the storyboard.' : 'Approve a story concept first.'; return; }
   out.className = ''; out.textContent = '';
   out.append(node('div', 'hint', 'Edit any description before generating. Each end frame is also where the next segment starts, so the video carries through from shot to shot.'));
@@ -1149,15 +1152,21 @@ function renderShots() {
       state.style.fontSize = '12px'; state.id = 'pt-' + job.id; right.append(state);
       if (job.status !== 'error') { const bar = node('div', 'mbar'), fill = node('i'); fill.id = 'pb-' + job.id; fill.style.width = '0'; bar.append(fill); right.append(bar); }
     }
+    const tools = node('div', 'row'); tools.style.marginTop = '6px'; tools.style.gap = '6px';
     if (!job || job.status === 'error' || job.status === 'done') {
-      const b = node('button', 'small', r.seg[r.slot] ? 'Generate again' : 'Generate'); b.style.marginTop = '6px';
-      b.onclick = () => makeShots([r.key], b); right.append(b);
+      const b = node('button', 'small', r.seg[r.slot] ? 'Generate again' : 'Generate'); b.disabled = !!r.shot.locked;
+      b.onclick = () => makeShots([r.key], b); tools.append(b);
     }
+    const lock = node('button', 'small' + (r.shot.locked ? ' locked' : ''), r.shot.locked ? '🔒 Locked' : '🔓 Lock');
+    lock.title = r.shot.locked ? 'Locked: Generate all images and Rewrite the shots leave this one alone. Click to unlock.' : 'Lock this picture in so Generate all images skips it.';
+    lock.onclick = async () => { r.shot.locked = !r.shot.locked; clearTimeout(shotsTimer); try { await post('/api/assist/shots_save', { project: PID, shots: A().shots }); } catch (e) { toast(e.message); } renderShots(); };
+    tools.append(lock); right.append(tools);
+    if (r.shot.locked) { pic.style.outline = '2px solid var(--ok)'; text.readOnly = true; text.style.opacity = '.7'; }
     row.append(left, mid, right); out.append(row);
   });
 }
 $('shotsBtn').onclick = () => {
-  if (A().shots && !confirm('Rewrite every shot description? Your edits to them will be replaced.')) return;
+  if (A().shots && !confirm('Rewrite the shot descriptions? Your edits will be replaced, except on locked pictures.')) return;
   busy($('shotsBtn'), $('shotsStatus'), 'Planning the frames… this can take a couple of minutes.', async () => { clearTimeout(castTimer); await save(); await post('/api/assist/cast', { project: PID, cast: A().cast || [] }); await post('/api/assist/shots', { project: PID }); await reloadProject(); renderShots(); });
 };
 $('shotsGenBtn').onclick = () => makeShots(null, $('shotsGenBtn'));
