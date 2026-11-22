@@ -29,6 +29,8 @@ It runs as a Docker container named `storyboard` that starts on boot. It expects
 |---|---|
 | `app.py` | Web server (Python standard library only). Stores projects, forwards uploads and media to ComfyUI, queues renders, reports system load. |
 | `workflows.py` | Builds the ComfyUI job for each segment. |
+| `assist.py` | Full assist: cut points, lyric matching and story prompts for the language model. |
+| `assist-service/` | Song analysis container (lyrics and beats). Built and started by `run.sh`. |
 | `static/index.html` | The page. |
 
 ## Sidebar
@@ -42,6 +44,19 @@ It runs as a Docker container named `storyboard` that starts on boot. It expects
 | System status | Ping test, and CPU, GPU, memory and disk meters for the PGX |
 
 Projects are stored as `data/projects/<id>.json`. Deleted projects are moved to `data/trash/`. The GPU meter reads `nvidia-smi`, which is why `run.sh` starts the container with `--gpus all`.
+
+## Full assist
+
+A guided pass that turns a song into a planned storyboard. Each step waits for approval.
+
+| Step | What it does | Runs on |
+|---|---|---|
+| Listen | Tempo, beats, bar lines and sections (librosa); lyrics with timestamps (faster-whisper, CPU). Lyrics can be corrected line by line, or pasted and matched to the timing. | `assist-service/` container, port 8191, local only |
+| Split | Picks cut points on bar lines so every segment is 5 to 15 s, favouring section changes and lyric phrase starts and avoiding cuts through a sung line. The language model names the segments and may merge neighbours. | `assist.py` + Ollama |
+| Story | Writes a title, logline, visual style and one beat per segment. Approving copies each beat into its segment's empty prompt. | Ollama |
+| Cast, Shots | Not built yet. | |
+
+The language model is reached through Ollama on the PGX (`OLLAMA_URL`, default `http://127.0.0.1:11434`; `OLLAMA_MODEL`, default `qwen3.6:35b`). It is unloaded when a render is queued so its memory goes back to the video models.
 
 ## Timing, progress and batch renders
 

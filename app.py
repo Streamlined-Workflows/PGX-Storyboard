@@ -20,6 +20,7 @@ import urllib.request
 import uuid
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
+import assist
 import workflows
 
 ROOT = os.path.dirname(os.path.abspath(__file__))
@@ -34,6 +35,7 @@ LOCK = threading.RLock()
 EDITABLE = ("name", "start", "end", "type", "begin_image", "end_image", "prompt", "runs", "chosen")
 PENDING = ("queued", "running")
 COMFY_PORT = urllib.parse.urlsplit(COMFY).port or 8188
+ASSIST = os.environ.get("ASSIST_URL", "http://127.0.0.1:8191").rstrip("/")
 
 
 # ---------- projects on disk ----------
@@ -247,6 +249,7 @@ def render_segment(pid, segment_id, runs=None):
         if seg is None:
             raise ValueError("Segment not found. Save the storyboard and try again.")
         source = dict(seg, begin_image=effective_begin(project, seg))
+        threading.Thread(target=assist.unload, daemon=True).start()      # give the language model's memory back
         song = (project.get("song") or {}).get("filename")
         settings = project.get("settings", {})
         count = max(1, min(8, int(runs or seg.get("runs") or 1)))
@@ -270,6 +273,115 @@ def render_segment(pid, segment_id, runs=None):
             made.append(result)
             save_project(project)
         return made
+
+
+# ---------- Full Assist ----------
+
+def assist_service(path, payload=None, timeout=15):
+    data = json.dumps(payload).encode() if payload is not None else None
+    req = urllib.request.Request(ASSIST + path, data=data, headers={"Content-Type": "application/json"})
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as r:
+            return json.loads(r.read() or b"{}")
+    except OSError as e:
+        raise ValueError(f"The song analysis service is not running on the PGX ({e}). Run ~/PGX-Storyboard/run.sh to start it.")
+
+
+def song_key(project):
+    song = (project.get("song") or {}).get("filename")
+    if not song:
+        raise ValueError("Choose a song for this project first.")
+    return f"{project['id']}:{song}", song
+
+
+def assist_analyze(pid):
+    with LOCK:
+        project = load_project(pid)
+        key, song = song_key(project)
+        if project.get("assist"):
+            project["assist"]["analysis_key"] = None          # a fresh run replaces the stored result
+            save_project(project, touch=False)
+    url = COMFY + "/view?" + urllib.parse.urlencode({"filename": song, "type": "input"})
+    return assist_service("/analyze", {"key": key, "url": url})
+
+
+def assist_status(pid):
+    """Poll the analysis job; when it finishes, store its result in the project."""
+    project = load_project(pid)
+    key, _ = song_key(project)
+    stored = (project.get("assist") or {}).get("analysis_key") == key
+    job = assist_service("/status?" + urllib.parse.urlencode({"key": key}))
+    state = job.get("state", "none")
+    if state == "done" and not stored:
+        with LOCK:
+            project = load_project(pid)
+            result = dict(job["result"])
+            lines = result.pop("lines", [])
+            project["assist"] = {"analysis": result, "analysis_key": key, "lines": lines}
+            save_project(project, touch=False)
+    elif state == "none" and stored:
+        state = "done"
+    return {"state": state, "progress": job.get("progress", ""), "error": job.get("error")}
+
+
+def assist_data(project, need_lines=False):
+    data = project.get("assist") or {}
+    if not data.get("analysis"):
+        raise ValueError("Analyze the song first.")
+    return data
+
+
+def update_assist(pid, **changes):
+    with LOCK:
+        project = load_project(pid)
+        project.setdefault("assist", {}).update(changes)
+        return save_project(project, touch=False)
+
+
+def assist_split(pid):
+    data = assist_data(load_project(pid))
+    cuts = assist.propose_cuts(data["analysis"], data.get("lines", []))
+    return update_assist(pid, split=assist.name_and_merge(data["analysis"], data.get("lines", []), cuts))
+
+
+def assist_apply_split(pid):
+    with LOCK:
+        project = load_project(pid)
+        split = (project.get("assist") or {}).get("split")
+        if not split:
+            raise ValueError("Propose segments first.")
+        project["segments"] = [{"id": new_id(), "name": s.get("name") or f"Segment {i + 1}", "start": s["start"], "end": s["end"],
+                                "type": s.get("type", "story"), "begin_image": None, "end_image": None, "prompt": "",
+                                "runs": 2, "chosen": None, "results": []} for i, s in enumerate(split)]
+        project["assist"].pop("story_draft", None)
+        project["assist"].pop("story", None)
+        return save_project(project)
+
+
+def assist_story(pid, direction, style, another):
+    project = load_project(pid)
+    data = assist_data(project)
+    if not project["segments"]:
+        raise ValueError("Put segments on the storyboard first (step 2).")
+    previous = (data.get("story_draft") or {}).get("logline") if another else None
+    draft = assist.write_story(data["analysis"], data.get("lines", []), project["segments"], direction or "", style or "", previous)
+    draft["segment_ids"] = [s["id"] for s in project["segments"]]
+    return update_assist(pid, story_draft=draft)
+
+
+def assist_approve_story(pid, fill_prompts):
+    with LOCK:
+        project = load_project(pid)
+        draft = (project.get("assist") or {}).get("story_draft")
+        if not draft:
+            raise ValueError("Write a story concept first.")
+        project["assist"]["story"] = draft
+        if fill_prompts:
+            beats = dict(zip(draft.get("segment_ids", []), draft.get("beats", [])))
+            for seg in project["segments"]:
+                if not (seg.get("prompt") or "").strip() and beats.get(seg["id"]):
+                    seg["prompt"] = beats[seg["id"]]
+        return save_project(project)
 
 
 # ---------- system status ----------
@@ -404,6 +516,14 @@ class Handler(BaseHTTPRequestHandler):
                 return self.send_json({"ok": True, "time": time.time()})
             if url.path == "/api/system":
                 return self.send_json(system_status())
+            if url.path == "/api/assist/status":
+                return self.send_json(assist_status(query.get("project", [""])[0]))
+            if url.path == "/api/assist/health":
+                try:
+                    service = assist_service("/health", timeout=4)
+                except ValueError as e:
+                    service = {"ok": False, "error": str(e)}
+                return self.send_json({"llm": assist.status(), "service": service})
             if url.path == "/api/health":
                 try:
                     queue = comfy_json("/queue", timeout=5)
@@ -453,6 +573,25 @@ class Handler(BaseHTTPRequestHandler):
                         raise ValueError("That project no longer exists.")
                     os.replace(src, os.path.join(TRASH_DIR, f"{payload['id']}-{int(time.time())}.json"))
                 return self.send_json({"ok": True})
+            if path == "/api/assist/analyze":
+                return self.send_json(assist_analyze(pid))
+            if path == "/api/assist/lyrics":
+                lines = [{"start": float(l["start"]), "end": float(l["end"]), "text": str(l["text"])[:300]}
+                         for l in payload.get("lines", []) if str(l.get("text", "")).strip()]
+                return self.send_json(update_assist(pid, lines=lines))
+            if path == "/api/assist/align":
+                data = assist_data(load_project(pid))
+                if not data.get("lines"):
+                    raise ValueError("There is no transcription to match the lyrics against.")
+                return self.send_json(update_assist(pid, lines=assist.align_lyrics(data["lines"], str(payload.get("text", "")))))
+            if path == "/api/assist/split":
+                return self.send_json(assist_split(pid))
+            if path == "/api/assist/apply_split":
+                return self.send_json(assist_apply_split(pid))
+            if path == "/api/assist/story":
+                return self.send_json(assist_story(pid, payload.get("direction"), payload.get("style"), bool(payload.get("another"))))
+            if path == "/api/assist/approve_story":
+                return self.send_json(assist_approve_story(pid, bool(payload.get("fill_prompts", True))))
             if path == "/api/render":
                 return self.send_json({"results": render_segment(pid, payload.get("segment_id"), payload.get("runs"))})
             if path == "/api/render_all":

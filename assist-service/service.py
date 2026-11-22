@@ -1,0 +1,148 @@
+#!/usr/bin/env python3
+"""Song analysis service for the storyboard: lyrics with timestamps, tempo, beats, sections.
+
+Runs beside the storyboard on the PGX (port 8191, local only). The storyboard asks it to analyze a
+song by URL and polls for the result. Speech-to-text runs on the CPU with faster-whisper; the first
+run downloads the speech model.
+"""
+import json
+import os
+import subprocess
+import tempfile
+import threading
+import traceback
+import urllib.parse
+import urllib.request
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
+PORT = int(os.environ.get("ASSIST_PORT", "8191"))
+WHISPER_MODEL = os.environ.get("WHISPER_MODEL", "large-v3-turbo")
+JOBS = {}                      # key -> {"state", "progress", "result", "error"}
+RUN_LOCK = threading.Lock()    # one analysis at a time
+_model = None
+
+
+def analyze_beats(wav_path):
+    import librosa
+    import numpy as np
+    y, sr = librosa.load(wav_path, sr=22050, mono=True)
+    duration = float(len(y) / sr)
+    hop = 512
+    onset = librosa.onset.onset_strength(y=y, sr=sr, hop_length=hop)
+    tempo, beat_frames = librosa.beat.beat_track(onset_envelope=onset, sr=sr, hop_length=hop)
+    tempo = float(np.atleast_1d(tempo)[0])
+    beat_frames = np.asarray(beat_frames, dtype=int)
+    beats = librosa.frames_to_time(beat_frames, sr=sr, hop_length=hop)
+
+    # Assume 4/4 and pick the bar phase whose beats hit hardest.
+    downbeats = beats
+    if len(beat_frames) >= 8:
+        strength = onset[np.clip(beat_frames, 0, len(onset) - 1)]
+        phase = int(np.argmax([strength[p::4].mean() for p in range(4)]))
+        downbeats = beats[phase::4]
+
+    # Sections: cluster beat-synchronous timbre and harmony into contiguous blocks.
+    sections = []
+    if len(beat_frames) >= 16:
+        mfcc = librosa.feature.mfcc(y=y, sr=sr, n_mfcc=13, hop_length=hop)
+        chroma = librosa.feature.chroma_cqt(y=y, sr=sr, hop_length=hop)
+        feats = np.vstack([librosa.util.normalize(mfcc, axis=1), librosa.util.normalize(chroma, axis=1)])
+        synced = librosa.util.sync(feats, beat_frames, aggregate=np.median)
+        k = int(max(3, min(12, round(duration / 22.0))))
+        k = min(k, synced.shape[1] - 1)
+        bounds = librosa.segment.agglomerative(synced, k)
+        edge_frames = np.concatenate([[0], beat_frames])          # column i of `synced` starts here
+        times = sorted({0.0, *[float(librosa.frames_to_time(edge_frames[min(b, len(edge_frames) - 1)], sr=sr, hop_length=hop)) for b in bounds], duration})
+        rms = librosa.feature.rms(y=y, hop_length=hop)[0]
+        rms_t = librosa.frames_to_time(np.arange(len(rms)), sr=sr, hop_length=hop)
+        peak = float(rms.max()) or 1.0
+        for a, b in zip(times[:-1], times[1:]):
+            if b - a < 1.0:
+                continue
+            mask = (rms_t >= a) & (rms_t < b)
+            sections.append({"start": round(a, 2), "end": round(b, 2),
+                             "energy": round(float(rms[mask].mean() / peak) if mask.any() else 0.0, 3)})
+    return {"duration": round(duration, 3), "tempo": round(tempo, 1),
+            "beats": [round(float(t), 3) for t in beats], "downbeats": [round(float(t), 3) for t in downbeats],
+            "sections": sections}
+
+
+def transcribe(audio_path, job):
+    global _model
+    from faster_whisper import WhisperModel
+    if _model is None:
+        job["progress"] = "Loading the speech model (the first run downloads about 1.6 GB)"
+        _model = WhisperModel(WHISPER_MODEL, device="cpu", compute_type="int8", cpu_threads=os.cpu_count() or 8)
+    job["progress"] = "Transcribing the lyrics"
+    segments, info = _model.transcribe(audio_path, word_timestamps=True, beam_size=5,
+                                       condition_on_previous_text=False, vad_filter=False)
+    lines = []
+    for seg in segments:
+        text = (seg.text or "").strip()
+        if not text or seg.no_speech_prob > 0.85 or seg.avg_logprob < -1.3:
+            continue                                   # likely noise or an instrumental passage
+        lines.append({"start": round(float(seg.start), 2), "end": round(float(seg.end), 2), "text": text})
+        job["progress"] = f"Transcribing the lyrics ({int(seg.end // 60)}:{int(seg.end % 60):02d} so far)"
+    return {"language": info.language, "lines": lines}
+
+
+def run_job(key, url):
+    job = JOBS[key]
+    with RUN_LOCK:
+        try:
+            with tempfile.TemporaryDirectory() as tmp:
+                job["progress"] = "Fetching the song"
+                src = os.path.join(tmp, "song")
+                with urllib.request.urlopen(url, timeout=120) as r, open(src, "wb") as f:
+                    f.write(r.read())
+                wav = os.path.join(tmp, "song.wav")
+                subprocess.run(["ffmpeg", "-v", "error", "-y", "-i", src, "-vn", "-ac", "1", "-ar", "22050", wav],
+                               check=True, capture_output=True, timeout=300)
+                job["progress"] = "Finding the tempo, beats and sections"
+                result = analyze_beats(wav)
+                result.update(transcribe(wav, job))
+            job.update(state="done", progress="Done", result=result)
+        except subprocess.CalledProcessError as e:
+            job.update(state="error", error="Could not read that audio file: " + (e.stderr or b"").decode("utf-8", "replace")[-300:])
+        except Exception as e:                           # report anything else to the page
+            traceback.print_exc()
+            job.update(state="error", error=f"{type(e).__name__}: {e}"[:500])
+
+
+class Handler(BaseHTTPRequestHandler):
+    def log_message(self, fmt, *args):
+        pass
+
+    def send_json(self, payload, status=200):
+        body = json.dumps(payload).encode()
+        self.send_response(status)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def do_GET(self):
+        url = urllib.parse.urlsplit(self.path)
+        if url.path == "/status":
+            key = urllib.parse.parse_qs(url.query).get("key", [""])[0]
+            return self.send_json(JOBS.get(key) or {"state": "none"})
+        if url.path == "/health":
+            return self.send_json({"ok": True, "model": WHISPER_MODEL})
+        self.send_json({"error": "Not found"}, 404)
+
+    def do_POST(self):
+        if self.path != "/analyze":
+            return self.send_json({"error": "Not found"}, 404)
+        payload = json.loads(self.rfile.read(int(self.headers.get("Content-Length") or 0)) or b"{}")
+        key, url = payload.get("key"), payload.get("url")
+        if not key or not url:
+            return self.send_json({"error": "key and url are required"}, 400)
+        if JOBS.get(key, {}).get("state") != "running":
+            JOBS[key] = {"state": "running", "progress": "Waiting to start"}
+            threading.Thread(target=run_job, args=(key, url), daemon=True).start()
+        self.send_json(JOBS[key])
+
+
+if __name__ == "__main__":
+    print(f"Assist service on 127.0.0.1:{PORT} (speech model: {WHISPER_MODEL})", flush=True)
+    ThreadingHTTPServer(("127.0.0.1", PORT), Handler).serve_forever()
