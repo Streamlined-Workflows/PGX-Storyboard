@@ -281,18 +281,25 @@ def describe_actor(name, images_b64):
 
 
 def view_prompt(description, framing, has_refs, extra=""):
-    """`extra` is a one-off addition for this generation (a prop, a change of outfit); it wins over the description and the references."""
+    """`extra` is a one-off addition for this generation (a prop, a change of outfit or hair).
+
+    The addition is stated first and the reference is then limited to face, build and hair colour. Telling the model to
+    "keep the hair exactly" as well made it copy the reference's loose hair straight through a helmet.
+    """
     who = (description or "").strip().rstrip(".")
     extra = (extra or "").strip().rstrip(".")
+    keep = "face and build exactly, and the same hair colour" if extra else "face, hair and build exactly"
     if has_refs and who:      # the written description is the authority on clothing and colours, so an actor can be re-dressed
-        lead = ("The same person as in the reference image: keep their face, hair and build exactly. "
+        lead = (f"The same person as in the reference image: keep their {keep}. "
                 f"Their clothing and its colours follow this description, even where the reference image differs: {who}")
     elif has_refs:
-        lead = "The same character as in the reference image"
+        lead = f"The same character as in the reference image: keep their {keep}"
     else:
         lead = who
     if extra:
-        lead += f". For this picture also: {extra}. This addition takes priority where it differs from the description" + (" or the reference image" if has_refs else "")
+        change = (f"In this picture: {extra}. This is the most important instruction: how the hair is arranged and what is worn "
+                  "follow it, not the " + ("reference image" if has_refs else "description") + " where they differ")
+        lead = change + ". " + lead if lead else change
     return (f"{framing}. {lead}. Plain dark studio backdrop, soft cinematic lighting, sharp focus, "
             "consistent character design, single character, no text.")
 
