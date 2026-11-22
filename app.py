@@ -10,6 +10,7 @@ media to ComfyUI, turns segments into ComfyUI jobs, and reports system load.
 import json
 import os
 import random
+import re
 import shutil
 import subprocess
 import threading
@@ -47,7 +48,7 @@ def new_id():
 def empty_project(name="Untitled project"):
     now = time.time()
     return {"id": new_id(), "name": name, "created": now, "updated": now, "song": None,
-            "settings": {"width": 832, "height": 480}, "audio": [], "actors": [], "segments": []}
+            "settings": {"width": 832, "height": 480}, "audio": [], "actors": [], "photos": [], "segments": []}
 
 
 def project_path(pid):
@@ -65,13 +66,40 @@ def normalize(project):
     project.setdefault("segments", [])
     project.setdefault("actors", [])
     project.setdefault("audio", [])
-    for actor in project["actors"]:
-        actor.setdefault("kind", "actor")
+    project.setdefault("photos", [])
+    if any("views" not in a for a in project["actors"]):
+        migrate_actors(project)
     song = project.get("song")
     if song and song.get("filename") and not any(a.get("filename") == song["filename"] for a in project["audio"]):
         project["audio"].append({"id": new_id(), "name": song["filename"], "filename": song["filename"],
                                  "duration": song.get("duration", 0)})
     return project
+
+
+def migrate_actors(project):
+    """Older projects stored one entry per still. An actor is now one character with several views.
+
+    Stills whose names share a first word (pilot_medium, pilot_fullbody) become views of one actor.
+    """
+    kept, groups = [], {}
+    for entry in project["actors"]:
+        if "views" in entry:
+            kept.append(entry)
+        elif entry.get("kind") == "photo":
+            project["photos"].append({"id": entry.get("id") or new_id(), "name": entry.get("name", ""), "image": entry["image"]})
+        else:
+            words = re.split(r"[_\-\s]+", (entry.get("name") or "").strip(), maxsplit=1)
+            groups.setdefault(words[0].lower(), []).append((entry, words))
+    for items in groups.values():
+        shared = len(items) > 1
+        first_entry, first_words = items[0]
+        actor = {"id": new_id(), "description": "", "views": [],
+                 "name": first_words[0].capitalize() if shared and first_words[0] else (first_entry.get("name") or "Actor")}
+        for entry, words in items:
+            label = re.sub(r"[_\-]+", " ", words[1]).strip() if shared and len(words) > 1 else ""
+            actor["views"].append({"id": entry.get("id") or new_id(), "image": entry["image"], "label": label})
+        kept.append(actor)
+    project["actors"] = kept
 
 
 def load_project(pid):
@@ -124,8 +152,8 @@ def list_projects():
             clips = [r for s in p["segments"] for r in s.get("results", []) if r.get("status") == "done"]
             thumb = next((s.get("begin_image") for s in p["segments"] if s.get("begin_image")), None)
             out.append({"id": p["id"], "name": p["name"], "created": p["created"], "updated": p["updated"],
-                        "segments": len(p["segments"]), "clips": len(clips), "assets": len(p["actors"]) + len(p["audio"]),
-                        "song": (p.get("song") or {}).get("filename"), "thumb": thumb or (p["actors"][0]["image"] if p["actors"] else None)})
+                        "segments": len(p["segments"]), "clips": len(clips), "assets": sum(len(a.get("views", [])) for a in p["actors"]) + len(p["photos"]) + len(p["audio"]),
+                        "song": (p.get("song") or {}).get("filename"), "thumb": thumb or next((v["image"] for a in p["actors"] for v in a.get("views", [])), None)})
         return sorted(out, key=lambda p: -p["updated"])
 
 
@@ -145,7 +173,7 @@ def merge_project(pid, incoming):
             out["type"] = "singing" if out.get("type") == "singing" else "story"
             segments.append(out)
         current["segments"] = segments
-        for key in ("song", "actors", "audio"):
+        for key in ("song", "actors", "audio", "photos"):
             if key in incoming:
                 current[key] = incoming[key]
         if incoming.get("name"):

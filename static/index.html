@@ -53,6 +53,11 @@
   .card img { width:100%; height:86px; object-fit:cover; display:block; background:var(--bg); }
   .card input { width:100%; border:none; border-radius:0; background:none; font-size:12px; padding:5px 7px; }
   .card .acts { display:flex; justify-content:space-between; padding:0 2px 3px; }
+  .actor { background:var(--panel2); border:1px solid var(--line); border-radius:10px; padding:12px; margin-bottom:12px; }
+  .actor .head { display:grid; grid-template-columns:minmax(160px,240px) 1fr auto; gap:10px; align-items:start; margin-bottom:10px; }
+  .actor .head textarea { min-height:36px; height:36px; }
+  .actor .aname { font-weight:600; width:100%; }
+  .card select { width:100%; border:none; border-top:1px solid var(--line); border-radius:0; background:none; font-size:11px; padding:4px 5px; color:var(--dim); }
   .seg { background:var(--panel2); border:1px solid var(--line); border-radius:10px; padding:14px; margin-bottom:14px; }
   .seg-head { display:flex; gap:10px; align-items:flex-end; flex-wrap:wrap; margin-bottom:12px; }
   .seg-head .name { font-weight:600; }
@@ -203,8 +208,9 @@
   <div id="v-assets" class="view">
     <section>
       <div class="row" style="margin-bottom:12px"><h2 style="margin:0">Actors</h2><span class="spacer"></span>
-        <label class="btn">Add actor<input class="assetFile" data-kind="actor" type="file" accept="image/*" multiple hidden></label></div>
-      <div id="actors" class="cards"></div>
+        <span class="hint">An actor is one character. Add several views of them: close-up, full body, different outfits.</span>
+        <label class="btn">New actor<input class="assetFile" data-kind="actor" type="file" accept="image/*" multiple hidden></label></div>
+      <div id="actors"></div>
     </section>
     <section>
       <div class="row" style="margin-bottom:12px"><h2 style="margin:0">Photos</h2><span class="spacer"></span>
@@ -250,7 +256,7 @@
 
 <script>
 const COLORS = ['#e0483e','#4aa3ff','#3fbf7f','#e0a93e','#b07cff','#ff7ab8','#39c5c8','#ff9a4a'];
-let PID = null, P = { song:null, settings:{}, actors:[], audio:[], segments:[] };
+let PID = null, P = { song:null, settings:{}, actors:[], photos:[], audio:[], segments:[] };
 let peaks = null, saveTimer = null, stopAt = null, currentView = 'storyboard', libPickedOnly = false;
 const $ = id => document.getElementById(id);
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
@@ -283,7 +289,7 @@ async function save() {
   if (!PID) return;
   clearTimeout(saveTimer);
   try {
-    const body = JSON.stringify({ name:P.name, song:P.song, settings:P.settings, actors:P.actors, audio:P.audio,
+    const body = JSON.stringify({ name:P.name, song:P.song, settings:P.settings, actors:P.actors, photos:P.photos, audio:P.audio,
       segments: P.segments.map(({results, ...rest}) => rest) });
     mergeResults(await api('/api/project?id=' + PID, { method:'PUT', headers:{'Content-Type':'application/json'}, body }));
     $('saved').textContent = 'saved';
@@ -320,7 +326,8 @@ async function openProject(id) {
   if (PID && PID !== id) await save();
   try { P = await api('/api/project?id=' + id); } catch (e) { toast(e.message); return false; }
   PID = id; localStorage.setItem('sb.project', id);
-  P.segments ||= []; P.actors ||= []; P.audio ||= []; P.settings ||= {};
+  P.segments ||= []; P.actors ||= []; P.photos ||= []; P.audio ||= []; P.settings ||= {};
+  P.actors.forEach(a => { a.views ||= []; });
   peaks = null; pvKey = null; for (const k in prog) delete prog[k];
   $('projName').value = P.name || ''; $('navFoot').textContent = P.name || '';
   $('saved').textContent = 'loaded';
@@ -503,31 +510,78 @@ function beginOf(i) {
 }
 
 /* ---------- assets ---------- */
+const stem = name => name.replace(/\.[^.]+$/, '');
+const viewCount = () => P.actors.reduce((n, a) => n + a.views.length, 0);
+
+/* Uploading several images as a new actor makes ONE actor with those images as its views. */
 async function addStills(files, kind) {
-  for (const f of files) {
-    try { const image = await upload(f); P.actors.push({ id: uid(), name: f.name.replace(/\.[^.]+$/, ''), image, kind }); }
-    catch (err) { toast(err.message); }
+  const done = [];
+  for (const f of files) { try { done.push({ name: stem(f.name), image: await upload(f) }); } catch (err) { toast(err.message); } }
+  if (!done.length) return;
+  if (kind === 'photo') done.forEach(d => P.photos.push({ id: uid(), name: d.name, image: d.image }));
+  else {
+    const words = done.map(d => d.name.split(/[_\-\s]+/)), shared = done.length > 1 && words.every(w => w[0].toLowerCase() === words[0][0].toLowerCase());
+    const name = shared ? words[0][0].charAt(0).toUpperCase() + words[0][0].slice(1) : (done.length === 1 ? done[0].name : 'New actor');
+    P.actors.push({ id: uid(), name, description: '', views: done.map((d, i) => ({ id: uid(), image: d.image, label: shared ? words[i].slice(1).join(' ') : (done.length > 1 ? d.name : '') })) });
   }
   dirty(); renderAssets();
 }
 document.querySelectorAll('.assetFile').forEach(inp => inp.onchange = async e => { await addStills(e.target.files, inp.dataset.kind); e.target.value = ''; });
 
-function stillCard(a) {
-  const other = a.kind === 'photo' ? 'actor' : 'photo';
+/* Where a still can be moved: another actor, a brand-new actor, or the photos. */
+function moveOptions(fromActor) {
+  return '<option value="">Move to…</option>' + P.actors.filter(a => a !== fromActor).map(a => `<option value="a:${a.id}">${esc(a.name || 'Actor')}</option>`).join('') +
+    '<option value="new">A new actor</option>' + (fromActor ? '<option value="photo">Photos</option>' : '');
+}
+function moveStill(image, label, target) {
+  if (target === 'photo') P.photos.push({ id: uid(), name: label || 'Photo', image });
+  else if (target === 'new') P.actors.push({ id: uid(), name: 'New actor', description: '', views: [{ id: uid(), image, label }] });
+  else { const to = P.actors.find(a => 'a:' + a.id === target); if (!to) return false; to.views.push({ id: uid(), image, label }); }
+  return true;
+}
+
+function viewCard(actor, v) {
   const d = document.createElement('div'); d.className = 'card';
-  d.innerHTML = `<img src="${view(a.image)}" alt=""><input value="${esc(a.name)}"><div class="acts"><button class="ghost small mv">Make ${other}</button><button class="ghost small del" title="Remove from this project">✕</button></div>`;
-  d.querySelector('input').oninput = ev => { a.name = ev.target.value; dirty(); };
-  d.querySelector('.mv').onclick = () => { a.kind = other; dirty(); renderAssets(); };
-  d.querySelector('.del').onclick = () => { P.actors = P.actors.filter(x => x !== a); dirty(); renderAssets(); };
+  d.innerHTML = `<img src="${view(v.image)}" alt=""><input value="${esc(v.label)}" placeholder="View name, e.g. close-up"><select>${moveOptions(actor)}</select><div class="acts"><span></span><button class="ghost small del" title="Remove this view">✕</button></div>`;
+  d.querySelector('input').oninput = ev => { v.label = ev.target.value; dirty(); };
+  d.querySelector('select').onchange = ev => { if (moveStill(v.image, v.label, ev.target.value)) { actor.views = actor.views.filter(x => x !== v); if (!actor.views.length) P.actors = P.actors.filter(x => x !== actor); dirty(); } renderAssets(); };
+  d.querySelector('.del').onclick = () => { actor.views = actor.views.filter(x => x !== v); dirty(); renderAssets(); };
+  return d;
+}
+
+function actorPanel(a) {
+  const d = document.createElement('div'); d.className = 'actor';
+  d.innerHTML = `<div class="head"><div><label>Actor name</label><input class="aname" value="${esc(a.name)}"></div>` +
+    `<div><label>Description (who they are and how they look; used when shots are generated)</label><textarea class="adesc" placeholder="e.g. A starship pilot in her thirties with wavy red hair and a maroon flight uniform">${esc(a.description || '')}</textarea></div>` +
+    `<div style="padding-top:18px"><label class="btn small">Add view<input type="file" accept="image/*" multiple hidden></label> <button class="ghost small delactor" title="Delete this actor">Delete</button></div></div>` +
+    `<div class="cards views"></div>`;
+  d.querySelector('.aname').oninput = ev => { a.name = ev.target.value; dirty(); };
+  d.querySelector('.adesc').oninput = ev => { a.description = ev.target.value; dirty(); };
+  d.querySelector('input[type=file]').onchange = async ev => {
+    for (const f of ev.target.files) { try { a.views.push({ id: uid(), image: await upload(f), label: stem(f.name).replace(/[_-]+/g, ' ') }); } catch (err) { toast(err.message); } }
+    dirty(); renderAssets();
+  };
+  d.querySelector('.delactor').onclick = () => { if (confirm(`Delete the actor "${a.name}" and their ${a.views.length} view${a.views.length === 1 ? '' : 's'}? Segments that already use a view keep it.`)) { P.actors = P.actors.filter(x => x !== a); dirty(); renderAssets(); } };
+  const views = d.querySelector('.views');
+  if (!a.views.length) views.innerHTML = '<span class="hint">No views yet. Add a still of this actor.</span>';
+  a.views.forEach(v => views.appendChild(viewCard(a, v)));
+  return d;
+}
+
+function photoCard(ph) {
+  const d = document.createElement('div'); d.className = 'card';
+  d.innerHTML = `<img src="${view(ph.image)}" alt=""><input value="${esc(ph.name)}"><select>${moveOptions(null)}</select><div class="acts"><span></span><button class="ghost small del" title="Remove from this project">✕</button></div>`;
+  d.querySelector('input').oninput = ev => { ph.name = ev.target.value; dirty(); };
+  d.querySelector('select').onchange = ev => { if (moveStill(ph.image, ph.name, ev.target.value)) { P.photos = P.photos.filter(x => x !== ph); dirty(); } renderAssets(); };
+  d.querySelector('.del').onclick = () => { P.photos = P.photos.filter(x => x !== ph); dirty(); renderAssets(); };
   return d;
 }
 
 function renderAssets() {
-  for (const [id, kind, empty] of [['actors', 'actor', 'No actors yet. Add a still of each character.'], ['photos', 'photo', 'No photos yet. Use these for locations and other reference stills.']]) {
-    const list = P.actors.filter(a => (a.kind || 'actor') === kind);
-    $(id).innerHTML = list.length ? '' : `<span class="hint">${empty}</span>`;
-    list.forEach(a => $(id).appendChild(stillCard(a)));
-  }
+  $('actors').innerHTML = P.actors.length ? '' : '<span class="hint">No actors yet. Choose New actor and select every still you have of one character.</span>';
+  P.actors.forEach(a => $('actors').appendChild(actorPanel(a)));
+  $('photos').innerHTML = P.photos.length ? '' : '<span class="hint">No photos yet. Use these for locations and other reference stills.</span>';
+  P.photos.forEach(ph => $('photos').appendChild(photoCard(ph)));
   const wrap = $('audios'); wrap.innerHTML = P.audio.length ? '' : '<span class="hint">No audio yet.</span>';
   P.audio.forEach(a => {
     const isSong = P.song?.filename === a.filename;
@@ -555,16 +609,18 @@ $('addSeg').onclick = () => {
 
 function shotBox(seg, key, label, inherited) {
   const own = seg[key], img = own || inherited || null;
-  const group = (title, kind) => { const l = P.actors.filter(a => (a.kind || 'actor') === kind); return l.length ? `<optgroup label="${title}">` + l.map(a => `<option value="${esc(a.image)}" ${a.image === own ? 'selected' : ''}>${esc(a.name)}</option>`).join('') + '</optgroup>' : ''; };
+  const opt = (image, text) => `<option value="${esc(image)}" ${image === own ? 'selected' : ''}>${esc(text)}</option>`;
+  const actorOpts = P.actors.filter(a => a.views.length).map(a => `<optgroup label="${esc(a.name || 'Actor')}">` + a.views.map((v, i) => opt(v.image, v.label || 'View ' + (i + 1))).join('') + '</optgroup>').join('');
+  const photoOpts = P.photos.length ? '<optgroup label="Photos">' + P.photos.map(ph => opt(ph.image, ph.name)).join('') + '</optgroup>' : '';
   const box = document.createElement('div'); box.className = 'shot' + (!own && inherited ? ' inherited' : '');
   const first = own ? 'Clear' : (inherited ? 'Using previous end shot' : 'Choose a still…');
   box.innerHTML = `<label>${label}</label>` + (img ? `<img src="${view(img)}" alt="">` : `<div class="empty">none</div>`) +
-    `<select><option value="">${first}</option>${group('Actors', 'actor')}${group('Photos', 'photo')}<option value="__upload">Upload new…</option></select><input type="file" accept="image/*" hidden>`;
+    `<select><option value="">${first}</option>${actorOpts}${photoOpts}<option value="__upload">Upload new photo…</option></select><input type="file" accept="image/*" hidden>`;
   const sel = box.querySelector('select'), file = box.querySelector('input');
   sel.onchange = () => { if (sel.value === '__upload') return file.click(); seg[key] = sel.value || null; renderSegments(); dirty(); };
   file.onchange = async () => {
     const f = file.files[0]; if (!f) return;
-    try { const name = await upload(f); P.actors.push({ id: uid(), name: f.name.replace(/\.[^.]+$/, ''), image: name, kind: 'photo' }); seg[key] = name; renderSegments(); dirty(); }
+    try { const name = await upload(f); P.photos.push({ id: uid(), name: stem(f.name), image: name }); seg[key] = name; renderSegments(); dirty(); }
     catch (err) { toast(err.message); }
   };
   return box;

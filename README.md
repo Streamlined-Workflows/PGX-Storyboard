@@ -39,7 +39,7 @@ It runs as a Docker container named `storyboard` that starts on boot. It expects
 |---|---|
 | Storyboard | The song, timeline and segments of the open project |
 | Projects | Every saved project. Open, rename, duplicate or delete one; each keeps its own timeline, assets and clips |
-| Assets | The open project's actors, photos and audio |
+| Assets | The open project's actors, photos and audio. An actor is one character with a name, a description and any number of views (stills); photos are loose reference stills |
 | Library | Every video rendered in the open project, with download links |
 | System status | Ping test, and CPU, GPU, memory and disk meters for the PGX |
 
