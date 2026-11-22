@@ -196,9 +196,24 @@ Licence: concepts are made with FLUX.2 [dev], which is licensed for non-commerci
 accepted because these are internal concept and placeholder marks; final artwork for any product
 that is sold will come from hired artists. The page says this under the concepts.
 
-## Export (not built)
+## Export
 
-No export exists yet. `exports` in the project file is reserved for it.
+**Microsoft Teams icons** are built (`static/identity/teams-icons.js`). With "teams" ticked under
+"Where it will be used", each finished concept gets a Teams icons button. It produces:
+
+| File | Size | Content |
+|---|---|---|
+| `color.png` | 192 × 192 | The mark within the middle 96 × 96, on a transparent or solid square |
+| `outline.png` | 32 × 32 | The mark's silhouette, white only, on transparent |
+| `color32x32.png` | 32 × 32 | Full colour on transparent (optional; Outlook and Microsoft 365) |
+
+All of it happens in the browser: the concept's plain background is removed (the colour is read
+from the corners; a slider sets how aggressively), the mark is cropped and scaled, and the files
+are downloaded singly or as one .zip to the person's computer. Nothing is stored on the server,
+so `exports` in the project file is still unused. The outline is a silhouette, which suits simple
+one-shape marks and turns detailed ones into a blob.
+
+Other platforms' icon sets and SVG output are not built.
 
 Planned for export: tracing an approved concept into an SVG with VTracer (the `vtracer` Python
 package, which has a build for the server's ARM processor and Python 3.12). It is listed under
@@ -208,7 +223,7 @@ suits flat marks with a few solid colours and suits gradients, glows and fine te
 
 ## Known limitations
 
-- No brand profiles, approval, export or publishing.
+- No brand profiles, approval or publishing. Export covers Microsoft Teams icons only.
 - Generation and fixing are tested against a stand-in for ComfyUI, not yet on the real server.
 - No sign-in, the same as the rest of SWIFT Director. Do not expose the port to the internet.
 - Two browser tabs editing the same brief: the last save wins.

@@ -69,7 +69,7 @@
       </form>
       <div class="ids-list" aria-live="polite"><span class="hint">Loading…</span></div>
       <p class="hint ids-queue" aria-live="polite"></p>
-      <div class="ids-note"><b>What works today.</b> Create, open, describe, duplicate and delete identity projects, and save the brief for each one. Inside a project you can add reference images, generate concepts, zoom into them and fix an area. Exporting icon sets and SVG files is not built yet, so there is no button for it here.</div>
+      <div class="ids-note"><b>What works today.</b> Create, open, describe, duplicate and delete identity projects, and save the brief for each one. Inside a project you can add reference images, generate concepts, zoom into them and fix an area. Microsoft Teams icons can be exported from a concept; other icon sets and SVG files are not built yet.</div>
     </section>`);
     root.appendChild(page); poll();
     page.querySelector('.ids-new').onsubmit = async (ev) => {
@@ -154,11 +154,12 @@
       </div>
       <div class="hint ids-gen-notes" aria-live="polite"></div>
       <div class="ids-concepts" aria-live="polite"></div>
+      <div class="ids-export"></div>
       <div class="ids-clean"><button class="small ids-cleanup" type="button">Clean up storage</button><span class="hint ids-clean-msg">Erases every concept in this project that is not locked, to free space on the server. Reference images are kept.</span></div>
       <p class="hint">Concept art for internal use. It is drawn with FLUX.2 [dev], which is licensed for non-commercial use; final artwork for a product that is sold should come from an artist.</p>
       <p class="hint ids-queue" aria-live="polite"></p>
       <div class="ids-jobs"></div>
-      <div class="ids-note">The brief is saved as you type. Generate concepts reads the brief and the enabled reference images. Concepts wait their turn behind any video renders.</div>
+      <div class="ids-note">The brief is saved as you type. Generate concepts reads the brief and the enabled reference images. Concepts wait their turn behind any video renders. Tick \"teams\" under \"Where it will be used\" to get a Teams icons button on each finished concept.</div>
     </section>`);
     root.innerHTML = ''; root.appendChild(page); poll();
     const state = page.querySelector('.ids-state');
@@ -276,19 +277,23 @@
           <div class="ids-thumb ids-cthumb${done ? '' : ' ids-wait'}${c.state === 'running' ? ' ids-now' : ''}">${done ? `<img alt="Concept" loading="lazy" src="${src(c)}">` : `<span>${esc(CONCEPT_WORDS[c.state] || c.state)}</span>`}</div>
           <div class="hint">${c.kind === 'fix' ? 'Fix: ' + esc(c.direction) : c.direction ? esc(c.direction) : 'From the brief'}${c.references && c.references.length ? ` · ${c.references.length} reference${c.references.length === 1 ? '' : 's'}` : ''}</div>
           ${c.error ? `<div class="hint">${esc(c.error)}</div>` : ''}
-          <div class="ids-acts">${done ? '<button class="small primary ids-look" type="button">Look closer</button>' : ''}${done && info.ready.fix ? '<button class="small ids-fix" type="button">Fix an area</button>' : ''}${done ? `<a class="btn small ids-dl" href="${src(c)}" download="${esc(fileName(c))}">Download</a>` : ''}</div>
+          <div class="ids-acts">${done ? '<button class="small primary ids-look" type="button">Look closer</button>' : ''}${done && info.ready.fix ? '<button class="small ids-fix" type="button">Fix an area</button>' : ''}${done ? `<a class="btn small ids-dl" href="${src(c)}" download="${esc(fileName(c))}">Download</a>` : ''}${done && forTeams() && window.IdentityTeams ? '<button class="small ids-teams-btn" type="button" title="Make the colour and outline icons a Teams app package needs">Teams icons</button>' : ''}</div>
           <div class="ids-acts">${done ? `<button class="small ids-lock${c.locked ? ' locked' : ''}" type="button" aria-pressed="${!!c.locked}" title="A locked concept cannot be removed and is kept when storage is cleaned up">${c.locked ? 'Locked' : 'Lock'}</button>` : ''}<button class="small ghost ids-cdel" type="button"${c.locked ? ' disabled title="Unlock it first"' : ''}>Remove</button></div>
         </article>`);
         if (done) {
           card.querySelector('.ids-cthumb').onclick = () => look(c); card.querySelector('.ids-look').onclick = () => look(c);
           const f = card.querySelector('.ids-fix'); if (f) f.onclick = () => { look(c); const b = document.getElementById('vFix'); if (b) setTimeout(() => { if (!document.getElementById('viewer').classList.contains('fixing')) b.click(); }, 350); };
         }
+        const teams = card.querySelector('.ids-teams-btn');
+        if (teams) teams.onclick = () => window.IdentityTeams.open(page.querySelector('.ids-export'), { src: src(c), name: fileName(c).replace(/\.png$/, ''), colour: (page.querySelector('#idsPalette').value.match(/#[0-9a-fA-F]{6}\b/) || [])[0] });
         const lock = card.querySelector('.ids-lock');
         if (lock) lock.onclick = async () => { try { await call('POST', 'concepts/lock', { project: pid, id: c.id, locked: !c.locked }); await reload(); } catch (e) { say(e.message); } };
         card.querySelector('.ids-cdel').onclick = async () => { try { await call('POST', 'concepts/remove', { project: pid, id: c.id }); await reload(); } catch (e) { say(e.message); } };
         box.appendChild(card);
       });
     };
+    const forTeams = () => !!page.querySelector('[data-plat="teams"]:checked');
+    page.querySelector('[data-plat="teams"]').addEventListener('change', () => draw());
     const key = l => l.map(c => c.id + c.state + (c.locked ? 'L' : '')).join();
     const fileName = c => ((page.querySelector('#idsApp').value || page.querySelector('#idsName').value || 'concept').replace(/[^A-Za-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'concept') + '-' + c.id.slice(0, 6) + '.png';
     const reload = async () => { try { const fresh = (await call('GET', 'project?id=' + encodeURIComponent(pid))).concepts; if (key(fresh) !== key(list)) { list = fresh; draw(); } } catch (e) { /* the next tick tries again */ } };
