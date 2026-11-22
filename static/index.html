@@ -6,6 +6,7 @@
 <title>SWIFT Director</title>
 <link rel="icon" type="image/svg+xml" href="/static/brand/swift-drop.svg">
 <link rel="stylesheet" href="/static/swift-tokens.css">
+<link rel="stylesheet" href="/static/identity/identity-studio.css">
 <style>
   /* Montserrat (SIL Open Font License 1.1), served from the server so the page needs no outside network. */
   @font-face { font-family:Montserrat; font-weight:400; font-display:swap; src:url('/static/fonts/montserrat-latin-400-normal.woff2') format('woff2'); }
@@ -255,6 +256,7 @@
   <button data-view="projects">Projects</button>
   <button data-view="assets">Assets</button>
   <button data-view="library">Library</button>
+  <button data-view="identity">Identity Studio</button>
   <button data-view="system">System status</button>
   <div class="foot" id="navFoot"></div>
 </nav>
@@ -337,6 +339,9 @@
       <div id="shotsOut" class="hint">Writes the opening frame and the end frame of every segment from its lyrics, beat and story beat. Then generates the images and puts them on the storyboard.</div>
     </section>
   </div>
+
+  <!-- ===== Identity Studio: a separate module, drawn by /static/identity/identity-studio.js ===== -->
+  <div id="v-identity" class="view"></div>
 
   <!-- ===== Projects ===== -->
   <div id="v-projects" class="view">
@@ -595,6 +600,7 @@ function show(name) {
   if (name === 'library') { renderLibrary(); if (scope.library === 'all') loadAll().then(renderLibrary); }
   if (name === 'system') { refreshSystem(); loadModels(); }
   if (name === 'storyboard') { renderSegments(); }
+  if (name === 'identity' && window.IdentityStudio) window.IdentityStudio.show();
 }
 /* The menu: hidden or shown. On a phone it starts hidden and closes after a choice; on a desktop it remembers. */
 const phone = window.matchMedia('(max-width:760px)');
@@ -1621,5 +1627,7 @@ async function boot() {
   setInterval(poll, 4000); setInterval(health, 6000);
 })();
 </script>
+<script src="/static/identity/identity-studio.js"></script>
+<script>if (window.IdentityStudio) IdentityStudio.mount(document.getElementById('v-identity'));</script>
 </body>
 </html>

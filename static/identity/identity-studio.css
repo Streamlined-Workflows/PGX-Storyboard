@@ -1,0 +1,26 @@
+/* SWIFT Identity Studio. Every rule is scoped to .ids and every colour is a SWIFT token. */
+.ids .ids-page { display:block; }
+.ids .ids-head { display:flex; align-items:center; gap:12px; margin-bottom:12px; }
+.ids .ids-head h2 { margin:0; }
+.ids .ids-grow { flex:1; }
+.ids .ids-lede { margin:0 0 16px; max-width:70ch; color:var(--swift-text-muted); }
+.ids label, .ids legend { display:block; font-size:12px; color:var(--swift-text-muted); margin-bottom:4px; }
+.ids .ids-new { display:flex; gap:12px; align-items:flex-end; flex-wrap:wrap; margin-bottom:18px; }
+.ids .ids-new > div { flex:1; min-width:220px; max-width:460px; }
+.ids .ids-new input { width:100%; }
+.ids .ids-list { display:flex; gap:12px; flex-wrap:wrap; }
+.ids .ids-card { width:250px; padding:12px; background:var(--swift-surface, var(--swift-slate-950)); border:1px solid var(--swift-border); border-radius:var(--swift-radius-xl); }
+.ids .ids-card b { display:block; margin-bottom:4px; color:var(--swift-text-strong); overflow-wrap:anywhere; }
+.ids .ids-acts { display:flex; gap:6px; flex-wrap:wrap; margin-top:10px; }
+.ids .ids-note { margin-top:18px; padding:10px 12px; max-width:80ch; font-size:12px; color:var(--swift-text-muted); border:1px solid var(--swift-border); border-radius:var(--swift-radius-lg); }
+.ids .ids-note b { color:var(--swift-text-strong); }
+.ids h2 { margin-top:22px; }
+.ids .ids-grid { display:grid; grid-template-columns:repeat(2, minmax(0, 1fr)); gap:12px 16px; max-width:860px; }
+.ids .ids-grid .ids-wide { grid-column:1 / -1; }
+.ids .ids-grid input:not([type=checkbox]), .ids .ids-grid select, .ids .ids-grid textarea { width:100%; }
+.ids .ids-plats { border:1px solid var(--swift-border); border-radius:var(--swift-radius-lg); padding:8px 12px; margin:0; display:flex; flex-wrap:wrap; gap:6px 18px; }
+.ids .ids-plats legend { padding:0 6px; margin:0; }
+.ids .ids-plats label { display:inline-flex; align-items:center; gap:6px; margin:0; color:var(--swift-text); font-size:13px; }
+.ids .ids-swatches { display:flex; gap:6px; margin-top:6px; min-height:22px; }
+.ids .ids-swatches i { width:22px; height:22px; border-radius:6px; border:1px solid var(--swift-ring-strong); }
+@media (max-width:760px) { .ids .ids-grid { grid-template-columns:1fr; } .ids .ids-card { width:100%; } }

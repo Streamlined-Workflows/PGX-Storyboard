@@ -117,5 +117,6 @@ def summary(project):
     """The short form used in the project list."""
     return {"id": project["id"], "name": project["name"], "description": project["description"],
             "created": project["created"], "updated": project["updated"],
-            "app_name": project["settings"]["app_name"], "concepts": len(project["concepts"]),
+            "app_name": project["settings"]["app_name"], "style": project["settings"]["style"],
+            "concepts": len(project["concepts"]),
             "references": len(project["references"]), "approved": bool(project["approved_concept_id"])}

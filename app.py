@@ -881,6 +881,8 @@ class Handler(BaseHTTPRequestHandler):
             query = {k: v[0] for k, v in urllib.parse.parse_qs(url.query).items()}
             payload = json.loads(body or b"{}") if body is not None else None
             return self.send_json(identity_api.handle(method, url.path, query, payload))
+        except json.JSONDecodeError:
+            return self.send_json({"error": "The request was not valid JSON."}, 400)
         except LookupError:
             return self.send_json({"error": "Not found"}, 404)
         except ValueError as e:
