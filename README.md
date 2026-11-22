@@ -45,6 +45,7 @@ It runs as a Docker container named `swift-director` that starts on boot (with `
 | Projects | Every saved project. Open, rename, duplicate or delete one; each keeps its own timeline, assets and clips |
 | Assets | The open project's actors, photos and audio. An actor is one character with a name, a description and any number of views (stills); photos are loose reference stills |
 | Library | Every video rendered in the open project, with download links |
+| Identity Studio | A separate workspace for logos and app identities. See [Identity Studio](#identity-studio) |
 | System status | Ping test, and CPU, GPU, memory and disk meters for the server |
 
 Each actor panel has two buttons. **Describe from images** sends up to four of the actor's views to the language model (it must be vision-capable) and writes the description. **Generate views from description** queues a close-up, a waist-up and a full-body still with FLUX.2 [dev] and the 8-step turbo LoRA, using up to three existing views as references so the new stills match; finished stills are copied into ComfyUI's input folder and added to the actor.
@@ -130,6 +131,13 @@ In Assisted Storyboard > Shots the language model also decides, for every segmen
 Click a picture (Assets, Library > Images, Assisted Storyboard key frames) to open the viewer, then **Fix an area**: paint over the problem, describe what should be there, and Generate fix. FLUX.2 repaints only the painted area (`workflows.build_fix`: noise-masked sampling with the original as reference, then pasted back through the mask). The result is saved as a new picture; the original is kept.
 
 **Hugging Face key.** If the server has no key, Check for updates first asks for a read-only Hugging Face token. It is verified with Hugging Face, then stored in `data/hf_token` (owner-only, never committed, never sent back to the browser). Skip checks everything else; models that need access show a yellow triangle and are not attempted. A key saved by `hf auth login` on the server is used automatically.
+
+## Identity Studio
+
+A workspace for logos and app identities, opened from the sidebar. It is a separate module
+(`identity_studio/` and `static/identity/`) with its own projects under `data/identity/`, and it
+does not touch storyboard projects. Today it manages identity projects and their briefs; it does
+not generate anything yet. Details: [identity_studio/README.md](identity_studio/README.md).
 
 ## SWIFT branding
 
