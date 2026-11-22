@@ -879,8 +879,22 @@ class Handler(BaseHTTPRequestHandler):
         """Hand a /api/identity/ request to the Identity Studio module, which owns everything about it."""
         try:
             query = {k: v[0] for k, v in urllib.parse.parse_qs(url.query).items()}
-            payload = json.loads(body or b"{}") if body is not None else None
-            return self.send_json(identity_api.handle(method, url.path, query, payload))
+            if method == "POST" and identity_api.wants_raw(url.path):          # an uploaded file, not JSON
+                reply = identity_api.handle(method, url.path, query, raw=body)
+            else:
+                reply = identity_api.handle(method, url.path, query, json.loads(body or b"{}") if body is not None else None)
+            if isinstance(reply, identity_api.File):
+                with open(reply.path, "rb") as f:
+                    data = f.read()
+                self.send_response(200)
+                self.send_header("Content-Type", reply.content_type)
+                self.send_header("Content-Length", str(len(data)))
+                self.send_header("X-Content-Type-Options", "nosniff")
+                self.send_header("Content-Security-Policy", "default-src 'none'; style-src 'unsafe-inline'; sandbox")
+                self.send_header("Cache-Control", "private, max-age=3600")
+                self.end_headers()
+                return self.wfile.write(data)
+            return self.send_json(reply)
         except json.JSONDecodeError:
             return self.send_json({"error": "The request was not valid JSON."}, 400)
         except LookupError:

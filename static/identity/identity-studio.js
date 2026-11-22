@@ -69,7 +69,7 @@
       </form>
       <div class="ids-list" aria-live="polite"><span class="hint">Loading…</span></div>
       <p class="hint ids-queue" aria-live="polite"></p>
-      <div class="ids-note"><b>What works today.</b> Create, open, describe, duplicate and delete identity projects, and save the brief for each one. Generating concepts, adding reference images and exporting icon sets are not built yet, so there are no buttons for them here.</div>
+      <div class="ids-note"><b>What works today.</b> Create, open, describe, duplicate and delete identity projects, and save the brief for each one. Reference images can be added inside a project. Generating concepts and exporting icon sets are not built yet, so there are no buttons for them here.</div>
     </section>`);
     root.appendChild(page); poll();
     page.querySelector('.ids-new').onsubmit = async (ev) => {
@@ -140,9 +140,13 @@
         <div class="ids-wide"><label for="idsPalette">Colours, as hex codes separated by spaces (up to 8)</label><input id="idsPalette" data-set="palette" placeholder="#22c55e #000000" value="${esc((s.palette || []).join(' '))}"><div class="ids-swatches"></div></div>
         <fieldset class="ids-wide ids-plats"><legend>Where it will be used</legend>${info.platforms.map(v => `<label><input type="checkbox" data-plat="${esc(v)}"${(s.platforms || []).includes(v) ? ' checked' : ''}> ${esc(v)}</label>`).join('')}</fieldset>
       </div>
+      <h2>Reference images</h2>
+      <p class="ids-lede">Add what you already have: a mark that must be kept exactly, such as an icon or a letterform, or pictures that show the style you want. PNG, JPEG, WebP or SVG.</p>
+      <div class="ids-refs" aria-live="polite"></div>
+      <div class="ids-drop"><label class="btn">Add reference images<input class="ids-file" type="file" accept=".png,.jpg,.jpeg,.webp,.svg,image/png,image/jpeg,image/webp,image/svg+xml" multiple hidden></label><span class="hint">or drop files here</span></div>
       <p class="hint ids-queue" aria-live="polite"></p>
       <div class="ids-jobs"></div>
-      <div class="ids-note">The brief is saved as you type. It is what later phases will read when they generate concepts; nothing is generated yet.</div>
+      <div class="ids-note">The brief is saved as you type. The brief and the reference images are what concept generation will read once it is built; nothing is generated yet.</div>
     </section>`);
     root.innerHTML = ''; root.appendChild(page); poll();
     const state = page.querySelector('.ids-state');
@@ -166,9 +170,53 @@
       catch (e) { if (state.isConnected) state.textContent = 'not saved'; say(e.message); }
     };
     const changed = () => { state.textContent = 'saving…'; swatches(); clearTimeout(saveTimer); saveTimer = setTimeout(save, 600); };
-    page.addEventListener('input', changed); page.addEventListener('change', changed);
+    const briefOnly = (ev) => { if (!ev.target.closest('.ids-refs, .ids-drop')) changed(); };
+    page.addEventListener('input', briefOnly); page.addEventListener('change', briefOnly);
+    references(page, id, p.references);
     page.querySelector('.ids-back').onclick = async () => { if (saveTimer) await save(); showList(); };
     swatches();
+  }
+
+  /* ---------- reference images: shown only inside <img>, where a browser runs no script ---------- */
+  function references(page, pid, list) {
+    const box = page.querySelector('.ids-refs'), drop = page.querySelector('.ids-drop'), input = page.querySelector('.ids-file');
+    const q = 'project=' + encodeURIComponent(pid);
+    const draw = () => {
+      box.innerHTML = list.length ? '' : '<span class="hint">No reference images yet.</span>';
+      list.forEach(r => {
+        const card = el(`<article class="ids-ref">
+          <div class="ids-thumb"><img alt="" loading="lazy" src="${API}reference?${q}&id=${esc(r.id)}"></div>
+          <b title="${esc(r.name)}">${esc(r.name)}</b>
+          <div class="hint">${esc(r.kind.toUpperCase())} · ${Math.max(1, Math.round(r.bytes / 1024))} KB${r.kind === 'svg' ? ' · vector' : ''}</div>
+          ${r.cleaned ? `<div class="hint">${r.cleaned} unsafe or unsupported part${r.cleaned === 1 ? ' was' : 's were'} removed. Check it still looks right.</div>` : ''}
+          <label>How to use it<select class="ids-use">${options(info.reference_uses, r.use)}</select></label>
+          <label>Note<input class="ids-rnote" maxlength="500" placeholder="For example: the dot of the i is a water drop" value="${esc(r.note)}"></label>
+          <div class="ids-acts"><button class="small ghost ids-rdel" type="button">Remove</button></div>
+        </article>`);
+        const put = async (body) => { try { Object.assign(r, await call('PUT', `reference?${q}&id=${r.id}`, body)); } catch (e) { say(e.message); } };
+        card.querySelector('.ids-use').onchange = (ev) => put({ use: ev.target.value });
+        card.querySelector('.ids-rnote').onchange = (ev) => put({ note: ev.target.value });
+        card.querySelector('.ids-rdel').onclick = async () => {
+          try { await call('POST', 'references/remove', { project: pid, id: r.id }); list.splice(list.indexOf(r), 1); draw(); } catch (e) { say(e.message); }
+        };
+        box.appendChild(card);
+      });
+    };
+    const add = async (files) => {
+      for (const file of files) {
+        try {
+          const r = await fetch(`${API}references?${q}&name=${encodeURIComponent(file.name)}`, { method: 'POST', headers: { 'Content-Type': 'application/octet-stream' }, body: file });
+          let j = null; try { j = await r.json(); } catch (e) { throw new Error(r.status === 413 ? 'That file is too large for the server to accept.' : 'Unexpected reply from the server (status ' + r.status + ').'); }
+          if (!r.ok || j.error) throw new Error(j.error || 'Request failed: ' + r.status);
+          list.push(j); draw();
+        } catch (e) { say(file.name + ': ' + e.message); }
+      }
+    };
+    input.onchange = () => { add([...input.files]); input.value = ''; };
+    drop.ondragover = (ev) => { ev.preventDefault(); drop.classList.add('over'); };
+    drop.ondragleave = () => drop.classList.remove('over');
+    drop.ondrop = (ev) => { ev.preventDefault(); drop.classList.remove('over'); add([...ev.dataTransfer.files]); };
+    draw();
   }
 
   window.IdentityStudio = {

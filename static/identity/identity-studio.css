@@ -27,3 +27,14 @@
 .ids .ids-queue { margin:16px 0 0; }
 .ids .ids-jobs { display:grid; gap:6px; margin-top:8px; max-width:860px; }
 .ids .ids-job { display:flex; gap:10px; align-items:center; padding:8px 10px; border:1px solid var(--swift-border); border-radius:var(--swift-radius-lg); }
+.ids .ids-refs { display:flex; gap:12px; flex-wrap:wrap; max-width:860px; }
+.ids .ids-ref { width:200px; padding:10px; display:grid; gap:6px; align-content:start; border:1px solid var(--swift-border); border-radius:var(--swift-radius-xl); }
+.ids .ids-ref b { color:var(--swift-text-strong); font-size:13px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.ids .ids-ref label { margin:0; } .ids .ids-ref select, .ids .ids-ref input { width:100%; margin-top:3px; }
+/* A checkerboard, so transparent and dark marks are both visible. */
+.ids .ids-thumb { height:150px; border-radius:var(--swift-radius-lg); display:grid; place-items:center; overflow:hidden;
+  background-color:#d4d4d8; background-image:linear-gradient(45deg,#a1a1aa 25%,transparent 25%,transparent 75%,#a1a1aa 75%),linear-gradient(45deg,#a1a1aa 25%,transparent 25%,transparent 75%,#a1a1aa 75%); background-size:16px 16px; background-position:0 0,8px 8px; }
+.ids .ids-thumb img { max-width:100%; max-height:150px; display:block; }
+.ids .ids-drop { display:flex; gap:12px; align-items:center; margin-top:12px; padding:12px; max-width:860px; border:1px dashed var(--swift-ring-strong); border-radius:var(--swift-radius-lg); }
+.ids .ids-drop.over { background:var(--swift-highlight); }
+@media (max-width:760px) { .ids .ids-ref { width:100%; } }

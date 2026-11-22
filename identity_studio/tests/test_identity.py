@@ -137,7 +137,7 @@ class ApiTests(Base):
 
     def test_info_says_what_is_not_built_yet(self):
         info = api.handle("GET", "/api/identity/info")
-        self.assertEqual(info["ready"], {"projects": True, "jobs": True, "generation": False, "references": False, "exports": False})
+        self.assertEqual(info["ready"], {"projects": True, "jobs": True, "generation": False, "references": True, "exports": False})
         self.assertIn("custom", info["styles"])
 
     def test_unknown_routes_and_missing_projects(self):
