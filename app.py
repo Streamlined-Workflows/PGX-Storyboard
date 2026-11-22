@@ -336,24 +336,29 @@ def actor_generate(pid, actor_id):
         threading.Thread(target=assist.unload, daemon=True).start()
         made = []
         for label, framing in assist.VIEW_FRAMINGS:
-            rid = new_id()
-            seed = random.randint(1, 2**31 - 1)
-            stem = f"{workflows.safe_name(actor.get('name') or 'actor')}_{workflows.safe_name(label)}_{rid}"
-            graph = workflows.build_image(assist.view_prompt(description, framing, bool(refs)), refs, seed,
-                                          prefix=f"storyboard/{project['id']}/stills/{stem}")
-            reply = comfy_json("/prompt", {"prompt": graph, "client_id": "storyboard"})
-            if reply.get("_http_error") or reply.get("node_errors") or not reply.get("prompt_id"):
-                detail = json.dumps(reply.get("node_errors") or reply.get("error") or reply)
-                if "not in" in detail and ".safetensors" in detail:
-                    raise ValueError("The FLUX.2 image model files are not on the PGX yet. " + detail[:300])
-                raise ValueError("ComfyUI rejected the image job: " + detail[:500])
-            job = {"id": rid, "prompt_id": reply["prompt_id"], "status": "queued", "kind": "actor_view",
-                   "actor_id": actor_id, "label": label, "seed": seed, "created": time.time(),
-                   "save_as": stem + ".png", "steps": workflows.IMAGE_STEPS, "passes": 1}
-            project["image_jobs"].append(job)
-            made.append(job)
-            save_project(project, touch=False)
+            stem = f"{workflows.safe_name(actor.get('name') or 'actor')}_{workflows.safe_name(label)}"
+            made.append(queue_still(project, assist.view_prompt(description, framing, bool(refs)), refs, stem,
+                                    kind="actor_view", actor_id=actor_id, label=label))
         return {"jobs": made}
+
+
+def queue_still(project, prompt, refs, stem, **fields):
+    """Queue one FLUX.2 image and record it on the project. Call with LOCK held."""
+    rid = new_id()
+    seed = random.randint(1, 2**31 - 1)
+    stem = f"{stem}_{rid}"
+    graph = workflows.build_image(prompt, refs, seed, prefix=f"storyboard/{project['id']}/stills/{stem}")
+    reply = comfy_json("/prompt", {"prompt": graph, "client_id": "storyboard"})
+    if reply.get("_http_error") or reply.get("node_errors") or not reply.get("prompt_id"):
+        detail = json.dumps(reply.get("node_errors") or reply.get("error") or reply)
+        if "not in" in detail and ".safetensors" in detail:
+            raise ValueError("The FLUX.2 image model files are not on the PGX yet. " + detail[:300])
+        raise ValueError("ComfyUI rejected the image job: " + detail[:500])
+    job = {"id": rid, "prompt_id": reply["prompt_id"], "status": "queued", "seed": seed, "created": time.time(),
+           "save_as": stem + ".png", "steps": workflows.IMAGE_STEPS, "passes": 1, **fields}
+    project["image_jobs"].append(job)
+    save_project(project, touch=False)
+    return job
 
 
 def image_jobs_clear(pid, ids):
@@ -495,6 +500,7 @@ def assist_apply_split(pid):
                                 "runs": 2, "chosen": None, "results": []} for i, s in enumerate(split)]
         project["assist"].pop("story_draft", None)
         project["assist"].pop("story", None)
+        project["assist"].pop("shots", None)
         return save_project(project)
 
 
@@ -522,6 +528,102 @@ def assist_approve_story(pid, fill_prompts):
                 if not (seg.get("prompt") or "").strip() and beats.get(seg["id"]):
                     seg["prompt"] = beats[seg["id"]]
         return save_project(project)
+
+
+def approved_story(project):
+    story = (project.get("assist") or {}).get("story")
+    if not story:
+        raise ValueError("Approve a story concept first (step 3).")
+    return story
+
+
+def cast_members(project):
+    """The chosen actors, with the role each plays: [{"name", "role", "description", "views"}]."""
+    actors = {a["id"]: a for a in project.get("actors", [])}
+    out = []
+    for entry in (project.get("assist") or {}).get("cast", []):
+        actor = actors.get(entry.get("actor_id"))
+        if actor:
+            out.append({"name": actor.get("name") or "Actor", "role": entry.get("role") or "",
+                        "description": actor.get("description") or "", "views": actor.get("views", [])})
+    return out
+
+
+def assist_cast_save(pid, cast):
+    with LOCK:
+        project = load_project(pid)
+        known = {a["id"] for a in project.get("actors", [])}
+        clean = [{"actor_id": c["actor_id"], "role": str(c.get("role") or "")[:300]} for c in cast or []
+                 if isinstance(c, dict) and c.get("actor_id") in known]
+        return update_assist(pid, cast=clean)
+
+
+def assist_recommend_cast(pid):
+    project = load_project(pid)
+    data = assist_data(project)
+    ideas = assist.recommend_cast(approved_story(project), data["analysis"], data.get("lines", []), project["segments"],
+                                  [a.get("name") for a in project.get("actors", []) if a.get("name")])
+    if not ideas:
+        raise ValueError("The language model did not suggest anyone. Try again.")
+    return update_assist(pid, cast_ideas=ideas)
+
+
+def assist_shots(pid):
+    project = load_project(pid)
+    data = assist_data(project)
+    if not project["segments"]:
+        raise ValueError("Put segments on the storyboard first (step 2).")
+    story = approved_story(project)
+    shots = assist.write_shots(story, data["analysis"], data.get("lines", []), project["segments"], cast_members(project))
+    for seg, end in zip(project["segments"], shots["ends"]):
+        end["segment_id"] = seg["id"]
+    return update_assist(pid, shots=shots)
+
+
+def assist_shots_save(pid, shots):
+    with LOCK:
+        project = load_project(pid)
+        current = (project.get("assist") or {}).get("shots")
+        if not current or not isinstance(shots, dict):
+            raise ValueError("Write the shots first.")
+        current["first"]["text"] = str((shots.get("first") or {}).get("text", current["first"]["text"]))[:1500]
+        edits = {e.get("segment_id"): e for e in shots.get("ends", []) if isinstance(e, dict)}
+        for end in current["ends"]:
+            if end.get("segment_id") in edits:
+                end["text"] = str(edits[end["segment_id"]].get("text", end["text"]))[:1500]
+        return update_assist(pid, shots=current)
+
+
+def assist_shot_images(pid, targets):
+    """Queue the key frame images. `targets` is a list of "first" and segment ids, or None for every frame."""
+    with LOCK:
+        project = load_project(pid)
+        story = approved_story(project)
+        shots = (project.get("assist") or {}).get("shots")
+        if not shots:
+            raise ValueError("Write the shots first.")
+        cast = {c["name"]: c for c in cast_members(project)}
+        segments = {s["id"]: s for s in project["segments"]}
+        if not project["segments"]:
+            raise ValueError("There are no segments on the storyboard.")
+        plan = [("first", project["segments"][0], "begin_image", shots["first"], "Opening frame")]
+        plan += [(e.get("segment_id"), segments.get(e.get("segment_id")), "end_image", e, None) for e in shots["ends"]]
+        busy = {(j.get("segment_id"), j.get("slot")) for j in project["image_jobs"] if j.get("kind") == "shot" and j.get("status") in PENDING}
+        threading.Thread(target=assist.unload, daemon=True).start()
+        made = []
+        for key, seg, slot, shot, label in plan:
+            if not seg or not (shot.get("text") or "").strip() or (targets is not None and key not in targets) or (seg["id"], slot) in busy:
+                continue
+            people = [cast[n] for n in shot.get("who", []) if n in cast and cast[n]["views"]][:4]
+            refs = [next((v for v in c["views"] if "waist" in (v.get("label") or "").lower()), c["views"][0])["image"] for c in people]
+            label = label or f"{seg.get('name') or 'Segment'} end"
+            project["image_jobs"] = [j for j in project["image_jobs"] if not (j.get("kind") == "shot" and j.get("status") == "error"
+                                                                           and j.get("segment_id") == seg["id"] and j.get("slot") == slot)]
+            made.append(queue_still(project, assist.shot_prompt(shot["text"], story.get("style", ""), people), refs,
+                                    workflows.safe_name(label), kind="shot", segment_id=seg["id"], slot=slot, label=label))
+        if not made:
+            raise ValueError("Nothing to generate: those frames are already being made, or have no description.")
+        return {"jobs": made}
 
 
 # ---------- system status ----------
@@ -746,6 +848,16 @@ class Handler(BaseHTTPRequestHandler):
                 return self.send_json(assist_story(pid, payload.get("direction"), payload.get("style"), bool(payload.get("another"))))
             if path == "/api/assist/approve_story":
                 return self.send_json(assist_approve_story(pid, bool(payload.get("fill_prompts", True))))
+            if path == "/api/assist/cast":
+                return self.send_json(assist_cast_save(pid, payload.get("cast")))
+            if path == "/api/assist/recommend_cast":
+                return self.send_json(assist_recommend_cast(pid))
+            if path == "/api/assist/shots":
+                return self.send_json(assist_shots(pid))
+            if path == "/api/assist/shots_save":
+                return self.send_json(assist_shots_save(pid, payload.get("shots")))
+            if path == "/api/assist/shot_images":
+                return self.send_json(assist_shot_images(pid, payload.get("targets")))
             if path == "/api/render":
                 return self.send_json({"results": render_segment(pid, payload.get("segment_id"), payload.get("runs"))})
             if path == "/api/render_all":

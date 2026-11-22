@@ -107,10 +107,17 @@
   .model .mname { font-weight:600; } .model .mfile { color:var(--dim); font:11px ui-monospace,Consolas,monospace; word-break:break-all; }
   .model .muse { font-style:italic; color:var(--dim); margin-top:3px; max-width:78ch; }
   .model .mstate { font-size:12px; margin-top:4px; } .model .mstate.bad { color:var(--accent); } .model .mstate.good { color:var(--ok); }
-  .model .mbar { height:5px; background:var(--bg); border-radius:3px; overflow:hidden; margin-top:5px; max-width:340px; }
-  .model .mbar i { display:block; height:100%; background:var(--accent2); transition:width .4s; }
+  .mbar { height:5px; background:var(--bg); border-radius:3px; overflow:hidden; margin-top:5px; max-width:340px; }
+  .mbar i { display:block; height:100%; background:var(--accent2); transition:width .4s; }
   .meter .track i { display:block; height:100%; width:0; background:var(--ok); transition:width .5s, background .5s; }
   .step { counter-increment:step; }
+  .castrow { display:grid; grid-template-columns:22px 54px 150px 1fr; gap:10px; align-items:center; padding:7px 0; border-top:1px solid var(--line); }
+  .castrow img, .castrow .noimg { width:54px; height:54px; object-fit:cover; border-radius:6px; background:var(--bg); border:1px solid var(--line); }
+  .castrow input[type=text] { width:100%; }
+  .idea { background:var(--panel2); border:1px solid var(--line); border-radius:8px; padding:10px 12px; margin-top:8px; }
+  .keyframe { display:grid; grid-template-columns:150px 1fr 200px; gap:12px; padding:10px 0; border-top:1px solid var(--line); align-items:start; }
+  .keyframe textarea { width:100%; min-height:84px; }
+  .keyframe img, .keyframe .noimg { width:200px; aspect-ratio:16/9; object-fit:cover; border-radius:6px; background:var(--bg); border:1px solid var(--line); display:block; }
   .step h2::before { content:counter(step) ". "; }
   #v-assist { counter-reset:step; }
   .lyric { display:flex; gap:8px; align-items:center; margin-bottom:4px; }
@@ -205,8 +212,14 @@
       </div>
       <div id="storyOut" class="hint" style="margin-top:10px">Uses the lyrics, the energy of each section and the segments on your storyboard.</div>
     </section>
-    <section class="step"><h2>Cast</h2><div class="hint">Coming next: choose actors from Assets for the story, or ask for recommended characters.</div></section>
-    <section class="step"><h2>Shots</h2><div class="hint">Coming next: write the first frame and every end frame from each segment's lyrics, beat and story beat, then generate the images.</div></section>
+    <section class="step">
+      <div class="row" style="margin-bottom:8px"><h2 style="margin:0">Cast</h2><span class="spacer"></span><span id="castStatus" class="hint"></span><button id="castRecBtn">Recommend characters</button></div>
+      <div id="castOut" class="hint">Choose which of your actors appear in this story, or ask for recommended characters.</div>
+    </section>
+    <section class="step">
+      <div class="row" style="margin-bottom:8px"><h2 style="margin:0">Shots</h2><span class="spacer"></span><span id="shotsStatus" class="hint"></span><button id="shotsBtn" class="primary">Write the shots</button><button id="shotsGenBtn" style="display:none">Generate all images</button></div>
+      <div id="shotsOut" class="hint">Writes the opening frame and the end frame of every segment from its lyrics, beat and story beat. Then generates the images and puts them on the storyboard.</div>
+    </section>
   </div>
 
   <!-- ===== Projects ===== -->
@@ -341,6 +354,11 @@ function mergeJobs(fresh) {
   const taken = [];
   for (const j of jobs) {
     if (j.status !== 'done' || !j.image) continue;
+    if (j.kind === 'shot') {
+      const seg = P.segments.find(x => x.id === j.segment_id);
+      if (seg) seg[j.slot] = j.image;
+      if (!P.photos.some(ph => ph.image === j.image)) P.photos.push({ id: uid(), name: j.label || 'Shot', image: j.image });
+    }
     const a = P.actors.find(x => x.id === j.actor_id);
     if (a && !a.views.some(v => v.image === j.image)) a.views.push({ id: uid(), image: j.image, label: j.label });
     taken.push(j.id);
@@ -904,7 +922,7 @@ $('libPicked').onclick = () => { libPickedOnly = true; $('libPicked').classList.
 /* ---------- live progress from ComfyUI ---------- */
 const prog = {};   // prompt_id -> { pass, value, max }
 function findResult(pid) { for (const s of P.segments) for (const r of (s.results || [])) if (r.prompt_id === pid) return r; return (P.image_jobs || []).find(j => j.prompt_id === pid) || null; }
-function redrawClips() { if (currentView === 'library') renderLibrary(); else if (currentView === 'storyboard') renderSegments(); else if (currentView === 'assets') renderAssets(); }
+function redrawClips() { if (currentView === 'library') renderLibrary(); else if (currentView === 'storyboard') renderSegments(); else if (currentView === 'assets') renderAssets(); else if (currentView === 'assist') renderShots(); }
 
 function onProgress(d) {
   const r = findResult(d.prompt_id); if (!r) return;
@@ -1029,7 +1047,97 @@ async function renderAssist() {
       `<span class="hint">Approving copies each line into its segment's video prompt, where that prompt is still empty.</span></div>`;
     if (!approved) $('storyOk').onclick = async () => { try { await save(); await post('/api/assist/approve_story', { project: PID, fill_prompts: true }); await openProject(PID); show('assist'); toast('Story approved. Prompts are filled in on the storyboard.'); } catch (e) { toast(e.message); } };
   } else { $('storyBtn').textContent = 'Write story concept'; $('storyOut').className = 'hint'; $('storyOut').textContent = 'Uses the lyrics, the energy of each section and the segments on your storyboard.'; }
+  renderCast(); renderShots();
 }
+
+/* ----- step 4: cast ----- */
+let castTimer = null;
+function saveCast() { clearTimeout(castTimer); castTimer = setTimeout(() => post('/api/assist/cast', { project: PID, cast: A().cast || [] }).catch(e => toast(e.message)), 500); }
+function renderCast() {
+  const out = $('castOut'), ready = !!A().story; $('castRecBtn').disabled = !ready;
+  if (!ready) { out.className = 'hint'; out.textContent = 'Approve a story concept first. Then choose which of your actors appear in it, or ask for recommended characters.'; return; }
+  P.assist.cast ||= [];
+  const cast = P.assist.cast; out.className = ''; out.textContent = '';
+  out.append(node('div', 'hint', P.actors.length ? 'Tick the actors who appear in this story and say who each one plays. Their pictures are used as references when the shots are generated.'
+    : 'This project has no actors yet. Add one in Assets (switch Assets to All to bring one in from another project), or press Recommend characters.'));
+  P.actors.forEach(a => {
+    const row = node('div', 'castrow'), entry = cast.find(c => c.actor_id === a.id);
+    const tick = node('input'); tick.type = 'checkbox'; tick.checked = !!entry;
+    const pic = a.views[0] ? node('img') : node('div', 'noimg'); if (a.views[0]) pic.src = view(a.views[0].image);
+    const role = node('input'); role.type = 'text'; role.placeholder = 'Who they play, e.g. the pilot, the one singing'; role.value = entry ? entry.role || '' : ''; role.disabled = !entry;
+    tick.onchange = () => { if (tick.checked) cast.push({ actor_id: a.id, role: role.value }); else cast.splice(cast.findIndex(c => c.actor_id === a.id), 1); role.disabled = !tick.checked; saveCast(); };
+    role.oninput = () => { const c = cast.find(c => c.actor_id === a.id); if (c) { c.role = role.value; saveCast(); } };
+    const name = node('div'); name.append(node('b', '', a.name || 'Actor'));
+    if (!a.views.length) name.append(node('div', 'warn', 'No pictures yet'));
+    row.append(tick, pic, name, role); out.append(row);
+  });
+  (A().cast_ideas || []).forEach(idea => {
+    const box = node('div', 'idea'), head = node('div', 'row'), have = P.actors.some(a => (a.name || '').toLowerCase() === idea.name.toLowerCase());
+    const add = node('button', 'small', have ? 'Added' : 'Add as actor'); add.disabled = have;
+    add.onclick = async () => {
+      const actor = { id: uid(), name: idea.name, description: idea.description, views: [] };
+      P.actors.push(actor); cast.push({ actor_id: actor.id, role: idea.role });
+      try { await save(); await post('/api/assist/cast', { project: PID, cast }); } catch (e) { toast(e.message); }
+      renderCast(); toast(idea.name + ' added. Open Assets and press Generate views to give them a face.');
+    };
+    head.append(node('b', '', idea.name), node('span', 'hint', 'Suggested'), node('span', 'spacer'), add);
+    box.append(head, node('div', '', idea.role), node('div', 'hint', idea.description)); out.append(box);
+  });
+}
+$('castRecBtn').onclick = () => busy($('castRecBtn'), $('castStatus'), 'Reading the story… this usually takes under a minute.', async () => { await save(); await post('/api/assist/recommend_cast', { project: PID }); await reloadProject(); renderCast(); });
+
+/* ----- step 5: shots ----- */
+let shotsTimer = null;
+function saveShots() { clearTimeout(shotsTimer); shotsTimer = setTimeout(() => post('/api/assist/shots_save', { project: PID, shots: A().shots }).catch(e => toast(e.message)), 700); }
+async function makeShots(targets, btn) {
+  const rows = shotRows().filter(r => !targets || targets.includes(r.key));
+  if (!targets && rows.some(r => r.seg[r.slot]) && !confirm('Some of these shots already have a picture. Replace them all?')) return;
+  await busy(btn, $('shotsStatus'), 'Sending to the PGX…', async () => {
+    clearTimeout(shotsTimer); await save(); await post('/api/assist/shots_save', { project: PID, shots: A().shots });
+    await post('/api/assist/shot_images', { project: PID, targets: targets || null }); await poll(true); renderShots();
+  });
+}
+function shotRows() {
+  const shots = A().shots; if (!shots || !P.segments.length) return [];
+  const rows = [{ key: 'first', seg: P.segments[0], slot: 'begin_image', shot: shots.first, title: 'Opening frame', sub: 'Begin shot of segment 1' }];
+  shots.ends.forEach(e => { const i = P.segments.findIndex(s => s.id === e.segment_id); if (i >= 0) rows.push({ key: e.segment_id, seg: P.segments[i], slot: 'end_image', shot: e,
+    title: `${i + 1}. ${P.segments[i].name}`, sub: 'End shot' + (i + 1 < P.segments.length ? `, and where segment ${i + 2} begins` : '') }); });
+  return rows;
+}
+function renderShots() {
+  const out = $('shotsOut'), ready = !!A().story, rows = shotRows();
+  if (out.contains(document.activeElement) && document.activeElement.tagName === 'TEXTAREA') return;      // do not redraw under someone typing
+  $('shotsBtn').disabled = !ready; $('shotsBtn').textContent = rows.length ? 'Rewrite the shots' : 'Write the shots';
+  $('shotsBtn').className = rows.length ? '' : 'primary'; $('shotsGenBtn').style.display = rows.length ? '' : 'none'; $('shotsGenBtn').className = 'primary';
+  if (!rows.length) { out.className = 'hint'; out.textContent = ready ? 'Writes the opening frame and the end frame of every segment from its lyrics, beat and story beat. Then generates the images and puts them on the storyboard.' : 'Approve a story concept first.'; return; }
+  out.className = ''; out.textContent = '';
+  out.append(node('div', 'hint', 'Edit any description before generating. Each end frame is also where the next segment starts, so the video carries through from shot to shot.'));
+  rows.forEach(r => {
+    const row = node('div', 'keyframe'), left = node('div'), mid = node('div'), right = node('div');
+    left.append(node('b', '', r.title), node('div', 'hint', r.sub));
+    if (r.shot.who && r.shot.who.length) left.append(node('div', 'hint', 'In frame: ' + r.shot.who.join(', ')));
+    const text = node('textarea'); text.value = r.shot.text || ''; text.oninput = () => { r.shot.text = text.value; saveShots(); };
+    mid.append(text);
+    const job = (P.image_jobs || []).filter(j => j.kind === 'shot' && j.segment_id === r.seg.id && j.slot === r.slot).pop();
+    const pic = r.seg[r.slot] ? node('img') : node('div', 'noimg'); if (r.seg[r.slot]) pic.src = view(r.seg[r.slot]);
+    right.append(pic);
+    if (job && job.status !== 'done') {
+      const state = node('div', job.status === 'error' ? 'err' : 'busy', job.status === 'error' ? 'Failed: ' + (job.error || 'unknown error') : job.status === 'running' ? 'Generating…' : 'Waiting in the queue…');
+      state.style.fontSize = '12px'; state.id = 'pt-' + job.id; right.append(state);
+      if (job.status !== 'error') { const bar = node('div', 'mbar'), fill = node('i'); fill.id = 'pb-' + job.id; fill.style.width = '0'; bar.append(fill); right.append(bar); }
+    }
+    if (!job || job.status === 'error' || job.status === 'done') {
+      const b = node('button', 'small', r.seg[r.slot] ? 'Generate again' : 'Generate'); b.style.marginTop = '6px';
+      b.onclick = () => makeShots([r.key], b); right.append(b);
+    }
+    row.append(left, mid, right); out.append(row);
+  });
+}
+$('shotsBtn').onclick = () => {
+  if (A().shots && !confirm('Rewrite every shot description? Your edits to them will be replaced.')) return;
+  busy($('shotsBtn'), $('shotsStatus'), 'Planning the frames… this can take a couple of minutes.', async () => { clearTimeout(castTimer); await save(); await post('/api/assist/cast', { project: PID, cast: A().cast || [] }); await post('/api/assist/shots', { project: PID }); await reloadProject(); renderShots(); });
+};
+$('shotsGenBtn').onclick = () => makeShots(null, $('shotsGenBtn'));
 
 async function pollAnalysis() {
   clearTimeout(anTimer);
