@@ -16,7 +16,23 @@ MIN_LEN, MAX_LEN, IDEAL_LEN = 5.0, 15.0, 9.0
 
 # ---------- language model ----------
 
-def chat(system, user, schema, think=True, temperature=0.7, timeout=420, images=None):
+def chat(system, user, schema, think=True, temperature=0.7, timeout=420, images=None, ctx=16384):
+    """Ask the local model for JSON matching `schema`; see _chat. If the reply is cut off or empty (usually because
+    its private reasoning used up the room), ask once more without the reasoning step and with more room."""
+    try:
+        return _chat(system, user, schema, think, temperature, timeout, images, ctx)
+    except IncompleteReply:
+        try:
+            return _chat(system, user, schema, False, temperature, timeout, images, max(ctx, 32768))
+        except IncompleteReply as e:
+            raise ValueError(str(e))
+
+
+class IncompleteReply(ValueError):
+    pass
+
+
+def _chat(system, user, schema, think, temperature, timeout, images, ctx):
     """Ask the local model for JSON matching `schema`. Raises ValueError with a readable message.
 
     `images` is an optional list of base64-encoded images for the model to look at.
@@ -25,7 +41,7 @@ def chat(system, user, schema, think=True, temperature=0.7, timeout=420, images=
     if images:
         message["images"] = images
     payload = {"model": MODEL, "stream": False, "think": think, "format": schema, "keep_alive": "5m",
-               "options": {"temperature": temperature, "num_ctx": 16384},
+               "options": {"temperature": temperature, "num_ctx": ctx, "num_predict": -1},
                "messages": [{"role": "system", "content": system}, message]}
     req = urllib.request.Request(OLLAMA + "/api/chat", data=json.dumps(payload).encode(),
                                  headers={"Content-Type": "application/json"})
@@ -43,7 +59,11 @@ def chat(system, user, schema, think=True, temperature=0.7, timeout=420, images=
     try:
         return json.loads(content)
     except ValueError:
-        raise ValueError("The language model's reply was not usable. Try again.")
+        why = ("it ran out of room before finishing" if reply.get("done_reason") == "length" else
+               "it returned nothing" if not content.strip() else "its answer was not complete")
+        raise IncompleteReply(f"The language model's reply was not usable: {why} "
+                              f"({reply.get('prompt_eval_count', '?')} tokens in, {reply.get('eval_count', '?')} out, "
+                              f"stopped: {reply.get('done_reason', '?')}). Try again.")
 
 
 def unload():
@@ -380,7 +400,7 @@ def write_shots(story, analysis, lines, segments, cast):
     people = "\n".join(f'- {c["name"]}: {c.get("role") or "cast member"}. Looks: {c.get("description") or "not described"}' for c in cast)
     user = (story_header(story) + "\n\nCast:\n" + (people or "(none chosen: describe the people the story needs)") +
             f"\n\nSegments ({len(segments)}):\n" + story_listing(story, analysis, lines, segments))
-    out = chat(system, user, schema, think=True, temperature=0.7, timeout=600)
+    out = chat(system, user, schema, think=True, temperature=0.7, timeout=900, ctx=32768)     # one long answer: a frame or two per segment
 
     def clean(f):
         f = f if isinstance(f, dict) else {}
