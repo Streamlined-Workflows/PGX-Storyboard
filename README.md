@@ -45,6 +45,7 @@ It runs as a Docker container named `swift-director` that starts on boot (with `
 | Projects | Every saved project. Open, rename, duplicate or delete one; each keeps its own timeline, assets and clips |
 | Assets | The open project's actors, photos and audio. An actor is one character with a name, a description and any number of views (stills); photos are loose reference stills |
 | Library | Every video rendered in the open project, with download links |
+| Lore | Long background text about a setting (world, factions, people, technology, look). Each entry can be tagged to any number of storyboards |
 | Identity Studio | A separate workspace for logos and app identities. See [Identity Studio](#identity-studio) |
 | System status | Ping test, and CPU, GPU, memory and disk meters for the server. Under the meters, a list of what is using memory and the GPU: the models Ollama and ComfyUI have loaded, and the largest programs on the server |
 
@@ -131,6 +132,20 @@ In Assisted Storyboard > Shots the language model also decides, for every segmen
 Click a picture (Assets, Library > Images, Assisted Storyboard key frames) to open the viewer, then **Fix an area**: paint over the problem, describe what should be there, and Generate fix. FLUX.2 repaints only the painted area (`workflows.build_fix`: noise-masked sampling with the original as reference, then pasted back through the mask). The result is saved as a new picture; the original is kept.
 
 **Hugging Face key.** If the server has no key, Check for updates first asks for a read-only Hugging Face token. It is verified with Hugging Face, then stored in `data/hf_token` (owner-only, never committed, never sent back to the browser). Skip checks everything else; models that need access show a yellow triangle and are not attempted. A key saved by `hf auth login` on the server is used automatically.
+
+## Lore
+
+Lore entries are stored on their own in `data/lore/<id>.json` and belong to no single project; a
+storyboard lists the entries it uses. When Assisted Storyboard writes the story concept, recommends
+the cast or plans the shots, the tagged entries are added to the request as background, with the
+instruction to stay consistent with them and not to try to show all of it. Up to 12,000
+characters per storyboard are sent, in the order tagged, so the most important text should come
+first. Deleting an entry moves it to `data/trash/`.
+
+In the story concept (step 3) every line of "What we see" can be edited, and locked. A locked line
+cannot be edited, and **Write another** keeps locked lines word for word and writes the rest of
+the story around them. Editing a line of an approved story also updates the approved copy, and
+the segment's video prompt if that prompt was still the copied line.
 
 ## Identity Studio
 

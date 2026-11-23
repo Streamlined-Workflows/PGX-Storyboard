@@ -23,6 +23,7 @@ import uuid
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 import assist
+import lore
 import usage
 import models
 from identity_studio import api as identity_api
@@ -73,6 +74,7 @@ def normalize(project):
     project.setdefault("audio", [])
     project.setdefault("photos", [])
     project.setdefault("image_jobs", [])
+    project.setdefault("lore", [])               # ids of the lore entries tagged to this storyboard
     if "generated" not in project:          # the Library's record of every picture made here; older projects are rebuilt from what survives
         made = re.compile(r"_[0-9a-f]{8}\.png$")
         found = [{"image": v["image"], "label": f"{a.get('name') or 'Actor'} · {v.get('label') or 'view'}", "kind": "actor_view", "actor_id": a.get("id")}
@@ -639,10 +641,72 @@ def assist_story(pid, direction, style, another):
     data = assist_data(project)
     if not project["segments"]:
         raise ValueError("Put segments on the storyboard first (step 2).")
-    previous = (data.get("story_draft") or {}).get("logline") if another else None
-    draft = assist.write_story(data["analysis"], data.get("lines", []), project["segments"], direction or "", style or "", previous)
-    draft["segment_ids"] = [s["id"] for s in project["segments"]]
+    old = data.get("story_draft") or {}
+    previous = old.get("logline") if another else None
+    ids = [s["id"] for s in project["segments"]]
+    was = dict(zip(old.get("segment_ids", []), old.get("beats", [])))
+    locks = [sid for sid in old.get("locks", []) if sid in ids and (was.get(sid) or "").strip()]     # locked beats survive a rewrite
+    draft = assist.write_story(data["analysis"], data.get("lines", []), project["segments"], direction or "", style or "", previous,
+                               lore=lore.for_model(project.get("lore"))[0], keep={ids.index(sid): was[sid] for sid in locks})
+    draft["segment_ids"], draft["locks"] = ids, locks
     return update_assist(pid, story_draft=draft)
+
+
+def assist_story_beat(pid, segment_id, text=None, locked=None):
+    """Edit or lock one line of the story concept. A locked line cannot be edited and is kept when the story is rewritten."""
+    with LOCK:
+        project = load_project(pid)
+        draft = (project.get("assist") or {}).get("story_draft")
+        if not draft or segment_id not in draft.get("segment_ids", []):
+            raise ValueError("That line of the story no longer exists. Reload the page.")
+        i = draft["segment_ids"].index(segment_id)
+        locks = [s for s in draft.get("locks", []) if s in draft["segment_ids"]]
+        approved = project["assist"].get("story")
+        same = bool(approved) and approved.get("logline") == draft.get("logline") and approved.get("segment_ids") == draft["segment_ids"]
+        if text is not None:
+            if segment_id in locks and locked is not False:
+                raise ValueError("That line is locked. Unlock it to edit it.")
+            new, before = str(text).strip()[:1200], draft["beats"][i]
+            draft["beats"][i] = new
+            if same:                                              # an approved story follows the edit, and so does a prompt that was copied from it
+                approved["beats"][i] = new
+                for seg in project["segments"]:
+                    if seg["id"] == segment_id and (seg.get("prompt") or "").strip() == before.strip() and before.strip():
+                        seg["prompt"] = new
+        if locked is True and segment_id not in locks:
+            locks.append(segment_id)
+        if locked is False and segment_id in locks:
+            locks.remove(segment_id)
+        draft["locks"] = locks
+        if same:
+            approved["locks"] = list(locks)
+        return save_project(project, touch=False)
+
+
+def lore_listing():
+    """Every lore entry, with the storyboards that use it."""
+    projects = list_projects()
+    using = {}
+    for p in projects:
+        try:
+            for lid in load_project(p["id"]).get("lore", []):
+                using.setdefault(lid, []).append(p["id"])
+        except ValueError:
+            continue
+    return {"entries": [dict(e, projects=using.get(e["id"], [])) for e in lore.entries()],
+            "storyboards": [{"id": p["id"], "name": p["name"]} for p in projects], "budget": lore.BUDGET}
+
+
+def lore_tag(lid, pid, on):
+    with LOCK:
+        lore.load(lid)
+        project = load_project(pid)
+        tagged = [x for x in project.get("lore", []) if x != lid]
+        if on:
+            tagged.append(lid)
+        project["lore"] = tagged
+        save_project(project, touch=False)
+    return lore_listing()
 
 
 def assist_approve_story(pid, fill_prompts):
@@ -692,7 +756,7 @@ def assist_recommend_cast(pid):
     project = load_project(pid)
     data = assist_data(project)
     ideas = assist.recommend_cast(approved_story(project), data["analysis"], data.get("lines", []), project["segments"],
-                                  [a.get("name") for a in project.get("actors", []) if a.get("name")])
+                                  [a.get("name") for a in project.get("actors", []) if a.get("name")], lore=lore.for_model(project.get("lore"))[0])
     if not ideas:
         raise ValueError("The language model did not suggest anyone. Try again.")
     return update_assist(pid, cast_ideas=ideas)
@@ -704,7 +768,8 @@ def assist_shots(pid):
     if not project["segments"]:
         raise ValueError("Put segments on the storyboard first (step 2).")
     story = approved_story(project)
-    shots = assist.write_shots(story, data["analysis"], data.get("lines", []), project["segments"], cast_members(project))
+    shots = assist.write_shots(story, data["analysis"], data.get("lines", []), project["segments"], cast_members(project),
+                               lore=lore.for_model(project.get("lore"))[0])
     for seg, end in zip(project["segments"], shots["ends"]):
         end["segment_id"] = seg["id"]
     old = (load_project(pid).get("assist") or {}).get("shots") or {}       # locked frames survive a rewrite, words and all
@@ -963,6 +1028,8 @@ class Handler(BaseHTTPRequestHandler):
                 return self.send_json({"ok": True, "time": time.time()})
             if url.path == "/api/system":
                 return self.send_json(system_status())
+            if url.path == "/api/lore":
+                return self.send_json(lore_listing())
             if url.path == "/api/system/usage":
                 return self.send_json(usage.report())
             if url.path == "/api/models":
@@ -1064,6 +1131,16 @@ class Handler(BaseHTTPRequestHandler):
                 return self.send_json(assist_apply_split(pid))
             if path == "/api/assist/story":
                 return self.send_json(assist_story(pid, payload.get("direction"), payload.get("style"), bool(payload.get("another"))))
+            if path == "/api/assist/story_beat":
+                return self.send_json(assist_story_beat(pid, payload.get("segment_id"), payload.get("text"), payload.get("locked")))
+            if path == "/api/lore/save":
+                lore.save(payload.get("id") or "", payload.get("title"), payload.get("text"))
+                return self.send_json(lore_listing())
+            if path == "/api/lore/delete":
+                lore.delete(payload.get("id") or "")
+                return self.send_json(lore_listing())
+            if path == "/api/lore/tag":
+                return self.send_json(lore_tag(payload.get("id") or "", pid, payload.get("on") is True))
             if path == "/api/assist/approve_story":
                 return self.send_json(assist_approve_story(pid, bool(payload.get("fill_prompts", True))))
             if path == "/api/assist/cast":

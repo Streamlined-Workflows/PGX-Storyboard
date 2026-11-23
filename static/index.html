@@ -109,6 +109,10 @@
   .meters { display:grid; grid-template-columns:repeat(auto-fit,minmax(210px,1fr)); gap:14px; }
   .meter { background:var(--panel2); border:1px solid var(--line); border-radius:10px; padding:14px; }
   .meter .val { font-size:28px; font-weight:700; font-variant-numeric:tabular-nums; }
+  table.beats textarea.beat { width:100%; min-height:44px; } table.beats td:last-child { white-space:nowrap; vertical-align:top; }
+  .lore { border:1px solid var(--line); border-radius:12px; padding:14px; margin-bottom:14px; display:grid; gap:8px; }
+  .lore .loretitle { font-size:16px; font-weight:700; width:100%; } .lore textarea { width:100%; min-height:200px; line-height:1.5; }
+  .loretags { display:flex; gap:6px 16px; flex-wrap:wrap; align-items:center; } .loretag { display:inline-flex; gap:6px; align-items:center; margin:0; font-size:13px; }
   .usehead { margin:18px 0 8px; font-size:14px; } .usesub { margin:12px 0 2px; font-size:12px; letter-spacing:.08em; text-transform:uppercase; color:var(--dim); }
   .userow { display:flex; gap:14px; align-items:flex-start; justify-content:space-between; padding:9px 0; border-top:1px solid var(--line); }
   .userow .useamt { font-weight:700; font-variant-numeric:tabular-nums; white-space:nowrap; }
@@ -260,6 +264,7 @@
   <button data-view="projects">Projects</button>
   <button data-view="assets">Assets</button>
   <button data-view="library">Library</button>
+  <button data-view="lore">Lore</button>
   <button data-view="identity">Identity Studio</button>
   <button data-view="system">System status</button>
   <div class="foot" id="navFoot"></div>
@@ -333,6 +338,7 @@
         <div style="flex:1;min-width:240px"><label>Visual style (optional)</label><input id="storyStyle" style="width:100%" placeholder="e.g. stylized 3D animated film, neon and smoke"></div>
         <button id="storyBtn" class="primary">Write story concept</button>
       </div>
+      <div id="storyLore" class="hint" style="margin-top:8px"></div>
       <div id="storyOut" class="hint" style="margin-top:10px">Uses the lyrics, the energy of each section and the segments on your storyboard.</div>
     </section>
     <section class="step">
@@ -342,6 +348,15 @@
     <section class="step">
       <div class="row" style="margin-bottom:8px"><h2 style="margin:0">Shots</h2><span class="spacer"></span><span id="shotsStatus" class="hint"></span><button id="shotsBtn" class="primary">Write the shots</button><button id="shotsGenBtn" style="display:none">Generate all images</button></div>
       <div id="shotsOut" class="hint">Writes the opening frame and the end frame of every segment from its lyrics, beat and story beat. Then generates the images and puts them on the storyboard.</div>
+    </section>
+  </div>
+
+  <!-- ===== Lore ===== -->
+  <div id="v-lore" class="view">
+    <section>
+      <div class="row" style="margin-bottom:8px"><h2 style="margin:0">Lore</h2><span class="spacer"></span><button id="loreNew" class="primary">New lore entry</button></div>
+      <div class="hint" id="loreNote">Background about a setting: its world, factions, people, technology, history and look. Write it once, then tag it to every storyboard set there. Assisted Storyboard gives tagged lore to the language model when it writes the story, recommends the cast and plans the shots.</div>
+      <div id="loreList" style="margin-top:14px"></div>
     </section>
   </div>
 
@@ -610,6 +625,7 @@ function show(name) {
   if (name === 'system') { refreshSystem(); refreshUsage(); loadModels(); if (window.IdentityStudio) window.IdentityStudio.showModels($('identityModels')); }
   if (name === 'storyboard') { renderSegments(); }
   if (name === 'identity' && window.IdentityStudio) window.IdentityStudio.show();
+  if (name === 'lore') renderLore();
   headerTitle();
 }
 /* In Identity Studio the header names the identity project, not the open storyboard (which that box would rename). */
@@ -1236,7 +1252,7 @@ $('renderAll').onclick = async ev => {
 /* ---------- assisted storyboard ---------- */
 let anTimer = null;
 const A = () => P.assist || {};
-async function reloadProject() { const fresh = await api('/api/project?id=' + PID); P.assist = fresh.assist; return fresh; }
+async function reloadProject() { const fresh = await api('/api/project?id=' + PID); P.assist = fresh.assist; P.lore = fresh.lore; return fresh; }
 async function busy(btn, statusEl, label, fn) {
   const tone = t => { statusEl.classList.remove('hint', 'busy', 'err'); statusEl.classList.add(t); };
   const old = btn.textContent; btn.disabled = true; tone('busy'); statusEl.textContent = label;
@@ -1274,15 +1290,28 @@ async function renderAssist() {
       try { await save(); await post('/api/assist/apply_split', { project: PID }); await openProject(PID); show('assist'); toast('Segments are on the storyboard.'); } catch (e) { toast(e.message); }
     };
   } else { $('splitOut').className = 'hint'; $('splitOut').textContent = 'Cuts land on bar lines, avoid cutting through a sung line, and stay between 5 and 15 seconds.'; }
+  loreLine();
   const story = A().story_draft, approved = A().story && story && A().story.logline === story.logline;
   if (story) {
     $('storyBtn').textContent = 'Write another';
     $('storyOut').className = 'story';
     $('storyOut').innerHTML = `<b>${esc(story.title)}</b><div>${esc(story.logline)}</div><div class="hint" style="margin:6px 0 10px">${esc(story.style)}</div>` +
-      `<table class="plan"><tr><th>#</th><th>Segment</th><th>What we see</th></tr>` +
-      story.beats.map((b, i) => { const seg = P.segments.find(s => s.id === (story.segment_ids || [])[i]); return `<tr><td>${i + 1}</td><td>${esc(seg ? seg.name : 'Segment ' + (i + 1))}</td><td>${esc(b)}</td></tr>`; }).join('') +
-      `</table><div class="row">` + (approved ? '<span class="pill ok">Approved</span>' : '<button id="storyOk" class="primary">Approve this story</button>') +
+      `<table class="plan beats"><tr><th>#</th><th>Segment</th><th>What we see</th><th></th></tr>` +
+      story.beats.map((b, i) => { const sid = (story.segment_ids || [])[i], seg = P.segments.find(s => s.id === sid), locked = (story.locks || []).includes(sid);
+        return `<tr data-sid="${esc(sid || '')}"><td>${i + 1}</td><td>${esc(seg ? seg.name : 'Segment ' + (i + 1))}</td><td>${locked ? esc(b) : `<textarea class="beat" rows="2" aria-label="What we see in segment ${i + 1}">${esc(b)}</textarea>`}</td>` +
+          `<td><button class="small beatlock${locked ? ' locked' : ''}" aria-pressed="${locked}" title="${locked ? 'Unlock to edit this line' : 'Lock this line: it cannot be edited, and Write another keeps it'}">${locked ? 'Locked' : 'Lock'}</button></td></tr>`; }).join('') +
+      `</table><div class="hint" style="margin:6px 0 10px">Edit any unlocked line. Lock the lines you are happy with: Write another keeps locked lines word for word and rewrites the rest around them.</div><div class="row">` + (approved ? '<span class="pill ok">Approved</span>' : '<button id="storyOk" class="primary">Approve this story</button>') +
       `<span class="hint">Approving copies each line into its segment's video prompt, where that prompt is still empty.</span></div>`;
+    $('storyOut').querySelectorAll('tr[data-sid]').forEach(tr => {
+      const sid = tr.dataset.sid, send = async (body) => {
+        try { const fresh = await post('/api/assist/story_beat', { project: PID, segment_id: sid, ...body }); P.assist = fresh.assist;
+          const now = fresh.segments.find(s => s.id === sid), mine = P.segments.find(s => s.id === sid); if (now && mine) mine.prompt = now.prompt; return true; }   /* a prompt copied from this line follows the edit */
+        catch (e) { toast(e.message); return false; }
+      };
+      const box = tr.querySelector('.beat');
+      if (box) box.onchange = () => send({ text: box.value });
+      tr.querySelector('.beatlock').onclick = async () => { const locking = !tr.querySelector('.beatlock').classList.contains('locked'); if (await send(box ? { text: box.value, locked: locking } : { locked: locking })) renderAssist(); };
+    });
     if (!approved) $('storyOk').onclick = async () => { try { await save(); await post('/api/assist/approve_story', { project: PID, fill_prompts: true }); await openProject(PID); show('assist'); toast('Story approved. Prompts are filled in on the storyboard.'); } catch (e) { toast(e.message); } };
   } else { $('storyBtn').textContent = 'Write story concept'; $('storyOut').className = 'hint'; $('storyOut').textContent = 'Uses the lyrics, the energy of each section and the segments on your storyboard.'; }
   renderCast(); renderShots();
@@ -1428,6 +1457,44 @@ $('storyBtn').onclick = () => busy($('storyBtn'), $('storyStatus'), 'Writing… 
   await post('/api/assist/story', { project: PID, direction: $('storyDir').value, style: $('storyStyle').value, another: !!A().story_draft });
   await reloadProject(); renderAssist();
 });
+
+/* ---------- lore: background text, tagged to storyboards ---------- */
+let LORE = { entries: [], storyboards: [], budget: 12000 };
+async function loreLine() {                               /* step 3 says which lore the model will be given */
+  const el = $('storyLore'); if (!el) return;
+  const ids = P.lore || [];
+  if (!ids.length) { el.textContent = 'No lore is tagged to this storyboard. Add some in the Lore tab to give the story a setting.'; return; }
+  try { if (!LORE.entries.length) LORE = await api('/api/lore'); } catch (e) { return; }
+  const mine = ids.map(id => LORE.entries.find(e => e.id === id)).filter(Boolean), chars = mine.reduce((n, e) => n + e.text.trim().length, 0);
+  el.textContent = 'Lore in use: ' + (mine.map(e => e.title).join(', ') || 'none') + '.' + (chars > LORE.budget ? ` Together it is ${chars.toLocaleString()} characters; the language model is given the first ${LORE.budget.toLocaleString()}.` : '');
+}
+async function renderLore(data) {
+  try { LORE = data || await api('/api/lore'); } catch (e) { toast(e.message); return; }
+  const wrap = $('loreList'); wrap.textContent = '';
+  if (!LORE.entries.length) wrap.append(node('div', 'hint', 'No lore yet. Press New lore entry to start one.'));
+  const boards = [...LORE.storyboards].sort((a, b) => (b.id === PID) - (a.id === PID) || a.name.localeCompare(b.name));
+  LORE.entries.forEach(e => {
+    const box = node('div', 'lore'), title = node('input'), text = node('textarea'), count = node('div', 'hint'), tags = node('div', 'loretags'), acts = node('div', 'row');
+    title.value = e.title; title.maxLength = 120; title.setAttribute('aria-label', 'Lore title'); title.className = 'loretitle';
+    text.value = e.text; text.rows = 12; text.placeholder = 'Paste or write the setting here: the world, factions and their colours, key people, ships and technology, history, tone…'; text.setAttribute('aria-label', 'Lore text');
+    const tally = () => { const n = text.value.trim().length; count.textContent = n.toLocaleString() + ' characters' + (n > LORE.budget ? `. The language model is given the first ${LORE.budget.toLocaleString()} characters of a storyboard's lore, so put what matters most first.` : ''); };
+    const saveIt = async () => { try { LORE = await post('/api/lore/save', { id: e.id, title: title.value, text: text.value }); state.textContent = 'saved'; } catch (err) { state.textContent = 'not saved'; toast(err.message); } };
+    const state = node('span', 'pill', 'saved');
+    title.onchange = saveIt; text.onchange = saveIt; text.oninput = () => { tally(); state.textContent = 'not saved yet'; }; title.oninput = () => { state.textContent = 'not saved yet'; };
+    tags.append(node('span', 'hint', 'Storyboards that use this:'));
+    boards.forEach(b => {
+      const lab = node('label', 'loretag'), cb = node('input'); cb.type = 'checkbox'; cb.checked = e.projects.includes(b.id);
+      cb.onchange = async () => { try { if (b.id === PID) await save(); LORE = await post('/api/lore/tag', { id: e.id, project: b.id, on: cb.checked }); if (b.id === PID) await reloadProject(); } catch (err) { cb.checked = !cb.checked; toast(err.message); } };
+      lab.append(cb, document.createTextNode(' ' + b.name + (b.id === PID ? ' (open now)' : ''))); tags.append(lab);
+    });
+    if (!boards.length) tags.append(node('span', 'hint', ' no storyboards yet.'));
+    const del = node('button', 'small ghost', 'Delete');
+    del.onclick = async () => { if (!confirm(`Delete the lore entry "${e.title}"? It is moved to the trash folder on the server, and storyboards stop using it.`)) return; try { renderLore(await post('/api/lore/delete', { id: e.id })); await reloadProject(); } catch (err) { toast(err.message); } };
+    acts.append(state, node('span', 'spacer'), del);
+    tally(); box.append(title, text, count, tags, acts); wrap.append(box);
+  });
+}
+$('loreNew').onclick = async () => { try { await renderLore(await post('/api/lore/save', { title: 'New lore entry', text: '' })); const t = document.querySelector('#loreList .loretitle'); if (t) { t.focus(); t.select(); } } catch (e) { toast(e.message); } };
 
 /* ---------- system status ---------- */
 function meter(key, percent, detail) {

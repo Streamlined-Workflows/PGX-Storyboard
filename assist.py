@@ -239,7 +239,15 @@ def align_lyrics(lines, pasted):
 
 # ---------- story ----------
 
-def write_story(analysis, lines, segments, direction="", style="", previous=None):
+def with_lore(user, lore):
+    """Add the artist's background notes to a request. They inform the answer; they are not a list of things to show."""
+    if not (lore or "").strip():
+        return user
+    return (user + "\n\nSetting and lore for this video, written by the artist. Stay consistent with it: use its names, places, "
+            "factions, technology and look where the story touches them, and do not contradict it. Do not try to show all of it.\n" + lore.strip())
+
+
+def write_story(analysis, lines, segments, direction="", style="", previous=None, lore="", keep=None):
     listing = "\n".join(f'{i + 1}. "{s.get("name") or "Segment"}" {s["start"]:.1f}-{s["end"]:.1f}s, {s.get("type", "story")} shot | lyrics: '
                         f'{lyrics_between(lines, s["start"], s["end"]) or "(instrumental)"}' for i, s in enumerate(segments))
     schema = {"type": "object", "required": ["title", "logline", "style", "beats"], "properties": {
@@ -259,10 +267,17 @@ def write_story(analysis, lines, segments, direction="", style="", previous=None
         user += "\n\nDirection from the artist: " + direction.strip()[:800]
     if previous:
         user += "\n\nThe artist rejected this earlier concept, so write a clearly different one: " + str(previous)[:600]
-    out = chat(system, user, schema, think=True, temperature=0.9)
+    keep = {i: t for i, t in (keep or {}).items() if 0 <= i < len(segments) and str(t).strip()}
+    if keep:                                          # beats the artist locked: the new story has to pass through them
+        user += ("\n\nThe artist has locked what we see in these segments. Keep each exactly as written and build the rest of the "
+                 "story so it leads into and out of them:\n" + "\n".join(f"{i + 1}. {t}" for i, t in sorted(keep.items())))
+    user = with_lore(user, lore)
+    out = chat(system, user, schema, think=True, temperature=0.9, ctx=32768 if lore else 16384)
     beats = [str(b).strip() for b in out.get("beats", [])]
     if len(beats) != len(segments):
         beats = (beats + [""] * len(segments))[:len(segments)]
+    for i, t in keep.items():                         # whatever the model returned, a locked beat stays word for word
+        beats[i] = str(t).strip()
     return {"title": str(out.get("title", "")).strip()[:120], "logline": str(out.get("logline", "")).strip(),
             "style": str(out.get("style", "")).strip(), "beats": beats, "direction": direction, "style_note": style}
 
@@ -351,7 +366,7 @@ def story_header(story):
     return f'Title: {story.get("title", "")}\nStory: {story.get("logline", "")}\nVisual style: {story.get("style", "")}'
 
 
-def recommend_cast(story, analysis, lines, segments, existing):
+def recommend_cast(story, analysis, lines, segments, existing, lore=""):
     schema = {"type": "object", "required": ["characters"], "properties": {"characters": {"type": "array", "items": {
         "type": "object", "required": ["name", "role", "description"], "properties": {
             "name": {"type": "string"}, "role": {"type": "string"}, "description": {"type": "string"}}}}}}
@@ -363,12 +378,13 @@ def recommend_cast(story, analysis, lines, segments, existing):
     user = story_header(story) + "\n\nSegments:\n" + story_listing(story, analysis, lines, segments)
     if existing:
         user += "\n\nThe artist already has these actors, so do not repeat them: " + ", ".join(existing)
-    out = chat(system, user, schema, think=True, temperature=0.8)
+    user = with_lore(user, lore)
+    out = chat(system, user, schema, think=True, temperature=0.8, ctx=32768 if lore else 16384)
     return [{"name": str(c.get("name", "")).strip()[:40], "role": str(c.get("role", "")).strip()[:300],
              "description": str(c.get("description", "")).strip()[:900]} for c in out.get("characters", [])[:4] if str(c.get("name", "")).strip()]
 
 
-def write_shots(story, analysis, lines, segments, cast):
+def write_shots(story, analysis, lines, segments, cast, lore=""):
     """Plan the key frames, and decide for each segment whether it continues the previous shot or cuts to a new scene."""
     frame = {"type": "object", "required": ["description", "cast"], "properties": {
         "description": {"type": "string"}, "cast": {"type": "array", "items": {"type": "string"}}}}
@@ -400,6 +416,7 @@ def write_shots(story, analysis, lines, segments, cast):
     people = "\n".join(f'- {c["name"]}: {c.get("role") or "cast member"}. Looks: {c.get("description") or "not described"}' for c in cast)
     user = (story_header(story) + "\n\nCast:\n" + (people or "(none chosen: describe the people the story needs)") +
             f"\n\nSegments ({len(segments)}):\n" + story_listing(story, analysis, lines, segments))
+    user = with_lore(user, lore)
     out = chat(system, user, schema, think=True, temperature=0.7, timeout=900, ctx=32768)     # one long answer: a frame or two per segment
 
     def clean(f):
