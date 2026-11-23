@@ -131,5 +131,5 @@
     panel.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
   }
 
-  window.IdentityTeams = { open, build, zip };
+  window.IdentityTeams = { open, build, zip, cutOut, fit, whiteOnly, sheet, blobOf, save };
 })();

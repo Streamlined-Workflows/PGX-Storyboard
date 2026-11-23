@@ -144,10 +144,9 @@ class ApiTests(Base):
 
     def test_models_list_reports_install_state_honestly(self):
         data = api.handle("GET", "/api/identity/models")
-        tracer = next(t for t in data["tools"] if t["id"] == "vtracer")
-        import importlib.util
-        self.assertEqual(tracer["installed"], importlib.util.find_spec("vtracer") is not None)
-        self.assertTrue(tracer["use"] and tracer["needed_for"])
+        tracer = next(t for t in data["tools"] if t["id"] == "imagetracer")
+        self.assertTrue(tracer["installed"])                 # the file ships with the app
+        self.assertTrue(tracer["use"] and tracer["version"])
         self.assertIn("FLUX.2", data["shared"])
 
     def test_unknown_routes_and_missing_projects(self):

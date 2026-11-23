@@ -213,11 +213,23 @@ are downloaded singly or as one .zip to the person's computer. Nothing is stored
 so `exports` in the project file is still unused. The outline is a silhouette, which suits simple
 one-shape marks and turns detailed ones into a blob.
 
-Other platforms' icon sets and SVG output are not built.
+**Download** on a finished concept (`static/identity/download.js`) asks which file types to make:
 
-Planned for export: tracing an approved concept into an SVG with VTracer (the `vtracer` Python
-package, which has a build for the server's ARM processor and Python 3.12). It is listed under
-System status as not installed; the server image does not include it yet. A traced SVG scales cleanly but is
+| Type | What it is |
+|---|---|
+| PNG (ticked by default) | The picture exactly as generated |
+| JPEG, WebP | The same picture re-encoded on white |
+| SVG | A tracing of the mark with the background removed, made by ImageTracer 1.2.6 (public domain, kept in `static/identity/vendor/`). Eight colours at most; an approximation, not clean geometry |
+| ICO | Windows icon holding 16, 32, 48, 64, 128 and 256 px PNG images, background removed |
+| ICNS | macOS icon holding 16, 32, 64, 128, 256, 512 and 1024 px PNG images, background removed |
+| Teams-ready white icon | The 32 × 32 white outline as a PNG, because Teams requires PNG for it |
+
+One type downloads as that file; several download as one .zip. It is all made in the browser.
+Background removal for these uses a fixed setting; the Teams icons panel has a slider for hard cases.
+
+Tracing was first planned with VTracer on the server. It is done in the browser with ImageTracer
+instead, which needs nothing installed. VTracer traces more smoothly and remains an option if
+the SVG quality is not good enough. A traced SVG scales cleanly but is
 an approximation of the picture (many small curves, lettering as shapes rather than type). It
 suits flat marks with a few solid colours and suits gradients, glows and fine texture badly.
 

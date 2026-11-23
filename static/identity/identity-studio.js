@@ -277,13 +277,15 @@
           <div class="ids-thumb ids-cthumb${done ? '' : ' ids-wait'}${c.state === 'running' ? ' ids-now' : ''}">${done ? `<img alt="Concept" loading="lazy" src="${src(c)}">` : `<span>${esc(CONCEPT_WORDS[c.state] || c.state)}</span>`}</div>
           <div class="hint">${c.kind === 'fix' ? 'Fix: ' + esc(c.direction) : c.direction ? esc(c.direction) : 'From the brief'}${c.references && c.references.length ? ` · ${c.references.length} reference${c.references.length === 1 ? '' : 's'}` : ''}</div>
           ${c.error ? `<div class="hint">${esc(c.error)}</div>` : ''}
-          <div class="ids-acts">${done ? '<button class="small primary ids-look" type="button">Look closer</button>' : ''}${done && info.ready.fix ? '<button class="small ids-fix" type="button">Fix an area</button>' : ''}${done ? `<a class="btn small ids-dl" href="${src(c)}" download="${esc(fileName(c))}">Download</a>` : ''}${done && forTeams() && window.IdentityTeams ? '<button class="small ids-teams-btn" type="button" title="Make the colour and outline icons a Teams app package needs">Teams icons</button>' : ''}</div>
+          <div class="ids-acts">${done ? '<button class="small primary ids-look" type="button">Look closer</button>' : ''}${done && info.ready.fix ? '<button class="small ids-fix" type="button">Fix an area</button>' : ''}${done ? '<button class="small ids-dl" type="button">Download</button>' : ''}${done && forTeams() && window.IdentityTeams ? '<button class="small ids-teams-btn" type="button" title="Make the colour and outline icons a Teams app package needs">Teams icons</button>' : ''}</div>
           <div class="ids-acts">${done ? `<button class="small ids-lock${c.locked ? ' locked' : ''}" type="button" aria-pressed="${!!c.locked}" title="A locked concept cannot be removed and is kept when storage is cleaned up">${c.locked ? 'Locked' : 'Lock'}</button>` : ''}<button class="small ghost ids-cdel" type="button"${c.locked ? ' disabled title="Unlock it first"' : ''}>Remove</button></div>
         </article>`);
         if (done) {
           card.querySelector('.ids-cthumb').onclick = () => look(c); card.querySelector('.ids-look').onclick = () => look(c);
           const f = card.querySelector('.ids-fix'); if (f) f.onclick = () => { look(c); const b = document.getElementById('vFix'); if (b) setTimeout(() => { if (!document.getElementById('viewer').classList.contains('fixing')) b.click(); }, 350); };
         }
+        const dl = card.querySelector('.ids-dl');
+        if (dl) dl.onclick = () => { const name = fileName(c).replace(/\.png$/, ''); if (window.IdentityDownload) window.IdentityDownload.open({ src: src(c), name }); else { const a = document.createElement('a'); a.href = src(c); a.download = name + '.png'; a.click(); } };
         const teams = card.querySelector('.ids-teams-btn');
         if (teams) teams.onclick = () => window.IdentityTeams.open(page.querySelector('.ids-export'), { src: src(c), name: fileName(c).replace(/\.png$/, ''), colour: (page.querySelector('#idsPalette').value.match(/#[0-9a-fA-F]{6}\b/) || [])[0] });
         const lock = card.querySelector('.ids-lock');
@@ -359,7 +361,7 @@
         <div><b>${esc(t.name)}</b> <span class="hint">${esc(t.kind)}</span>
           <div class="ids-use-text"><i>${esc(t.use)}</i></div>
           <div class="hint">${esc(t.note)}</div>
-          <div class="${t.installed ? 'ids-good' : 'hint'}">${t.installed ? 'Installed' + (t.version ? ' · version ' + esc(t.version) : '') : 'Not installed yet. It is needed for ' + esc(t.needed_for) + ', and will be added to the server when that step is built.'}</div>
+          <div class="${t.installed ? 'ids-good' : 'hint'}">${t.installed ? 'Installed' + (t.version ? ' · version ' + esc(t.version) : '') : 'Missing. It is needed for ' + esc(t.needed_for) + '. Run the update on the server to restore it.'}</div>
         </div></div>`).join('');
   }
 

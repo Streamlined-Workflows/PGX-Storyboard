@@ -6,7 +6,7 @@
 <title>SWIFT Director</title>
 <link rel="icon" type="image/svg+xml" href="/static/brand/swift-drop.svg">
 <link rel="stylesheet" href="/static/swift-tokens.css?v=5">
-<link rel="stylesheet" href="/static/identity/identity-studio.css?v=8">
+<link rel="stylesheet" href="/static/identity/identity-studio.css?v=9">
 <style>
   /* Montserrat (SIL Open Font License 1.1), served from the server so the page needs no outside network. */
   @font-face { font-family:Montserrat; font-weight:400; font-display:swap; src:url('/static/fonts/montserrat-latin-400-normal.woff2') format('woff2'); }
@@ -1677,8 +1677,10 @@ async function boot() {
   setInterval(poll, 4000); setInterval(health, 6000);
 })();
 </script>
-<script src="/static/identity/teams-icons.js?v=8"></script>
-<script src="/static/identity/identity-studio.js?v=8"></script>
+<script src="/static/identity/vendor/imagetracer_v1.2.6.js"></script>
+<script src="/static/identity/teams-icons.js?v=9"></script>
+<script src="/static/identity/download.js?v=10"></script>
+<script src="/static/identity/identity-studio.js?v=10"></script>
 <script>if (window.IdentityStudio) IdentityStudio.mount(document.getElementById('v-identity'));</script>
 </body>
 </html>
