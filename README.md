@@ -133,6 +133,26 @@ Click a picture (Assets, Library > Images, Assisted Storyboard key frames) to op
 
 **Hugging Face key.** If the server has no key, Check for updates first asks for a read-only Hugging Face token. It is verified with Hugging Face, then stored in `data/hf_token` (owner-only, never committed, never sent back to the browser). Skip checks everything else; models that need access show a yellow triangle and are not attempted. A key saved by `hf auth login` on the server is used automatically.
 
+## Project configuration
+
+Assisted Storyboard opens with the **Project Configuration Center**: six collapsible sections of
+settings stored with the project (`config` in the project file, schema 2) and restored when it is
+reopened. `config.py` owns the choices, the defaults and the checking of anything a browser sends;
+`static/config/` draws it.
+
+Each setting is tagged **In use** or **Stored**. Two are in use today: the music-video subtype
+shapes the story concept, and Storyboard Detail sets how much each key frame description says.
+The rest are saved for the update that will act on them, including the project rating, which is
+a label for filtering rules to be applied against later. The model roles show what performs each
+job today; choosing between models is the next milestone.
+
+Switching the video type never deletes the other types' settings. Projects from before the
+configuration existed open with defaults that reproduce their old behaviour, and their files are
+not rewritten until they are next saved. **Use these settings for new projects** saves the
+current configuration to `data/defaults.json`.
+
+Tests: `./run-tests.sh` (Python only; no ComfyUI, Ollama or network).
+
 ## Scene assets, props and world assets
 
 Three kinds of asset sit beside actors in the Assets tab. Each has a name, a one-line context

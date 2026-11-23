@@ -7,6 +7,7 @@
 <link rel="icon" type="image/svg+xml" href="/static/brand/swift-drop.svg">
 <link rel="stylesheet" href="/static/swift-tokens.css?v=5">
 <link rel="stylesheet" href="/static/identity/identity-studio.css?v=9">
+<link rel="stylesheet" href="/static/config/config-center.css?v=1">
 <style>
   /* Montserrat (SIL Open Font License 1.1), served from the server so the page needs no outside network. */
   @font-face { font-family:Montserrat; font-weight:400; font-display:swap; src:url('/static/fonts/montserrat-latin-400-normal.woff2') format('woff2'); }
@@ -316,6 +317,8 @@
       <div class="row"><h2 style="margin:0;text-transform:none;letter-spacing:0;color:var(--text);font-size:16px">Assisted Storyboard</h2><span id="assistHealth" class="hint"></span></div>
       <div class="hint" style="margin-top:6px">SWIFT Director listens to the song, proposes segments on the beat, and drafts a story. You approve each step before the next.</div>
     </section>
+    <!-- Project Configuration Center, drawn by /static/config/config-center.js -->
+    <div id="configCenter"></div>
     <section class="step">
       <div class="row" style="margin-bottom:8px"><h2 style="margin:0">Listen to the song</h2><span class="spacer"></span><span id="anStatus" class="hint"></span><button id="anBtn" class="primary">Analyze song</button></div>
       <div id="anSummary" class="hint">Finds the tempo, beats and sections, and transcribes the lyrics with timing.</div>
@@ -517,7 +520,7 @@ async function save() {
   if (!PID) return;
   clearTimeout(saveTimer);
   try {
-    const body = JSON.stringify({ name:P.name, song:P.song, settings:P.settings, actors:P.actors, photos:P.photos, audio:P.audio, things:P.things || [],
+    const body = JSON.stringify({ name:P.name, song:P.song, settings:P.settings, actors:P.actors, photos:P.photos, audio:P.audio, things:P.things || [], ...(P.config ? { config: P.config } : {}),
       segments: P.segments.map(({results, ...rest}) => rest) });
     mergeResults(await api('/api/project?id=' + PID, { method:'PUT', headers:{'Content-Type':'application/json'}, body }));
     $('saved').textContent = 'saved';
@@ -1397,6 +1400,7 @@ async function renderAssist() {
       try { await save(); await post('/api/assist/apply_split', { project: PID }); await openProject(PID); show('assist'); toast('Segments are on the storyboard.'); } catch (e) { toast(e.message); }
     };
   } else { $('splitOut').className = 'hint'; $('splitOut').textContent = 'Cuts land on bar lines, avoid cutting through a sung line, and stay between 5 and 15 seconds.'; }
+  if (window.ConfigCenter) window.ConfigCenter.render($('configCenter'), P, { changed: dirty, hasApprovedWork: () => !!(A().story || A().shots) });
   loreLine();
   const story = A().story_draft, approved = A().story && story && A().story.logline === story.logline;
   if (story) {
@@ -1854,6 +1858,7 @@ async function boot() {
   setInterval(poll, 4000); setInterval(health, 6000);
 })();
 </script>
+<script src="/static/config/config-center.js?v=1"></script>
 <script src="/static/identity/vendor/imagetracer_v1.2.6.js"></script>
 <script src="/static/identity/teams-icons.js?v=9"></script>
 <script src="/static/identity/download.js?v=10"></script>

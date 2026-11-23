@@ -189,18 +189,9 @@ Model assignments are stored as `"auto"` or `"<provider>:<identifier>"`, for exa
 - [x] Establish compatibility and regression requirements, with a test suite
 - [x] Propose the expanded project schema
 - [x] Identify risks and conflicts
-- [ ] Jeremy's review and the decisions in section 7
+- [x] Jeremy's review: work on `main`; schema approved; the rating is shown and stored only, with no effect until every generation type is laid out
 
-**Milestone 1: Assisted Storyboard Configuration**
-- [ ] Add `schema` and `config` to `normalize()` with tests for old and new files
-- [ ] Close the test gaps listed in section 3
-- [ ] Project Configuration Center at the top of Assisted Storyboard, six collapsible sections, as a separate script and stylesheet (the pattern Identity Studio uses)
-- [ ] Project Identity: rating, video type, and the conditional Story, Music Video and Commercial fields
-- [ ] Production Settings and Workflow sections: stored and restored
-- [ ] AI Model Configuration and Audio and Speech sections: show what is in use today, read-only, until Milestone 2 makes them functional
-- [ ] Confirmation when a type change would invalidate approved work
-- [ ] Defaults for new projects
-- [ ] One place each setting takes effect in Milestone 1: rating and storyboard detail feed the story and shot prompts; music-video subtype feeds the story prompt. Everything else is stored and labelled "not used yet"
+**Milestone 1: Assisted Storyboard Configuration.** Built; see `Task_02_Milestone_1.md`.
 
 **Milestone 2: Model Selection.** Discovery from Ollama (`/api/tags`) and ComfyUI (`/object_info`); a table of model families the app has a working graph for; Auto and explicit choice passed into `assist.chat` and `workflows`; LoRA filtered by image model.
 

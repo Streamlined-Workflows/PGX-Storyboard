@@ -247,7 +247,7 @@ def with_lore(user, lore):
             "factions, technology and look where the story touches them, and do not contradict it. Do not try to show all of it.\n" + lore.strip())
 
 
-def write_story(analysis, lines, segments, direction="", style="", previous=None, lore="", keep=None):
+def write_story(analysis, lines, segments, direction="", style="", previous=None, lore="", keep=None, guidance=""):
     listing = "\n".join(f'{i + 1}. "{s.get("name") or "Segment"}" {s["start"]:.1f}-{s["end"]:.1f}s, {s.get("type", "story")} shot | lyrics: '
                         f'{lyrics_between(lines, s["start"], s["end"]) or "(instrumental)"}' for i, s in enumerate(segments))
     schema = {"type": "object", "required": ["title", "logline", "style", "beats"], "properties": {
@@ -261,6 +261,8 @@ def write_story(analysis, lines, segments, direction="", style="", previous=None
               "the loudest sections and give the ending a clear final image. Keep recurring characters and places "
               "consistent from segment to segment. Describe only what a camera can see.")
     user = describe_song(analysis, lines) + f"\n\nSegments ({len(segments)}):\n" + listing
+    if guidance.strip():                              # the kind of video, from the project's configuration
+        user += "\n\nKind of video: " + guidance.strip()
     if style.strip():
         user += "\n\nVisual style wanted: " + style.strip()[:400]
     if direction.strip():
@@ -414,7 +416,7 @@ def recommend_cast(story, analysis, lines, segments, existing, lore=""):
              "description": str(c.get("description", "")).strip()[:900]} for c in out.get("characters", [])[:4] if str(c.get("name", "")).strip()]
 
 
-def write_shots(story, analysis, lines, segments, cast, lore="", things=()):
+def write_shots(story, analysis, lines, segments, cast, lore="", things=(), guidance=""):
     """Plan the key frames, and decide for each segment whether it continues the previous shot or cuts to a new scene."""
     frame = {"type": "object", "required": ["description", "cast", "assets"], "properties": {
         "description": {"type": "string"}, "cast": {"type": "array", "items": {"type": "string"}},
@@ -453,6 +455,8 @@ def write_shots(story, analysis, lines, segments, cast, lore="", things=()):
     if things:                                        # names and one line of context only; their pictures do the describing later
         user += "\n\nAssets and props available:\n" + "\n".join(
             f'- {t["name"]} ({THING_WORDS.get(t.get("kind"), "asset")})' + (f': {t["context"]}' if t.get("context") else "") for t in things)
+    if guidance.strip():                              # how much to say about each frame, from the project's configuration
+        user += "\n\nLevel of detail wanted: " + guidance.strip()
     user = with_lore(user, lore)
     out = chat(system, user, schema, think=True, temperature=0.7, timeout=900, ctx=32768)     # one long answer: a frame or two per segment
 

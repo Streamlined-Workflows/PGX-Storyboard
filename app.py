@@ -23,6 +23,7 @@ import uuid
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 import assist
+import config
 import lore
 import usage
 import models
@@ -53,8 +54,9 @@ def new_id():
 
 def empty_project(name="Untitled project"):
     now = time.time()
-    return {"id": new_id(), "name": name, "created": now, "updated": now, "song": None,
-            "settings": {"width": 832, "height": 480}, "audio": [], "actors": [], "photos": [], "segments": []}
+    return {"schema": config.SCHEMA, "id": new_id(), "name": name, "created": now, "updated": now, "song": None,
+            "settings": {"width": 832, "height": 480}, "audio": [], "actors": [], "photos": [], "segments": [],
+            "config": config.new_project_config()}
 
 
 def project_path(pid):
@@ -76,6 +78,12 @@ def normalize(project):
     project.setdefault("image_jobs", [])
     project.setdefault("lore", [])               # ids of the lore entries tagged to this storyboard
     project.setdefault("things", [])             # this storyboard's scene assets and props
+    # Schema 2: the configuration block. A file from before it gets the built-in defaults, which reproduce the old
+    # behaviour exactly. A file from a newer version keeps its own number and any fields this version does not know.
+    project["config"] = config.clean(project.get("config"))
+    project["schema"] = max(config.SCHEMA, project["schema"]) if isinstance(project.get("schema"), int) else config.SCHEMA
+    project.setdefault("intake", {"kind": "song", "text": "", "brief": {}})
+    project.setdefault("collection_id", None)
     if "generated" not in project:          # the Library's record of every picture made here; older projects are rebuilt from what survives
         made = re.compile(r"_[0-9a-f]{8}\.png$")
         found = [{"image": v["image"], "label": f"{a.get('name') or 'Actor'} · {v.get('label') or 'view'}", "kind": "actor_view", "actor_id": a.get("id")}
@@ -214,6 +222,8 @@ def merge_project(pid, incoming):
         if incoming.get("name"):
             current["name"] = str(incoming["name"])[:80]
         current["settings"] = {**current.get("settings", {}), **incoming.get("settings", {})}
+        if "config" in incoming:                 # only valid choices are taken; anything else keeps its stored value
+            current["config"] = config.clean(incoming["config"], current.get("config"))
         return save_project(normalize(current))
 
 
@@ -377,6 +387,23 @@ def actor_generate(pid, actor_id, refs=None, views=None, extra=""):
             made.append(queue_still(project, assist.view_prompt(description, framing, bool(refs), extra), refs, stem,
                                     kind="actor_view", actor_id=actor_id, label=label))
         return {"jobs": made}
+
+
+def models_in_use():
+    """What performs each model role today. Milestone 2 turns these into choices; until then there is one per role."""
+    m = workflows.MODELS
+    return {
+        "analysis": {"name": assist.MODEL, "runtime": "Ollama", "ready": True},
+        "prompting": {"name": assist.MODEL, "runtime": "Ollama", "ready": True},
+        "image": {"name": "FLUX.2 [dev]", "file": m["flux2"], "runtime": "ComfyUI", "ready": True, "note": "Licensed for non-commercial use."},
+        "image_lora": {"name": "FLUX.2 turbo (8 steps)", "file": m["flux2_turbo"], "runtime": "ComfyUI", "ready": True},
+        "singing_video": {"name": "InfiniteTalk on Wan 2.1", "file": m["talk_patch"], "runtime": "ComfyUI", "ready": True},
+        "story_video": {"name": "Wan 2.1 image-to-video with lightx2v", "file": m["unet_i2v"], "runtime": "ComfyUI", "ready": True},
+        "begin_end_video": {"name": "Wan 2.2 first-and-last-frame", "file": m["unet_22_high"], "runtime": "ComfyUI", "ready": False,
+                            "note": "Built but not yet confirmed on this server; its model files may still need downloading."},
+        "stt": {"name": "faster-whisper " + os.environ.get("WHISPER_MODEL", "large-v3-turbo"), "runtime": "Song analysis service", "ready": True},
+        "tts": {"name": "", "runtime": "", "ready": False, "note": "No text-to-speech model is installed."},
+    }
 
 
 def stage_items(project):
@@ -695,7 +722,8 @@ def assist_story(pid, direction, style, another):
     was = dict(zip(old.get("segment_ids", []), old.get("beats", [])))
     locks = [sid for sid in old.get("locks", []) if sid in ids and (was.get(sid) or "").strip()]     # locked beats survive a rewrite
     draft = assist.write_story(data["analysis"], data.get("lines", []), project["segments"], direction or "", style or "", previous,
-                               lore=lore.for_model(project.get("lore"))[0], keep={ids.index(sid): was[sid] for sid in locks})
+                               lore=lore.for_model(project.get("lore"))[0], keep={ids.index(sid): was[sid] for sid in locks},
+                               guidance=config.story_guidance(project.get("config")))
     draft["segment_ids"], draft["locks"] = ids, locks
     return update_assist(pid, story_draft=draft)
 
@@ -817,7 +845,8 @@ def assist_shots(pid):
         raise ValueError("Put segments on the storyboard first (step 2).")
     story = approved_story(project)
     shots = assist.write_shots(story, data["analysis"], data.get("lines", []), project["segments"], cast_members(project),
-                               lore=lore.for_model(project.get("lore"))[0], things=stage_items(project))
+                               lore=lore.for_model(project.get("lore"))[0], things=stage_items(project),
+                               guidance=config.shot_guidance(project.get("config")))
     for seg, end in zip(project["segments"], shots["ends"]):
         end["segment_id"] = seg["id"]
     old = (load_project(pid).get("assist") or {}).get("shots") or {}       # locked frames survive a rewrite, words and all
@@ -1083,6 +1112,8 @@ class Handler(BaseHTTPRequestHandler):
                 return self.send_json({"ok": True, "time": time.time()})
             if url.path == "/api/system":
                 return self.send_json(system_status())
+            if url.path == "/api/config/info":
+                return self.send_json(dict(config.options(), in_use=models_in_use()))
             if url.path == "/api/lore":
                 return self.send_json(lore_listing())
             if url.path == "/api/system/usage":
@@ -1186,6 +1217,9 @@ class Handler(BaseHTTPRequestHandler):
                 return self.send_json(assist_apply_split(pid))
             if path == "/api/assist/story":
                 return self.send_json(assist_story(pid, payload.get("direction"), payload.get("style"), bool(payload.get("another"))))
+            if path == "/api/config/defaults":
+                config.save_defaults(payload.get("config"))
+                return self.send_json({"ok": True})
             if path == "/api/assist/story_beat":
                 return self.send_json(assist_story_beat(pid, payload.get("segment_id"), payload.get("text"), payload.get("locked")))
             if path == "/api/lore/save":
