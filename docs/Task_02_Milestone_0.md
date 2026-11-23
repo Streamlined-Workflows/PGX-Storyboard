@@ -263,9 +263,11 @@ Model assignments are stored as `"auto"` or `"<provider>:<identifier>"`, for exa
 
 **Content rating**
 
-13. The rating will shape tone guidance, classification and review warnings. It unlocks nothing:
-    the same limits apply at every rating, including what the models, their licences and the law
-    allow, and sexually explicit generation is not something this work will build a path for.
+13. The rating is a classification label for filtering down. It is stored with the project so
+    that custom filtering rules can be applied against it later: a lower rating means stricter
+    limits on what the assistant proposes and what passes review. It never widens what is allowed.
+    In Milestone 1 it is stored, shown, and passed to the story and shot prompts as an upper
+    bound on tone; the custom rules themselves are a later piece of work.
 
 ---
 
