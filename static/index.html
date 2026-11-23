@@ -110,7 +110,7 @@
   .meters { display:grid; grid-template-columns:repeat(auto-fit,minmax(210px,1fr)); gap:14px; }
   .meter { background:var(--panel2); border:1px solid var(--line); border-radius:10px; padding:14px; }
   .meter .val { font-size:28px; font-weight:700; font-variant-numeric:tabular-nums; }
-  table.beats textarea.beat { width:100%; min-height:44px; } table.beats td:last-child { white-space:nowrap; vertical-align:top; }
+  table.beats textarea.beat { width:100%; min-height:44px; resize:none; overflow:hidden; field-sizing:content; }   /* as tall as its text; no dragging to read */ table.beats td:last-child { white-space:nowrap; vertical-align:top; }
   .lore { border:1px solid var(--line); border-radius:12px; padding:14px; margin-bottom:14px; display:grid; gap:8px; }
   .lore .loretitle { font-size:16px; font-weight:700; width:100%; } .lore textarea { width:100%; min-height:200px; line-height:1.5; }
   .loretags { display:flex; gap:6px 16px; flex-wrap:wrap; align-items:center; } .loretag { display:inline-flex; gap:6px; align-items:center; margin:0; font-size:13px; }
@@ -1430,6 +1430,7 @@ async function renderAssist() {
         catch (e) { toast(e.message); return false; }
       };
       const box = tr.querySelector('.beat');
+      if (box) { const fit = () => { box.style.height = 'auto'; box.style.height = (box.scrollHeight + 2) + 'px'; }; fit(); box.addEventListener('input', fit); }   /* grows and shrinks with what is typed */
       if (box) box.onchange = () => send({ text: box.value });
       tr.querySelector('.beatlock').onclick = async () => { const locking = !tr.querySelector('.beatlock').classList.contains('locked'); if (await send(box ? { text: box.value, locked: locking } : { locked: locking })) renderAssist(); };
     });
