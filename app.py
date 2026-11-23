@@ -75,6 +75,7 @@ def normalize(project):
     project.setdefault("photos", [])
     project.setdefault("image_jobs", [])
     project.setdefault("lore", [])               # ids of the lore entries tagged to this storyboard
+    project.setdefault("things", [])             # this storyboard's scene assets and props
     if "generated" not in project:          # the Library's record of every picture made here; older projects are rebuilt from what survives
         made = re.compile(r"_[0-9a-f]{8}\.png$")
         found = [{"image": v["image"], "label": f"{a.get('name') or 'Actor'} · {v.get('label') or 'view'}", "kind": "actor_view", "actor_id": a.get("id")}
@@ -207,7 +208,7 @@ def merge_project(pid, incoming):
                 out["end_image"] = None                 # the lip sync engine only takes a start image
             segments.append(out)
         current["segments"] = segments
-        for key in ("song", "actors", "audio", "photos"):
+        for key in ("song", "actors", "audio", "photos", "things"):
             if key in incoming:
                 current[key] = incoming[key]
         if incoming.get("name"):
@@ -314,7 +315,8 @@ def refresh_statuses(pid):
                     project["generated"].append({
                         "id": res["id"], "image": res["image"], "kind": res.get("kind"), "created": res["finished"], "seed": res.get("seed"),
                         "actor_id": res.get("actor_id"), "segment_id": res.get("segment_id"), "source": res.get("source"), "fix": res.get("fix"),
-                        "label": f"{actor.get('name') or 'Actor'} · {res.get('label')}" if actor else res.get("label") or "Picture"})
+                        "label": f"{actor.get('name') or 'Actor'} · {res.get('label')}" if actor
+                                 else f"{res['owner']} · {res.get('label')}" if res.get("owner") else res.get("label") or "Picture"})
                 except (OSError, ValueError, KeyError) as e:
                     res.update(status="error", error=f"Could not save the generated image: {e}")
             else:
@@ -377,7 +379,49 @@ def actor_generate(pid, actor_id, refs=None, views=None, extra=""):
         return {"jobs": made}
 
 
-def image_fix(pid, image, mask, text, width, height, label):
+def stage_items(project):
+    """Everything that is not a person and can appear in a frame: this storyboard's scene assets and props, then the
+    world assets and world props of the lore tagged to it. Ranked in that order when reference slots run short."""
+    out = [dict(t, kind="prop" if t.get("kind") == "prop" else "scene", world="") for t in project.get("things", []) if (t.get("name") or "").strip()]
+    out.sort(key=lambda t: t["kind"] != "scene")
+    for lid in project.get("lore", []):
+        try:
+            entry = lore.load(lid)
+        except ValueError:
+            continue
+        out += [dict(a, world=entry["title"], lore_id=lid) for a in entry["assets"] if (a.get("name") or "").strip()]
+    seen, unique = set(), []
+    for t in out:                                 # a name can only mean one thing to the language model
+        if t["name"].lower() not in seen:
+            seen.add(t["name"].lower()); unique.append(t)
+    return unique
+
+
+def thing_generate(pid, thing_id, lore_id=None, refs=None, views=None, extra=""):
+    """Queue pictures of a scene asset, world asset or prop. The finished pictures are added to it by the page."""
+    with LOCK:
+        project = load_project(pid)
+        pool = lore.load(lore_id)["assets"] if lore_id else project.get("things", [])
+        thing = next((t for t in pool if t.get("id") == thing_id), None)
+        if not thing:
+            raise ValueError("That asset no longer exists. Reload the page.")
+        kind = thing.get("kind") if thing.get("kind") in assist.THING_VIEWS else "scene"
+        own = [v["image"] for v in thing.get("views", [])]
+        refs = own[:3] if refs is None else [r for r in refs if r in own][:4]
+        extra = str(extra or "").strip()[:600]
+        if not (thing.get("description") or "").strip() and not refs and not extra:
+            raise ValueError("Write a description first, or add a picture of it.")
+        framings = [f for f in assist.THING_VIEWS[kind] if not views or f[0] in views]
+        if not framings:
+            raise ValueError("Choose which picture to generate.")
+        threading.Thread(target=assist.unload, daemon=True).start()
+        name = thing.get("name") or assist.THING_WORDS[kind]
+        return {"jobs": [queue_still(project, assist.thing_prompt(thing, framing, bool(refs), extra), refs,
+                                     f"{workflows.safe_name(name)}_{workflows.safe_name(label)}", kind="thing_view", actor_id=thing_id,
+                                     lore_id=lore_id or None, label=label, owner=name) for label, framing in framings]}
+
+
+def image_fix(pid, image, mask, text, width, height, label, refs=None):
     """Queue an inpaint: repaint the masked area of `image` as `text` describes. The original is kept."""
     text = str(text or "").strip()[:800]
     if not image or not mask:
@@ -392,7 +436,11 @@ def image_fix(pid, image, mask, text, width, height, label):
         prompt = (f"{text.rstrip('.')}. Only this part of the picture changes. It blends seamlessly with the rest of the image: "
                   "the same character, art style, lighting and colours as the reference image, no visible seam, no text.")
         threading.Thread(target=assist.unload, daemon=True).start()
-        graph = lambda seed, prefix: workflows.build_fix(image, mask, prompt, seed, int(width or 1248), int(height or 720), prefix)
+        known = {v["image"] for t in stage_items(project) for v in t.get("views", [])}      # only pictures of this storyboard's assets and props
+        extra = [r for r in (refs or []) if r in known][:3]
+        if extra:
+            prompt += " The painted area shows the object from the extra reference image" + ("s" if len(extra) > 1 else "") + ", with its shape, colours and markings kept."
+        graph = lambda seed, prefix: workflows.build_fix(image, mask, prompt, seed, int(width or 1248), int(height or 720), prefix, refs=extra)
         stem = f"{workflows.safe_name((actor or {}).get('name') or 'picture')}_{workflows.safe_name(label)}"
         return {"job": queue_still(project, prompt, [], stem, graph=graph, kind="fix", source=image, label=label,
                                    actor_id=actor["id"] if actor else None, fix=text)}
@@ -769,7 +817,7 @@ def assist_shots(pid):
         raise ValueError("Put segments on the storyboard first (step 2).")
     story = approved_story(project)
     shots = assist.write_shots(story, data["analysis"], data.get("lines", []), project["segments"], cast_members(project),
-                               lore=lore.for_model(project.get("lore"))[0])
+                               lore=lore.for_model(project.get("lore"))[0], things=stage_items(project))
     for seg, end in zip(project["segments"], shots["ends"]):
         end["segment_id"] = seg["id"]
     old = (load_project(pid).get("assist") or {}).get("shots") or {}       # locked frames survive a rewrite, words and all
@@ -781,7 +829,7 @@ def assist_shots(pid):
     for end in shots["ends"]:
         was = kept.get(end["segment_id"]) or {}
         if was.get("locked"):
-            end.update(text=was.get("text", ""), who=was.get("who", []), locked=True)
+            end.update(text=was.get("text", ""), who=was.get("who", []), what=was.get("what", []), locked=True)
         if (was.get("begin") or {}).get("locked") and end is not shots["ends"][0]:
             end.update(start="new", begin=was["begin"])
     return update_assist(pid, shots=shots)
@@ -818,6 +866,7 @@ def assist_shot_images(pid, targets):
         if not shots:
             raise ValueError("Write the shots first.")
         cast = {c["name"]: c for c in cast_members(project)}
+        items = {t["name"]: t for t in stage_items(project)}
         segments = {s["id"]: s for s in project["segments"]}
         if not project["segments"]:
             raise ValueError("There are no segments on the storyboard.")
@@ -839,10 +888,16 @@ def assist_shot_images(pid, targets):
                 continue
             people = [cast[n] for n in shot.get("who", []) if n in cast and cast[n]["views"]][:4]
             refs = [next((v for v in c["views"] if "waist" in (v.get("label") or "").lower()), c["views"][0])["image"] for c in people]
+            # Assets and props take the reference slots the cast leaves free (FLUX.2 has four), so a frame with nobody in it
+            # can show up to four of them. One that does not fit, or has no picture yet, is described in words instead.
+            named = [items[n] for n in shot.get("what", []) if n in items]
+            shown = [t for t in named if t.get("views")][:max(0, 4 - len(people))]
+            refs += [t["views"][0]["image"] for t in shown]
+            told = [t for t in named if t not in shown]
             label = label or f"{seg.get('name') or 'Segment'} end"
             project["image_jobs"] = [j for j in project["image_jobs"] if not (j.get("kind") == "shot" and j.get("status") == "error"
                                                                            and j.get("segment_id") == seg["id"] and j.get("slot") == slot)]
-            made.append(queue_still(project, assist.shot_prompt(shot["text"], story.get("style", ""), people), refs,
+            made.append(queue_still(project, assist.shot_prompt(shot["text"], story.get("style", ""), people, shown, told), refs,
                                     workflows.safe_name(label), kind="shot", segment_id=seg["id"], slot=slot, label=label))
         if not made:
             raise ValueError("Nothing to generate: those frames are already being made, or have no description.")
@@ -1109,7 +1164,7 @@ class Handler(BaseHTTPRequestHandler):
                 return self.send_json(actor_generate(pid, payload.get("actor_id"), payload.get("refs"), payload.get("views"), payload.get("extra")))
             if path == "/api/image/fix":
                 return self.send_json(image_fix(pid, payload.get("image"), payload.get("mask"), payload.get("prompt"),
-                                                payload.get("width"), payload.get("height"), payload.get("label")))
+                                                payload.get("width"), payload.get("height"), payload.get("label"), payload.get("refs")))
             if path == "/api/generated/remove":
                 return self.send_json(generated_remove(pid, payload.get("id")))
             if path == "/api/image_jobs/clear":
@@ -1136,6 +1191,11 @@ class Handler(BaseHTTPRequestHandler):
             if path == "/api/lore/save":
                 lore.save(payload.get("id") or "", payload.get("title"), payload.get("text"))
                 return self.send_json(lore_listing())
+            if path == "/api/lore/assets":
+                lore.save_assets(payload.get("id") or "", payload.get("assets"))
+                return self.send_json({"ok": True})
+            if path == "/api/thing/generate":
+                return self.send_json(thing_generate(pid, payload.get("thing_id"), payload.get("lore_id"), payload.get("refs"), payload.get("views"), payload.get("extra", "")))
             if path == "/api/lore/delete":
                 lore.delete(payload.get("id") or "")
                 return self.send_json(lore_listing())

@@ -133,6 +133,30 @@ Click a picture (Assets, Library > Images, Assisted Storyboard key frames) to op
 
 **Hugging Face key.** If the server has no key, Check for updates first asks for a read-only Hugging Face token. It is verified with Hugging Face, then stored in `data/hf_token` (owner-only, never committed, never sent back to the browser). Skip checks everything else; models that need access show a yellow triangle and are not attempted. A key saved by `hf auth login` on the server is used automatically.
 
+## Scene assets, props and world assets
+
+Three kinds of asset sit beside actors in the Assets tab. Each has a name, a one-line context
+(what it is and whose), a description, and any number of pictures, which can be uploaded or
+generated from the description.
+
+| Kind | Stored | Example |
+|---|---|---|
+| Scene asset | In the storyboard (`things`) | The one ship this video follows |
+| Prop | In the storyboard (`things`) | A sidearm, a console, a drum kit, a stage |
+| World asset, world prop | With a lore entry (`assets` in `data/lore/<id>.json`) | Thirty ships with their factions |
+
+A world is a lore entry: every storyboard tagged with that lore sees its world assets.
+
+When shots are planned, the language model is given each asset's name and context line only and
+names the ones visible in each frame ("Assets and props" under the frame). When a frame's picture
+is made, the cast takes FLUX.2's four reference slots first and assets fill what is left, in the
+order scene assets, props, world assets; so a frame with nobody in it can show up to four. An
+asset that does not fit, or has no picture yet, is described in words in the prompt instead.
+
+**Fix an area** has a "Use:" list of assets and props that have a picture. Choosing one adds its
+first picture as an extra reference for the repaint, which is how a prop is swapped into a shot
+that is otherwise right.
+
 ## Lore
 
 Lore entries are stored on their own in `data/lore/<id>.json` and belong to no single project; a

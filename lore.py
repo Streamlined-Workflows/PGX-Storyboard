@@ -35,7 +35,33 @@ def load(lid):
     except (OSError, ValueError):
         raise ValueError("That lore entry no longer exists.")
     entry.setdefault("title", "Untitled lore"); entry.setdefault("text", "")
+    entry["assets"] = clean_assets(entry.get("assets"))
     return entry
+
+
+def clean_assets(assets):
+    """World assets and world props kept with this entry: the same shape as a storyboard's own assets."""
+    out = []
+    for a in assets if isinstance(assets, list) else []:
+        if not isinstance(a, dict) or not isinstance(a.get("id"), str) or not a["id"]:
+            continue
+        views = [{"id": str(v.get("id") or uuid.uuid4().hex[:8]), "image": str(v["image"]), "label": str(v.get("label") or "")[:80]}
+                 for v in a.get("views", []) if isinstance(v, dict) and isinstance(v.get("image"), str) and v["image"]]
+        out.append({"id": a["id"][:40], "kind": "prop" if a.get("kind") == "prop" else "world", "name": str(a.get("name") or "")[:80],
+                    "context": str(a.get("context") or "")[:300], "description": str(a.get("description") or "")[:2000], "views": views[:60]})
+    return out[:300]
+
+
+def save_assets(lid, assets):
+    with LOCK:
+        entry = load(lid)
+        entry["assets"] = clean_assets(assets)
+        entry["updated"] = time.time()
+        path = _path(lid)
+        with open(path + ".tmp", "w") as f:
+            json.dump(entry, f, indent=1)
+        os.replace(path + ".tmp", path)
+        return entry
 
 
 def entries():
@@ -56,7 +82,7 @@ def save(lid, title, text):
     """Create (lid empty) or update an entry."""
     with LOCK:
         now = time.time()
-        entry = load(lid) if lid else {"id": uuid.uuid4().hex[:12], "created": now}
+        entry = load(lid) if lid else {"id": uuid.uuid4().hex[:12], "created": now, "assets": []}
         entry["title"] = str(title or "").strip()[:TITLE_MAX] or "Untitled lore"
         entry["text"] = str(text or "")[:TEXT_MAX]
         entry["updated"] = now

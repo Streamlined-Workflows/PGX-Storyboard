@@ -221,7 +221,7 @@ def build_image(prompt, refs=(), seed=1, width=1248, height=720, prefix="storybo
     return g.nodes
 
 
-def build_fix(image, mask, prompt, seed=1, width=1248, height=720, prefix="storyboard/fix"):
+def build_fix(image, mask, prompt, seed=1, width=1248, height=720, prefix="storyboard/fix", refs=()):
     """Repaint only the masked part of a picture with FLUX.2 (inpainting).
 
     `mask` is an input image, white where the picture should change. The original is encoded and sampled with a noise
@@ -242,6 +242,10 @@ def build_fix(image, mask, prompt, seed=1, width=1248, height=720, prefix="story
     text = g.add("CLIPTextEncode", clip=g.out(clip), text=prompt)
     cond = g.out(g.add("FluxGuidance", conditioning=g.out(text), guidance=4.0))
     cond = g.out(g.add("ReferenceLatent", conditioning=cond, latent=g.out(original)))
+    for ref in list(refs)[:3]:                  # pictures of a prop or asset to paint into the masked area
+        img = g.add("LoadImage", image=ref)
+        scaled = g.add("ImageScaleToTotalPixels", image=g.out(img), upscale_method="lanczos", megapixels=1.0, resolution_steps=1)
+        cond = g.out(g.add("ReferenceLatent", conditioning=cond, latent=g.out(g.add("VAEEncode", pixels=g.out(scaled), vae=g.out(vae)))))
     latent = g.add("SetLatentNoiseMask", samples=g.out(original), mask=g.out(area))
     sigmas = g.add("Flux2Scheduler", steps=IMAGE_STEPS, width=width, height=height)
     sampler = g.add("KSamplerSelect", sampler_name="euler")

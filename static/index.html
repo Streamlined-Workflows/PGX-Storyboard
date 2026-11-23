@@ -382,6 +382,23 @@
       <div id="actors"></div>
     </section>
     <section>
+      <div class="row" style="margin-bottom:12px"><h2 style="margin:0">Scene assets</h2><span class="spacer"></span>
+        <span class="hint">Specific things this video is about, such as the one ship the story follows.</span>
+        <button class="newThing" data-kind="scene">New scene asset</button></div>
+      <div id="things-scene"></div>
+    </section>
+    <section>
+      <div class="row" style="margin-bottom:12px"><h2 style="margin:0">Props</h2><span class="spacer"></span>
+        <span class="hint">Items used in a scene: a weapon, a console, a microphone, a drum kit, a stage.</span>
+        <button class="newThing" data-kind="prop">New prop</button></div>
+      <div id="things-prop"></div>
+    </section>
+    <section>
+      <div class="row" style="margin-bottom:12px"><h2 style="margin:0">World assets</h2><span class="spacer"></span>
+        <span class="hint">Things that exist in the world this video is set in, shared by every storyboard tagged with that world's lore.</span></div>
+      <div id="things-world"></div>
+    </section>
+    <section>
       <div class="row" style="margin-bottom:12px"><h2 style="margin:0">Photos</h2><span class="spacer"></span>
         <label class="btn">Add photo<input class="assetFile" data-kind="photo" type="file" accept="image/*" multiple hidden></label></div>
       <div id="photos" class="cards"></div>
@@ -445,6 +462,7 @@
     <label style="margin:0">Brush</label><input type="range" id="fxSize" min="8" max="200" value="48" style="width:110px">
     <button class="small" id="fxUndo">Undo</button><button class="small" id="fxClear">Clear</button>
     <input type="text" id="fxText" placeholder="What the painted area should show, e.g. plain dark background and her shoulder armour, no hair">
+    <select id="fxRef" title="Paint one of your props or assets into the marked area, copied from its first picture"><option value="">No prop or asset</option></select>
     <button class="primary" id="fxGo">Generate fix</button><span id="fxStatus" class="hint"></span>
   </div>
   <div class="vstage" id="vStage"><img id="vImg" alt="" draggable="false"><canvas id="vMask"></canvas></div>
@@ -499,7 +517,7 @@ async function save() {
   if (!PID) return;
   clearTimeout(saveTimer);
   try {
-    const body = JSON.stringify({ name:P.name, song:P.song, settings:P.settings, actors:P.actors, photos:P.photos, audio:P.audio,
+    const body = JSON.stringify({ name:P.name, song:P.song, settings:P.settings, actors:P.actors, photos:P.photos, audio:P.audio, things:P.things || [],
       segments: P.segments.map(({results, ...rest}) => rest) });
     mergeResults(await api('/api/project?id=' + PID, { method:'PUT', headers:{'Content-Type':'application/json'}, body }));
     $('saved').textContent = 'saved';
@@ -531,6 +549,11 @@ function mergeJobs(fresh) {
     const a = P.actors.find(x => x.id === j.actor_id);
     if (j.kind === 'fix' && !a && !P.photos.some(ph => ph.image === j.image)) P.photos.push({ id: uid(), name: j.label || 'Fixed picture', image: j.image });
     if (a && !a.views.some(v => v.image === j.image)) a.views.push({ id: uid(), image: j.image, label: j.label });
+    if (j.kind === 'thing_view') {                           /* a finished picture of a scene asset, prop or world asset */
+      const hit = allThings().find(x => x.t.id === j.actor_id);
+      if (!hit && j.lore_id && !LORE.entries.length) continue;                  /* its world is not loaded yet; take it on the next pass */
+      if (hit && !hit.t.views.some(v => v.image === j.image)) { hit.t.views.push({ id: uid(), image: j.image, label: j.label }); if (hit.loreId) worldChanged(hit.loreId); }
+    }
     taken.push(j.id);
   }
   P.image_jobs = jobs.filter(j => !taken.includes(j.id));
@@ -620,7 +643,8 @@ function show(name) {
   if (name !== 'storyboard') $('audio').pause();
   if (name === 'assist') { renderAssist(); if (P.song) pollAnalysis(); }
   if (name === 'projects') renderProjects();
-  if (name === 'assets') { renderAssets(); if (scope.assets === 'all') loadAll().then(renderAssets); }
+  if (name === 'assets') { if ((P.lore || []).length && !LORE.entries.length) api('/api/lore').then(l => { LORE = l; renderThings(); }).catch(() => {});
+    renderAssets(); if (scope.assets === 'all') loadAll().then(renderAssets); }
   if (name === 'library') { renderLibrary(); if (scope.library === 'all') loadAll().then(renderLibrary); }
   if (name === 'system') { refreshSystem(); refreshUsage(); loadModels(); if (window.IdentityStudio) window.IdentityStudio.showModels($('identityModels')); }
   if (name === 'storyboard') { renderSegments(); }
@@ -968,6 +992,88 @@ function actorPanel(a) {
   return d;
 }
 
+/* ---------- scene assets, props and world assets: like an actor, but a thing or a place ---------- */
+const THING = {
+  scene: { word: 'scene asset', name: 'Name', hint: 'e.g. The Harrow, a battered teal and platinum courier ship with twin engine pods', context: 'e.g. Misty\'s ship, Teal Accord courier' },
+  prop:  { word: 'prop', name: 'Name', hint: 'e.g. A short matte-black sidearm with a teal charge indicator', context: 'e.g. standard Teal Accord sidearm' },
+  world: { word: 'world asset', name: 'Name', hint: 'e.g. A heavy grey cruiser with a wedge prow and a red stripe along the keel', context: 'e.g. Crimson Pact warship' },
+};
+const worldTimers = {};
+function worldChanged(loreId) {                           /* world assets are stored with their lore entry, not with the storyboard */
+  $('saved').textContent = 'saving…'; clearTimeout(worldTimers[loreId]);
+  worldTimers[loreId] = setTimeout(async () => { const e = LORE.entries.find(x => x.id === loreId); if (!e) return; try { await post('/api/lore/assets', { id: loreId, assets: e.assets }); $('saved').textContent = 'saved'; } catch (err) { toast(err.message); } }, 600);
+}
+const allThings = () => [...(P.things || []).map(t => ({ t, loreId: null })), ...(P.lore || []).flatMap(id => { const e = LORE.entries.find(x => x.id === id); return e ? (e.assets || []).map(t => ({ t, loreId: id })) : []; })];
+function thingPanel(t, loreId, list) {
+  const kind = THING[t.kind] ? t.kind : 'scene', w = THING[kind], changed = () => loreId ? worldChanged(loreId) : dirty(), refs = refsOf(t);
+  const d = document.createElement('div'); d.className = 'actor thing';
+  d.innerHTML = `<div class="head"><div><label>${w.name}</label><input class="aname" value="${esc(t.name || '')}">` +
+    `<label style="margin-top:6px">Context (what it is and whose; the language model sees this line)</label><input class="acontext" style="width:100%" value="${esc(t.context || '')}" placeholder="${esc(w.context)}"></div>` +
+    `<div><label>Description (how it looks; used when its pictures are generated)</label><textarea class="adesc" style="height:86px" placeholder="${esc(w.hint)}">${esc(t.description || '')}</textarea></div>` +
+    `<div style="padding-top:18px">${loreId ? `<select class="akind" title="A world asset is a thing or place in the world; a world prop is an item someone uses"><option value="world">World asset</option><option value="prop">World prop</option></select> ` : ''}<label class="btn small">Add picture<input type="file" accept="image/*" multiple hidden></label> <button class="ghost small delactor">Delete</button></div></div>` +
+    `<div class="row" style="margin-bottom:10px"><button class="small generate" title="Makes three pictures of it with FLUX.2, copying it from its ticked Reference pictures, or its first pictures if none are ticked">Generate pictures</button>` +
+    `<input class="aextra" style="flex:1;min-width:220px" placeholder="Addition for this generation (optional), e.g. landing gear down, at night"><span class="hint astatus"></span></div>` +
+    `<div class="cards views"></div>`;
+  const status = d.querySelector('.astatus');
+  if (loreId) { d.querySelector('.akind').value = t.kind === 'prop' ? 'prop' : 'world'; d.querySelector('.akind').onchange = ev => { t.kind = ev.target.value; changed(); }; }
+  d.querySelector('.aname').oninput = ev => { t.name = ev.target.value; changed(); };
+  d.querySelector('.acontext').oninput = ev => { t.context = ev.target.value; changed(); };
+  d.querySelector('.adesc').oninput = ev => { t.description = ev.target.value; changed(); };
+  d.querySelector('.aextra').value = extraNote[t.id] || ''; d.querySelector('.aextra').oninput = ev => { extraNote[t.id] = ev.target.value; };
+  d.querySelector('input[type=file]').onchange = async ev => {
+    for (const f of ev.target.files) { try { t.views.push({ id: uid(), image: await upload(f), label: stem(f.name).replace(/[_-]+/g, ' ') }); } catch (err) { toast(err.message); } }
+    changed(); renderThings();
+  };
+  d.querySelector('.delactor').onclick = () => { if (confirm(`Delete the ${w.word} "${t.name || 'unnamed'}" and its ${t.views.length} picture${t.views.length === 1 ? '' : 's'}? Frames that already use a picture keep it.`)) { list.splice(list.indexOf(t), 1); changed(); renderThings(); } };
+  d.querySelector('.generate').onclick = ev => busy(ev.target, status, 'Sending to the server…', async () => {
+    if (!(t.description || '').trim() && !t.views.length && !(extraNote[t.id] || '').trim()) throw new Error('Write a description first, or add a picture of it.');
+    if (loreId) { clearTimeout(worldTimers[loreId]); await post('/api/lore/assets', { id: loreId, assets: list }); } else await save();
+    await post('/api/thing/generate', { project: PID, thing_id: t.id, lore_id: loreId, extra: extraNote[t.id] || '', ...(refs.size ? { refs: [...refs] } : {}) });
+    await poll(true); renderThings();
+  });
+  const views = d.querySelector('.views');
+  if (!t.views.length) views.innerHTML = '<span class="hint">No pictures yet. Add one, or write a description and generate them.</span>';
+  t.views.forEach(v => {
+    const c = document.createElement('div'); c.className = 'card'; if (refs.has(v.image)) c.style.outline = '2px solid var(--accent2)';
+    c.innerHTML = `<img src="${view(v.image)}" alt=""><input value="${esc(v.label || '')}" placeholder="Picture name"><div class="acts"><label class="hint" style="display:flex;gap:4px;align-items:center;padding:2px 6px;cursor:pointer" title="Tick the pictures FLUX.2 should copy this from"><input type="checkbox" class="ref" ${refs.has(v.image) ? 'checked' : ''}>Reference</label><button class="ghost small del" title="Remove this picture">✕</button></div>`;
+    c.querySelector('input').oninput = ev => { v.label = ev.target.value; changed(); };
+    c.querySelector('.ref').onchange = ev => { if (ev.target.checked && refs.size >= 4) { ev.target.checked = false; return toast('Up to 4 reference pictures.'); } ev.target.checked ? refs.add(v.image) : refs.delete(v.image); renderThings(); };
+    c.querySelector('.del').onclick = () => { t.views = t.views.filter(x => x !== v); changed(); renderThings(); };
+    views.appendChild(c);
+  });
+  (P.image_jobs || []).filter(j => j.actor_id === t.id).forEach(j => {
+    if (!t.views.length && views.firstChild && views.firstChild.className === 'hint') views.innerHTML = '';
+    const c = document.createElement('div'); c.className = 'card';
+    c.innerHTML = j.status === 'error'
+      ? `<div class="wait err" style="height:86px;font-size:11px;overflow:auto;padding:6px">${esc(j.error || 'Failed')}</div><div class="acts"><span class="hint" style="padding:4px 6px">${esc(j.label)}</span><button class="ghost small del" title="Dismiss">✕</button></div>`
+      : `<div style="height:86px;display:flex;flex-direction:column;justify-content:center;background:var(--bg)"><div class="pbar"><i id="pb-${j.id}"></i></div><div id="pt-${j.id}" class="hint" style="text-align:center">${j.status === 'running' ? 'Generating…' : 'Waiting…'}</div></div><div class="hint" style="padding:5px 7px">${esc(j.label)}</div>`;
+    const del = c.querySelector('.del');
+    if (del) del.onclick = async () => { try { await post('/api/image_jobs/clear', { project: PID, ids: [j.id] }); P.image_jobs = P.image_jobs.filter(x => x !== j); renderThings(); } catch (e) { toast(e.message); } };
+    views.appendChild(c);
+  });
+  return d;
+}
+function renderThings() {
+  P.things = P.things || [];
+  for (const kind of ['scene', 'prop']) {
+    const box = $('things-' + kind), mine = P.things.filter(t => (t.kind === 'prop' ? 'prop' : 'scene') === kind); box.textContent = '';
+    if (!mine.length) box.append(node('span', 'hint', kind === 'scene' ? 'No scene assets yet.' : 'No props yet.'));
+    mine.forEach(t => box.append(thingPanel(t, null, P.things)));
+  }
+  const world = $('things-world'); world.textContent = '';
+  const tagged = (P.lore || []).map(id => LORE.entries.find(e => e.id === id)).filter(Boolean);
+  if (!(P.lore || []).length) world.append(node('span', 'hint', 'A world is a lore entry. Tag one to this storyboard in the Lore tab, then add that world\'s ships, places and props here.'));
+  else if (!tagged.length) { world.append(node('span', 'hint', 'Loading…')); api('/api/lore').then(l => { LORE = l; if (currentView === 'assets') renderThings(); }).catch(() => {}); }
+  tagged.forEach(e => {
+    e.assets = e.assets || [];
+    const head = node('div', 'row'), add = (kind, label) => { const b = node('button', 'small', label); b.onclick = () => { e.assets.push({ id: uid(), kind, name: '', context: '', description: '', views: [] }); worldChanged(e.id); renderThings(); }; return b; };
+    head.style.margin = '6px 0 10px'; head.append(node('b', '', e.title), node('span', 'hint', `${e.assets.length} in this world`), node('span', 'spacer'), add('world', 'New world asset'), add('prop', 'New world prop'));
+    world.append(head);
+    e.assets.forEach(t => world.append(thingPanel(t, e.id, e.assets)));
+  });
+}
+document.querySelectorAll('.newThing').forEach(b => b.onclick = () => { (P.things = P.things || []).push({ id: uid(), kind: b.dataset.kind, name: '', context: '', description: '', views: [] }); dirty(); renderThings(); });
+
 function photoCard(ph) {
   const d = document.createElement('div'); d.className = 'card';
   d.innerHTML = `<img src="${view(ph.image)}" alt=""><input value="${esc(ph.name)}"><select>${moveOptions(null)}</select><div class="acts"><span></span><button class="ghost small del" title="Remove from this project">✕</button></div>`;
@@ -982,6 +1088,7 @@ function renderAssets() {
   P.actors.forEach(a => $('actors').appendChild(actorPanel(a)));
   $('photos').innerHTML = P.photos.length ? '' : '<span class="hint">No photos yet. Use these for locations and other reference stills.</span>';
   P.photos.forEach(ph => $('photos').appendChild(photoCard(ph)));
+  renderThings();
   paintProgress(); renderOtherAssets();
   const wrap = $('audios'); wrap.innerHTML = P.audio.length ? '' : '<span class="hint">No audio yet.</span>';
   P.audio.forEach(a => {
@@ -1398,6 +1505,7 @@ function renderShots() {
       if (r.cont) { row.append(left, node('div', 'hint', 'Starts on the exact frame the segment before it ends on: its end shot, or the last frame of the clip you pick there.'), right); out.append(row); return; }
     }
     if (r.shot.who && r.shot.who.length) left.append(node('div', 'hint', 'In frame: ' + r.shot.who.join(', ')));
+    if (r.shot.what && r.shot.what.length) left.append(node('div', 'hint', 'Assets and props: ' + r.shot.what.join(', ')));
     const text = node('textarea'); text.value = r.shot.text || ''; text.oninput = () => { r.shot.text = text.value; saveShots(); };
     mid.append(text);
     const job = (P.image_jobs || []).filter(j => j.kind === 'shot' && j.segment_id === r.seg.id && j.slot === r.slot).pop();
@@ -1459,7 +1567,7 @@ $('storyBtn').onclick = () => busy($('storyBtn'), $('storyStatus'), 'Writing… 
 });
 
 /* ---------- lore: background text, tagged to storyboards ---------- */
-let LORE = { entries: [], storyboards: [], budget: 12000 };
+var LORE = { entries: [], storyboards: [], budget: 12000 };
 async function loreLine() {                               /* step 3 says which lore the model will be given */
   const el = $('storyLore'); if (!el) return;
   const ids = P.lore || [];
@@ -1564,6 +1672,8 @@ function openViewer(src, name, fixer) {
   FX.custom = typeof fixer === 'function' ? fixer : null;
   FX.file = new URL(src, location.href).searchParams.get('filename'); FX.label = name || 'Picture'; fixMode(false);
   $('vFix').style.display = FX.custom || (FX.file && PID) ? '' : 'none';
+  const pick = $('fxRef'); pick.style.display = FX.custom ? 'none' : ''; pick.innerHTML = '<option value="">No prop or asset</option>';      /* swap a prop into a good shot */
+  if (!FX.custom) allThings().filter(x => x.t.views.length && (x.t.name || '').trim()).forEach(x => { const o = node('option', '', 'Use: ' + x.t.name); o.value = x.t.views[0].image; pick.append(o); });
   $('vName').textContent = name || 'Picture'; $('vInfo').textContent = ''; $('vImg').style.visibility = 'hidden';
   $('vImg').onload = () => { $('vInfo').textContent = `${$('vImg').naturalWidth} × ${$('vImg').naturalHeight} · scroll to zoom, drag to move, double-click for 100%`; vFit(); $('vImg').style.visibility = ''; };
   $('viewer').classList.add('on'); $('vImg').src = src;
@@ -1618,7 +1728,7 @@ $('fxGo').onclick = () => busy($('fxGo'), $('fxStatus'), 'Sending to the server�
   }
   const mask = await upload(file);
   await save();
-  await post('/api/image/fix', { project: PID, image: FX.file, mask, prompt: $('fxText').value, width: $('vImg').naturalWidth, height: $('vImg').naturalHeight, label: FX.label.split(' · ').pop() });
+  await post('/api/image/fix', { project: PID, image: FX.file, mask, prompt: $('fxText').value, width: $('vImg').naturalWidth, height: $('vImg').naturalHeight, label: FX.label.split(' · ').pop(), refs: $('fxRef').value ? [$('fxRef').value] : [] });
   closeViewer(); await poll(true); redrawClips();
   toast('Fix queued. The new picture is added next to the original when it finishes; the original is kept.');
 });

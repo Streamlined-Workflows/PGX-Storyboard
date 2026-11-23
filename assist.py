@@ -350,6 +350,36 @@ def energy_word(analysis, start, end):
     return "quiet" if e < 0.35 else "mid energy" if e < 0.65 else "loud"
 
 
+# ---------- scene assets, world assets and props ----------
+
+# What to draw for each kind when its pictures are generated: (label, framing).
+THING_VIEWS = {
+    "scene": [("establishing", "Wide establishing shot showing the whole of it in its setting"),
+              ("three-quarter", "Three-quarter view of the whole of it, clearly lit, filling most of the frame"),
+              ("detail", "Close view of its most distinctive detail")],
+    "prop": [("main", "The whole object in a three-quarter view on a plain neutral studio background, evenly lit"),
+             ("side", "The whole object in a straight side view on a plain neutral studio background"),
+             ("in use", "The object in use, held or operated, hands only, no face")],
+}
+THING_VIEWS["world"] = THING_VIEWS["scene"]
+THING_WORDS = {"scene": "scene asset", "world": "world asset", "prop": "prop"}
+
+
+def thing_prompt(thing, framing, has_refs, extra=""):
+    """The FLUX.2 prompt for one picture of a scene asset, world asset or prop."""
+    name, context = (thing.get("name") or "the subject").strip(), (thing.get("context") or "").strip().rstrip(".")
+    parts = []
+    if extra.strip():
+        parts.append(f"For this picture: {extra.strip().rstrip('.')}.")
+    parts.append(f"{framing} of {name}." + (f" {context}." if context else ""))
+    if (thing.get("description") or "").strip():
+        parts.append(thing["description"].strip().rstrip(".") + ".")
+    if has_refs:
+        parts.append("It is the same one shown in the reference images: keep its shape, proportions, colours and markings exactly.")
+    parts.append("No people unless stated. Cinematic, sharp focus, no text, no watermark.")
+    return " ".join(parts)
+
+
 def story_listing(story, analysis, lines, segments):
     beats = dict(zip(story.get("segment_ids", []), story.get("beats", [])))
     tempo = analysis.get("tempo") or 0
@@ -384,10 +414,11 @@ def recommend_cast(story, analysis, lines, segments, existing, lore=""):
              "description": str(c.get("description", "")).strip()[:900]} for c in out.get("characters", [])[:4] if str(c.get("name", "")).strip()]
 
 
-def write_shots(story, analysis, lines, segments, cast, lore=""):
+def write_shots(story, analysis, lines, segments, cast, lore="", things=()):
     """Plan the key frames, and decide for each segment whether it continues the previous shot or cuts to a new scene."""
-    frame = {"type": "object", "required": ["description", "cast"], "properties": {
-        "description": {"type": "string"}, "cast": {"type": "array", "items": {"type": "string"}}}}
+    frame = {"type": "object", "required": ["description", "cast", "assets"], "properties": {
+        "description": {"type": "string"}, "cast": {"type": "array", "items": {"type": "string"}},
+        "assets": {"type": "array", "items": {"type": "string"}}}}
     schema = {"type": "object", "required": ["first_frame", "segments"], "properties": {"first_frame": frame, "segments": {"type": "array", "items": {
         "type": "object", "required": ["starts", "reason", "begin_frame", "end_frame"], "properties": {
             "starts": {"type": "string", "enum": ["continue", "new_scene"]}, "reason": {"type": "string"},
@@ -412,10 +443,16 @@ def write_shots(story, analysis, lines, segments, cast, lore=""):
               "expression, the framing (close-up, medium, wide), the place and the light. Keep places, props and clothing "
               "consistent unless the story changes them. In a singing shot the performer faces the camera, mouth open mid-line. "
               "Describe only what is visible; no camera moves, no sound, no text on screen. 'cast' lists which of the named cast "
-              "members are visible in that frame, using their names exactly as given, or an empty list.")
+              "members are visible in that frame, using their names exactly as given, or an empty list. 'assets' lists which of the "
+              "named assets and props are visible in that frame, using their names exactly as given, or an empty list. Use the "
+              "listed assets and props wherever the story calls for such a thing, in place of inventing a new one; many frames "
+              "will use none.")
     people = "\n".join(f'- {c["name"]}: {c.get("role") or "cast member"}. Looks: {c.get("description") or "not described"}' for c in cast)
     user = (story_header(story) + "\n\nCast:\n" + (people or "(none chosen: describe the people the story needs)") +
             f"\n\nSegments ({len(segments)}):\n" + story_listing(story, analysis, lines, segments))
+    if things:                                        # names and one line of context only; their pictures do the describing later
+        user += "\n\nAssets and props available:\n" + "\n".join(
+            f'- {t["name"]} ({THING_WORDS.get(t.get("kind"), "asset")})' + (f': {t["context"]}' if t.get("context") else "") for t in things)
     user = with_lore(user, lore)
     out = chat(system, user, schema, think=True, temperature=0.7, timeout=900, ctx=32768)     # one long answer: a frame or two per segment
 
@@ -423,7 +460,9 @@ def write_shots(story, analysis, lines, segments, cast, lore=""):
         f = f if isinstance(f, dict) else {}
         lowered = {n.lower(): n for n in names}
         who = [lowered[str(w).strip().lower()] for w in f.get("cast", []) if str(w).strip().lower() in lowered]
-        return {"text": str(f.get("description", "")).strip(), "who": list(dict.fromkeys(who))}
+        known = {t["name"].lower(): t["name"] for t in things}
+        what = [known[str(w).strip().lower()] for w in f.get("assets", []) if str(w).strip().lower() in known]
+        return {"text": str(f.get("description", "")).strip(), "who": list(dict.fromkeys(who)), "what": list(dict.fromkeys(what))}
     first = clean(out.get("first_frame"))
     ends = []
     for i in range(len(segments)):
@@ -436,13 +475,20 @@ def write_shots(story, analysis, lines, segments, cast, lore=""):
     return {"first": first, "ends": ends}
 
 
-def shot_prompt(text, style, people):
-    """The FLUX.2 prompt for one key frame. `people` are the cast members whose reference pictures are attached, in order."""
+def shot_prompt(text, style, people, things=(), described=()):
+    """The FLUX.2 prompt for one key frame. `people` are the cast members whose reference pictures are attached, in order;
+    `things` are assets and props whose pictures follow them; `described` are ones in frame with no picture attached."""
     parts = [text.strip().rstrip(".") + "."]
     for i, c in enumerate(people):
         look = (c.get("description") or "").strip().rstrip(".")
         parts.append(f'{c["name"]} is the character in reference image {i + 1}; keep their face, hair and build exactly' +
                      (f". Their clothing and its colours follow this description: {look}." if look else ", and their outfit as shown."))
+    for i, t in enumerate(things, len(people) + 1):
+        parts.append(f'{t["name"]} is the {"object" if t.get("kind") == "prop" else "subject"} shown in reference image {i}; keep its shape, proportions, colours and markings exactly.')
+    for t in described:
+        look = ". ".join(x.strip().rstrip(".") for x in (t.get("context") or "", t.get("description") or "") if x.strip())
+        if look:
+            parts.append(f'{t["name"]}: {look}.')
     if style.strip():
         parts.append("Visual style: " + style.strip().rstrip(".") + ".")
     parts.append("Cinematic widescreen film still, sharp focus, no text, no watermark.")
