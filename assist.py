@@ -16,7 +16,28 @@ MIN_LEN, MAX_LEN, IDEAL_LEN = 5.0, 15.0, 9.0
 
 # ---------- language model ----------
 
+before_chat = None      # set by the server: makes room for the language model before it is asked to work
+active = 0              # how many requests the language model is working on right now; it is never unloaded mid-answer
+_active_lock = __import__("threading").Lock()
+
+
 def chat(system, user, schema, think=True, temperature=0.7, timeout=420, images=None, ctx=16384):
+    if before_chat:
+        try:
+            before_chat()
+        except Exception:
+            pass                                   # making room is a courtesy; the request goes ahead regardless
+    global active
+    with _active_lock:
+        active += 1
+    try:
+        return _chat_with_retry(system, user, schema, think, temperature, timeout, images, ctx)
+    finally:
+        with _active_lock:
+            active -= 1
+
+
+def _chat_with_retry(system, user, schema, think=True, temperature=0.7, timeout=420, images=None, ctx=16384):
     """Ask the local model for JSON matching `schema`; see _chat. If the reply is cut off or empty (usually because
     its private reasoning used up the room), ask once more without the reasoning step and with more room."""
     try:

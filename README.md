@@ -153,6 +153,21 @@ current configuration to `data/defaults.json`.
 
 Tests: `./run-tests.sh` (Python only; no ComfyUI, Ollama or network).
 
+## Memory
+
+The CPU and GPU share one pool of memory on this machine, and ComfyUI keeps its last models
+loaded while idle. SWIFT Director gives memory back in three ways:
+
+- **On opening a tab.** A few seconds after a tab is opened, the model servers it does not use
+  are unloaded: Storyboard and Identity Studio keep ComfyUI; Assisted Storyboard and Assets keep
+  both; Projects, Library and Lore keep neither. System status changes nothing.
+- **Before the language model writes**, ComfyUI is asked to release its models; and before
+  ComfyUI renders or draws, the language model is unloaded.
+- **Free memory** on System status unloads everything.
+
+ComfyUI is only ever asked while its queue is empty, and the language model is never unloaded in
+the middle of an answer. The cost is time: the next job reloads its model.
+
 ## Scene assets, props and world assets
 
 Three kinds of asset sit beside actors in the Assets tab. Each has a name, a one-line context

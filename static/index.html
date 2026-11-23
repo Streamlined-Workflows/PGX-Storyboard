@@ -654,6 +654,16 @@ function show(name) {
   if (name === 'identity' && window.IdentityStudio) window.IdentityStudio.show();
   if (name === 'lore') renderLore();
   headerTitle();
+  releaseFor(name);
+}
+/* Opening a part of the application frees the models that part does not use (ComfyUI only while its queue is empty).
+   It waits a few seconds first, so passing through a tab on the way to another does nothing. System status is left
+   out on the server side: looking at memory should not change it. */
+var releaseTimer = null, releasedFor = null;
+function releaseFor(name) {
+  clearTimeout(releaseTimer);
+  if (name === releasedFor) return;
+  releaseTimer = setTimeout(() => { releasedFor = name; post('/api/system/release', { view: name }).catch(() => {}); }, 4000);
 }
 /* In Identity Studio the header names the identity project, not the open storyboard (which that box would rename). */
 var identityName = '';   /* var: show() can run before this line is reached */
@@ -1649,6 +1659,7 @@ async function refreshUsage() {
   else box.append(node('div', 'hint', 'Nothing large is running.'));
   if (!u.whole_server) box.append(node('div', 'hint', 'Only SWIFT Director itself is visible. Run ~/SWIFT_Director/update.sh once on the server so this list can show ComfyUI, Ollama and everything else.'));
   box.append(node('div', 'hint', 'On this machine the CPU and GPU share one pool of memory, so a model on the GPU also counts as memory in use.'));
+  box.append(node('div', 'hint', 'Memory is also freed for you: a few seconds after you open a tab, the models that tab does not use are unloaded, and ComfyUI gives its memory back before the language model writes. ComfyUI is never asked while anything is rendering or waiting. This page changes nothing.'));
 }
 $('freeBtn').onclick = async () => {
   const b = $('freeBtn'), m = $('freeMsg'); b.disabled = true; m.className = 'hint'; m.textContent = 'Asking ComfyUI and Ollama to unload…';

@@ -389,6 +389,13 @@ def actor_generate(pid, actor_id, refs=None, views=None, extra=""):
         return {"jobs": made}
 
 
+def make_room_for_language_model():
+    """Before the language model is asked to write, release what ComfyUI is holding, if ComfyUI is idle.
+    The two share one pool of memory on this machine. A render in progress is left alone and the model loads beside it."""
+    if "comfy" in usage.release(comfy_json, {"llm"})["released"]:
+        time.sleep(2)                              # ComfyUI lets go on its next idle pass; give it that moment
+
+
 def models_in_use():
     """What performs each model role today. Milestone 2 turns these into choices; until then there is one per role."""
     m = workflows.MODELS
@@ -1261,6 +1268,8 @@ class Handler(BaseHTTPRequestHandler):
                                 seg["chosen"] = None
                     save_project(project)
                 return self.send_json(project)
+            if path == "/api/system/release":
+                return self.send_json(usage.release_for_view(comfy_json, payload.get("view"), llm_busy=assist.active > 0))
             if path == "/api/system/free":
                 return self.send_json(usage.free(comfy_json))
             if path == "/api/cancel":
@@ -1281,5 +1290,6 @@ if __name__ == "__main__":
     # Identity Studio draws with the same FLUX.2 graphs as the storyboard, so there is one configuration to keep.
     identity_api.configure(build_image=workflows.build_image, build_fix=workflows.build_fix, before=assist.unload)
     identity_api.start()
+    assist.before_chat = make_room_for_language_model
     print(f"SWIFT Director on http://0.0.0.0:{PORT}  ->  ComfyUI at {COMFY}", flush=True)
     ThreadingHTTPServer(("0.0.0.0", PORT), Handler).serve_forever()

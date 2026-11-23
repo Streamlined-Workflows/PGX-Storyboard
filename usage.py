@@ -34,21 +34,67 @@ NOTES = {
 }
 
 
-def free(comfy_json):
-    """Ask ComfyUI to unload its models and Ollama to unload the language model.
-    Refuses while anything is rendering or waiting, so it can never disturb a job."""
-    queue = comfy_json("/queue", timeout=5)
-    busy = len(queue.get("queue_running", [])) + len(queue.get("queue_pending", []))
-    if busy:
-        raise ValueError(f"{busy} job{'s are' if busy != 1 else ' is'} rendering or waiting. Memory can be freed when the queue is empty.")
-    comfy_json("/free", {"unload_models": True, "free_memory": True})
+# Which model servers each part of the application needs. Opening a part releases the ones it does not need.
+# System status is deliberately absent: looking at memory must not change it.
+NEEDS = {
+    "storyboard": {"comfy"},             # renders
+    "assist": {"comfy", "llm"},          # the language model writes; ComfyUI draws key frames
+    "assets": {"comfy", "llm"},          # generating pictures, and describing an actor from them
+    "identity": {"comfy"},               # concepts
+    "projects": set(), "library": set(), "lore": set(),
+}
+
+
+def _unload_llm():
     try:
         for m in _get(OLLAMA + "/api/ps").get("models") or []:
             req = urllib.request.Request(OLLAMA + "/api/generate", data=json.dumps({"model": m.get("name"), "keep_alive": 0}).encode(),
                                          headers={"Content-Type": "application/json"})
             urllib.request.urlopen(req, timeout=10).read()
+            return True
     except (OSError, ValueError):
         pass
+    return False
+
+
+def _comfy_idle(comfy_json):
+    queue = comfy_json("/queue", timeout=5)
+    return len(queue.get("queue_running", [])) + len(queue.get("queue_pending", [])) == 0
+
+
+def release(comfy_json, keep, llm_busy=False):
+    """Unload every model server not named in `keep` ("comfy", "llm"). ComfyUI is only ever asked while its queue is
+    empty, so a render or a waiting job is never disturbed. -> what was released, and what was left alone and why."""
+    out = {"released": [], "left": []}
+    if "comfy" not in keep:
+        try:
+            if _comfy_idle(comfy_json):
+                comfy_json("/free", {"unload_models": True, "free_memory": True})
+                out["released"].append("comfy")
+            else:
+                out["left"].append("ComfyUI is rendering or has jobs waiting")
+        except OSError:
+            out["left"].append("ComfyUI could not be reached")
+    if "llm" not in keep:
+        if llm_busy:
+            out["left"].append("the language model is in the middle of writing")
+        elif _unload_llm():
+            out["released"].append("llm")
+    return out
+
+
+def release_for_view(comfy_json, view, llm_busy=False):
+    """Called a moment after the person opens a part of the application."""
+    if view not in NEEDS:
+        return {"released": [], "left": []}
+    return release(comfy_json, NEEDS[view], llm_busy)
+
+
+def free(comfy_json):
+    """The Free memory button: unload everything. Refuses while anything is rendering or waiting."""
+    if not _comfy_idle(comfy_json):
+        raise ValueError("A job is rendering or waiting. Memory can be freed when the queue is empty.")
+    release(comfy_json, set())
     return {"ok": True}
 
 
