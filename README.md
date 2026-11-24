@@ -270,6 +270,9 @@ composed output. The pictures are ordinary FLUX.2 stills marked `kind: "gen"` wi
   attached image outweighs any wording, so the model copies it. Instead **Apply** has the language model (vision) describe
   the picture's look, or its general idea, in at most 300 characters, and puts that at the start of the prompt. Until
   Apply is pressed such a reference has no effect.
+- **Apply again** replaces that reference's description. If the person typed inside it, a Yes / No question asks whether
+  to keep those words (Yes leaves them in the prompt, No removes them with the old description). Text outside the
+  description is never touched, and with nothing typed inside there is no question.
 - Each reference keeps a number from 1 to 4 while it is there, with a colour: green, blue, cyan, magenta. The text under a
   reference is in its colour, and so are the words it put in the prompt. Those words are tracked as ranges of the prompt
   (`marks`); anything typed or changed, even inside one, falls outside the ranges and shows in the normal colour. The

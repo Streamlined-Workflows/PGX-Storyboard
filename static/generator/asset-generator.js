@@ -249,13 +249,44 @@ window.AssetGenerator = (function () {
     st.marks = st.marks.filter(m => m[2] !== slot);
     return removed;
   }
+  /* What the person typed inside a reference's description: the stretches between that reference's coloured words. */
+  function editsInside(st, slot) {
+    const mine = st.marks.filter(m => m[2] === slot), out = [];
+    for (let i = 0; i + 1 < mine.length; i++) {
+      const from = mine[i][1], to = mine[i + 1][0];
+      if (to > from && !st.marks.some(m => m[2] !== slot && m[0] < to && m[1] > from)) out.push([from, to]);      // never reach across another reference's words
+    }
+    return out;
+  }
+  /* A yes / no question in a small window. -> 'yes', 'no', or null if it was closed without answering. */
+  function ask(title, detail) {
+    return new Promise(done => {
+      const box = el(`<div class="ag-modal" role="alertdialog" aria-modal="true" aria-label="${esc(title)}"><div class="ag-modalbox ag-ask"><h2>${esc(title)}</h2><p>${detail}</p>
+        <div class="ag-askbtns"><button class="primary ag-yes" type="button">Yes</button><button class="ag-no" type="button">No</button><span class="ag-grow"></span><button class="small ghost ag-cancel" type="button">Cancel</button></div></div></div>`);
+      const end = answer => { document.removeEventListener('keydown', key); box.remove(); done(answer); };
+      const key = ev => { if (ev.key === 'Escape') end(null); };
+      box.querySelector('.ag-yes').onclick = () => end('yes'); box.querySelector('.ag-no').onclick = () => end('no'); box.querySelector('.ag-cancel').onclick = () => end(null);
+      box.onpointerdown = ev => { if (ev.target === box) end(null); };
+      document.addEventListener('keydown', key);
+      root.querySelector('.ag').append(box); box.querySelector('.ag-yes').focus();
+    });
+  }
   /* Apply: the language model describes the picture (its look, or its general idea) and the words go at the start of the prompt. */
   async function applyRef(name, r, button) {
     const st = S()[name];
+    /* Applying again replaces this reference's description. If the person typed inside it, ask whether those words stay. */
+    let keepEdits = true;
+    const typed = editsInside(st, r.slot).map(([a, b]) => st.prompt.slice(a, b).trim()).filter(Boolean);
+    if (typed.length) {
+      const answer = await ask('Keep your edits?', `You typed inside this reference's description: <b>${typed.map(esc).join('</b>, <b>')}</b>.<br><br><b>Yes</b> replaces the description and leaves what you typed in the prompt.<br><b>No</b> replaces the description and removes what you typed inside it.<br>Anything you wrote outside the description stays either way.`);
+      if (!answer) return;
+      keepEdits = answer === 'yes';
+    }
     if (button) { button.disabled = true; button.textContent = 'Describing…'; }
     try {
       const got = await call('POST', '/describe', { project: host.pid, image: r.image, use: r.use });
       if (!S()[name].refs.includes(r) || r.use !== got.use) return;                    // it was removed or changed while the model worked
+      if (!keepEdits) editsInside(st, r.slot).reverse().forEach(([a, b]) => edited(st, st.prompt.slice(0, a) + st.prompt.slice(b)));
       unwrite(st, r.slot);
       const lead = got.text + (st.prompt ? ' ' : '');
       st.marks = [[0, got.text.length, r.slot], ...st.marks.map(([a, b, c]) => [a + lead.length, b + lead.length, c])];

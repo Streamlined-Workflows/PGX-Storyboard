@@ -71,3 +71,5 @@
 .ag .ag-promptwrap .ag-prompt { position:relative; display:block; color:transparent; caret-color:var(--swift-text-strong); background:transparent; border-color:var(--swift-border); border-radius:var(--swift-radius-lg); resize:vertical; }
 .ag .ag-promptwrap .ag-prompt::placeholder { color:var(--swift-text-muted); }
 .ag .ag-promptwrap .ag-prompt::selection { color:transparent; background:rgba(74, 222, 128, .28); }
+.ag .ag-ask { width:min(520px, 100%); } .ag .ag-ask h2 { margin:0 0 10px; } .ag .ag-ask p { margin:0 0 16px; line-height:1.5; color:var(--swift-text); }
+.ag .ag-askbtns { display:flex; gap:10px; align-items:center; } .ag .ag-askbtns .ag-yes, .ag .ag-askbtns .ag-no { min-width:84px; }
