@@ -674,7 +674,7 @@ function show(name) {
   if (name === 'lore') renderLore();
   if (window.AudioLab) { if (name === 'audio') window.AudioLab.show($('v-audio'), P); else window.AudioLab.hide(); }
   if (window.AssetGenerator) { if (name === 'generator') window.AssetGenerator.show($('v-generator'), { pid: PID, upload, view, toast, openViewer, saveAsset: assetFromPicture }); else window.AssetGenerator.hide(); }
-  headerTitle();
+  headerTitle(); fitShown();
   releaseFor(name);
 }
 /* Opening a part of the application frees the models that part does not use (ComfyUI only while its queue is empty).
@@ -1024,7 +1024,7 @@ function actorPanel(a) {
   d.querySelector('.genone').onclick = ev => generate(ev.target, { ...ticked(), views: [d.querySelector('.oneview').value] });
   d.querySelector('.aextra').value = extraNote[a.id] || ''; d.querySelector('.aextra').oninput = ev => { extraNote[a.id] = ev.target.value; };
   d.querySelector('.aname').oninput = ev => { a.name = ev.target.value; dirty(); };
-  d.querySelector('.adesc').oninput = ev => { a.description = ev.target.value; dirty(); };
+  d.querySelector('.adesc').oninput = ev => { a.description = ev.target.value; dirty(); }; fitText(d.querySelector('.adesc'));
   d.querySelector('input[type=file]').onchange = async ev => {
     for (const f of ev.target.files) { try { a.views.push({ id: uid(), image: await upload(f), label: stem(f.name).replace(/[_-]+/g, ' ') }); } catch (err) { toast(err.message); } }
     dirty(); renderAssets();
@@ -1072,7 +1072,7 @@ function thingPanel(t, loreId, list) {
   if (loreId) { d.querySelector('.akind').value = t.kind === 'prop' ? 'prop' : 'world'; d.querySelector('.akind').onchange = ev => { t.kind = ev.target.value; changed(); }; }
   d.querySelector('.aname').oninput = ev => { t.name = ev.target.value; changed(); };
   d.querySelector('.acontext').oninput = ev => { t.context = ev.target.value; changed(); };
-  d.querySelector('.adesc').oninput = ev => { t.description = ev.target.value; changed(); };
+  d.querySelector('.adesc').oninput = ev => { t.description = ev.target.value; changed(); }; fitText(d.querySelector('.adesc'));
   d.querySelector('.aextra').value = extraNote[t.id] || ''; d.querySelector('.aextra').oninput = ev => { extraNote[t.id] = ev.target.value; };
   d.querySelector('input[type=file]').onchange = async ev => {
     for (const f of ev.target.files) { try { t.views.push({ id: uid(), image: await upload(f), label: stem(f.name).replace(/[_-]+/g, ' ') }); } catch (err) { toast(err.message); } }
@@ -1471,7 +1471,7 @@ async function renderAssist() {
         catch (e) { toast(e.message); return false; }
       };
       const box = tr.querySelector('.beat');
-      if (box) { const fit = () => { box.style.height = 'auto'; box.style.height = (box.scrollHeight + 2) + 'px'; }; fit(); box.addEventListener('input', fit); }   /* grows and shrinks with what is typed */
+      if (box) fitText(box);   /* grows and shrinks with what is typed */
       if (box) box.onchange = () => send({ text: box.value });
       tr.querySelector('.beatlock').onclick = async () => { const locking = !tr.querySelector('.beatlock').classList.contains('locked'); if (await send(box ? { text: box.value, locked: locking } : { locked: locking })) renderAssist(); };
     });
@@ -1539,6 +1539,19 @@ function shotRows() {
     title: `${i + 1}. ${P.segments[i].name}`, off: P.segments[i].type === 'singing', sub: P.segments[i].type === 'singing' ? 'Singing: no end shot. The next segment continues from the last frame of the clip you pick here.' : 'End shot' + (i + 1 < P.segments.length ? `, and where segment ${i + 2} begins if it continues` : '') }); });
   return rows;
 }
+/* ---------- text boxes that show all of their text ----------
+   A box fitted with fitText() is made exactly tall enough for what is in it whenever its text changes, and once when it is
+   drawn. It can still be dragged taller or shorter by its corner; that size lasts until the text next changes. */
+function fitText(area) {
+  if (!area._fit) {
+    area._fit = () => { if (!area.offsetParent) return; area.style.height = 'auto'; area.style.height = (area.scrollHeight + 2) + 'px'; };   // hidden boxes are fitted when their tab opens
+    area.addEventListener('input', area._fit);
+  }
+  area._fit(); requestAnimationFrame(area._fit);      // again once it is on the page and laid out
+}
+const fitShown = () => requestAnimationFrame(() => document.querySelectorAll('.view.on textarea').forEach(t => t._fit && t._fit()));
+window.addEventListener('resize', fitShown);
+
 /* ---------- prompt counts ----------
    Every prompt box shows "x / y" at its bottom right: x is the number of characters that will be sent, y is about how many the
    model reads. The models count word pieces, not characters, so y is an estimate (about four characters a piece in English).
@@ -1546,7 +1559,7 @@ function shotRows() {
 let LIMITS = { image: { model: 'FLUX.2 [dev]', tokens: 512, characters: 2000 }, video: { model: 'Wan 2.1 / 2.2', tokens: 512, characters: 2000 } };
 api('/api/prompt_limits').then(l => { LIMITS = l; document.querySelectorAll('textarea').forEach(t => t._pc && t._pc()); }).catch(() => {});
 function promptCount(area, kind, extra, addedFor) {
-  if (!area._pc) { const wrap = node('span', 'pcwrap'); area.replaceWith(wrap); wrap.append(area, node('span', 'pcount')); area.addEventListener('input', () => area._pc()); }
+  if (!area._pc) { const wrap = node('span', 'pcwrap'); area.replaceWith(wrap); wrap.append(area, node('span', 'pcount')); area.addEventListener('input', () => area._pc()); fitText(area); }
   const out = area.parentNode.querySelector('.pcount');
   area._pc = () => {
     const lim = LIMITS[kind], typed = area.value.trim().length, more = Math.max(0, (extra && extra()) || 0), x = typed + more;
@@ -1993,7 +2006,7 @@ async function boot() {
 <script src="/static/config/config-center.js?v=1"></script>
 <script src="/static/audio/audio-mix.js?v=3"></script>
 <script src="/static/audio/audio-lab.js?v=3"></script>
-<script src="/static/generator/asset-generator.js?v=10"></script>
+<script src="/static/generator/asset-generator.js?v=11"></script>
 <script src="/static/identity/vendor/imagetracer_v1.2.6.js"></script>
 <script src="/static/identity/teams-icons.js?v=9"></script>
 <script src="/static/identity/download.js?v=10"></script>

@@ -231,6 +231,14 @@ model is released when another tab is opened, by Free memory, or after five idle
 voice** speaks one line so a model can be heard; it is refused while a render is running or waiting.
 See `docs/Task_02_Milestone_2_Audio.md`.
 
+## Text boxes
+
+The boxes that hold prompts and descriptions are sized to their text: each is made exactly tall enough whenever its text
+changes (typed, applied or rewritten) and when its tab opens, so nothing is hidden behind a scrollbar. A box can still be
+dragged taller or shorter by its corner; that size lasts until its text next changes. Covered: segment video prompts,
+story concept lines, Shots descriptions, actor and asset descriptions, and the Asset Generator's prompts. The Lore text
+and the lyrics paste box are left at a fixed height because they can hold pages of text.
+
 ## Prompt counts
 
 Every prompt box that feeds a model shows `x / y` at its bottom right: the characters that will be sent against about how

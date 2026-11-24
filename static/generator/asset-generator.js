@@ -231,7 +231,10 @@ window.AssetGenerator = (function () {
     const st = S()[name], back = card.querySelector('.ag-back'), area = card.querySelector('.ag-prompt'); let html = '', at = 0;
     st.marks.forEach(([a, b, slot]) => { html += esc(st.prompt.slice(at, a)) + `<span class="ag-c${slot}">${esc(st.prompt.slice(a, b))}</span>`; at = b; });
     back.innerHTML = html + esc(st.prompt.slice(at)) + '\n';      // the last line break keeps the copy as tall as the text area's own content
-    back.scrollTop = area.scrollTop;
+    /* The box is made exactly tall enough for its text whenever the text changes, so all of it shows. It can still be dragged
+       taller or shorter by its corner; that lasts until the text next changes. */
+    const fit = () => { if (!area.offsetParent) return; area.style.height = 'auto'; area.style.height = (area.scrollHeight + 2) + 'px'; back.scrollTop = area.scrollTop; };
+    fit(); requestAnimationFrame(fit);
   }
   /* Called with the box's new text: works out what was put in or taken out, and moves, cuts or splits the marks to match. */
   function edited(st, value) {
