@@ -44,6 +44,7 @@ It runs as a Docker container named `swift-director` that starts on boot (with `
 | Storyboard | The song, timeline and segments of the open project |
 | Projects | Every saved project. Open, rename, duplicate or delete one; each keeps its own timeline, assets and clips |
 | Assets | The open project's actors, photos and audio. An actor is one character with a name, a description and any number of views (stills); photos are loose reference stills |
+| Asset Generator | Make pictures outside the storyboard. **Image Generation**: one prompt and up to four reference pictures. **Depth Generation**: a background, middle ground and foreground made separately, one of each applied, then redrawn as one picture. Any result can be saved to Assets as a scene asset or prop |
 | Library | Every video rendered in the open project, with download links |
 | Audio Lab | A multi-track audio timeline for the open project: import sounds, arrange, trim and split clips, mix with effects, and export a finished file |
 | Lore | Long background text about a setting (world, factions, people, technology, look). Each entry can be tagged to any number of storyboards |
@@ -229,6 +230,18 @@ One model is loaded at a time, each in its own process, so unloading always retu
 model is released when another tab is opened, by Free memory, or after five idle minutes. **Test
 voice** speaks one line so a model can be heard; it is refused while a render is running or waiting.
 See `docs/Task_02_Milestone_2_Audio.md`.
+
+## Asset Generator
+
+`generator.py` and `static/generator/`. What is stored per project (`project["generator"]`) is only what was typed and
+chosen: each box's prompt, references and count, which picture is showing, and which three pictures are applied to the
+composed output. The pictures are ordinary FLUX.2 stills marked `kind: "gen"` with the box they belong to.
+
+- A prompt is sent exactly as typed; nothing is added to it.
+- **Run generations** queues one still per requested generation (1 to 10), each from a different seed.
+- The composed output always sends the applied background, middle ground and foreground as images 1, 2 and 3, in that
+  order, and the optional fourth reference as image 4. It will not run until all three layers are applied.
+- Composing is a redraw by the image model from three references, not a pixel-exact layering.
 
 ## Lore
 

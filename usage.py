@@ -45,6 +45,7 @@ NEEDS = {
     "assist": {"comfy", "llm"},          # the language model writes; ComfyUI draws key frames
     "assets": {"comfy", "llm"},          # generating pictures, and describing an actor from them
     "identity": {"comfy"},               # concepts
+    "generator": {"comfy"},              # Asset Generator pictures
     "projects": set(), "library": set(), "lore": set(),
     "audio": set(),                      # Audio Lab plays and edits in the browser; it needs no model
 }

@@ -11,6 +11,7 @@
 <link rel="stylesheet" href="/static/identity/identity-studio.css?v=9">
 <link rel="stylesheet" href="/static/config/config-center.css?v=1">
 <link rel="stylesheet" href="/static/audio/audio-lab.css?v=3">
+<link rel="stylesheet" href="/static/generator/asset-generator.css?v=1">
 <style>
   /* Montserrat (SIL Open Font License 1.1), served from the server so the page needs no outside network. */
   @font-face { font-family:Montserrat; font-weight:400; font-display:swap; src:url('/static/fonts/montserrat-latin-400-normal.woff2') format('woff2'); }
@@ -271,6 +272,7 @@
   <button data-view="assist">Assisted Storyboard</button>
   <button data-view="projects">Projects</button>
   <button data-view="assets">Assets</button>
+  <button data-view="generator">Asset Generator</button>
   <button data-view="library">Library</button>
   <button data-view="audio">Audio Lab</button>
   <button data-view="lore">Lore</button>
@@ -364,6 +366,8 @@
 
   <!-- ===== Audio Lab: a separate module, drawn by /static/audio/audio-lab.js ===== -->
   <div id="v-audio" class="view"></div>
+  <!-- ===== Asset Generator: drawn by /static/generator/asset-generator.js ===== -->
+  <div id="v-generator" class="view"></div>
 
   <!-- ===== Lore ===== -->
   <div id="v-lore" class="view">
@@ -665,6 +669,7 @@ function show(name) {
   if (name === 'identity' && window.IdentityStudio) window.IdentityStudio.show();
   if (name === 'lore') renderLore();
   if (window.AudioLab) { if (name === 'audio') window.AudioLab.show($('v-audio'), P); else window.AudioLab.hide(); }
+  if (window.AssetGenerator) { if (name === 'generator') window.AssetGenerator.show($('v-generator'), { pid: PID, upload, view, toast, openViewer, saveAsset: assetFromPicture }); else window.AssetGenerator.hide(); }
   headerTitle();
   releaseFor(name);
 }
@@ -672,6 +677,12 @@ function show(name) {
    It waits a few seconds first, so passing through a tab on the way to another does nothing. System status is left
    out on the server side: looking at memory should not change it. */
 var releaseTimer = null, releasedFor = null;
+/* Asset Generator: keep one of its pictures as a scene asset or prop of this project. */
+function assetFromPicture(image, kind) {
+  const name = (prompt('Name this ' + (kind === 'prop' ? 'prop' : 'scene asset') + ':') || '').trim(); if (!name) return;
+  (P.things = P.things || []).push({ id: uid(), kind: kind === 'prop' ? 'prop' : 'scene', name: name.slice(0, 80), context: '', description: '', views: [{ id: uid(), image, label: 'Asset Generator' }] });
+  dirty(); toast('Saved to Assets as “' + name + '”. It can now be ticked on any picture in the Shots step.');
+}
 function releaseFor(name) {
   clearTimeout(releaseTimer);
   if (name === releasedFor) return;
@@ -1936,6 +1947,7 @@ async function boot() {
 <script src="/static/config/config-center.js?v=1"></script>
 <script src="/static/audio/audio-mix.js?v=3"></script>
 <script src="/static/audio/audio-lab.js?v=3"></script>
+<script src="/static/generator/asset-generator.js?v=1"></script>
 <script src="/static/identity/vendor/imagetracer_v1.2.6.js"></script>
 <script src="/static/identity/teams-icons.js?v=9"></script>
 <script src="/static/identity/download.js?v=10"></script>

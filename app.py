@@ -24,6 +24,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 import assist
 import config
+import generator
 import lore
 import usage
 import models
@@ -78,6 +79,7 @@ def normalize(project):
     project.setdefault("photos", [])
     project.setdefault("image_jobs", [])
     project.setdefault("lore", [])               # ids of the lore entries tagged to this storyboard
+    project["generator"] = generator.clean(project.get("generator"))      # Asset Generator: prompts, references and choices
     project.setdefault("things", [])             # this storyboard's scene assets and props
     # Schema 2: the configuration block. A file from before it gets the built-in defaults, which reproduce the old
     # behaviour exactly. A file from a newer version keeps its own number and any fields this version does not know.
@@ -326,6 +328,7 @@ def refresh_statuses(pid):
                     project["generated"].append({
                         "id": res["id"], "image": res["image"], "kind": res.get("kind"), "created": res["finished"], "seed": res.get("seed"),
                         "actor_id": res.get("actor_id"), "segment_id": res.get("segment_id"), "source": res.get("source"), "fix": res.get("fix"),
+                        "slot": res.get("slot") if res.get("kind") == "gen" else None,
                         "label": f"{actor.get('name') or 'Actor'} · {res.get('label')}" if actor
                                  else f"{res['owner']} · {res.get('label')}" if res.get("owner") else res.get("label") or "Picture"})
                 except (OSError, ValueError, KeyError) as e:
@@ -516,6 +519,53 @@ def queue_still(project, prompt, refs, stem, graph=None, **fields):
     project["image_jobs"].append(job)
     save_project(project, touch=False)
     return job
+
+
+# ---------- Asset Generator ----------
+
+def generator_view(pid):
+    return generator.view(refresh_statuses(pid))
+
+
+def generator_save(pid, state):
+    with LOCK:
+        project = load_project(pid)
+        project["generator"] = generator.clean(state, project.get("generator"))
+        save_project(project, touch=False)
+        return generator.view(project)
+
+
+def generator_run(pid, box, state=None):
+    """Queue a box's pictures: as many as its count says, each from a different seed."""
+    with LOCK:
+        project = load_project(pid)
+        if state is not None:
+            project["generator"] = generator.clean(state, project.get("generator"))
+        prompt, refs, count = generator.plan(project, box)
+        project["image_jobs"] = [j for j in project["image_jobs"] if not (j.get("kind") == "gen" and j.get("slot") == box and j.get("status") == "error")]
+        threading.Thread(target=assist.unload, daemon=True).start()      # the language model gives its memory back to the image model
+        label = generator.TITLES[box]
+        for i in range(count):
+            queue_still(project, prompt, refs, "gen_" + box, kind="gen", slot=box, label=f"Asset Generator · {label}")
+        save_project(project, touch=False)
+        return generator.view(project)
+
+
+def generator_apply(pid, layer, image):
+    with LOCK:
+        project = load_project(pid)
+        project["generator"] = generator.apply(project, layer, image)
+        save_project(project, touch=False)
+        return generator.view(project)
+
+
+def generator_remove(pid, gid):
+    """Take one generated picture out of its box. The file stays on the server; anything already using it is unaffected."""
+    with LOCK:
+        project = load_project(pid)
+        project["generated"] = [g for g in project.get("generated", []) if not (g.get("id") == gid and g.get("kind") == "gen")]
+        save_project(project, touch=False)
+        return generator.view(project)
 
 
 def generated_remove(pid, gid):
@@ -1186,6 +1236,8 @@ class Handler(BaseHTTPRequestHandler):
                 return self.send_json(dict(config.options(), in_use=models_in_use()))
             if url.path == "/api/lore":
                 return self.send_json(lore_listing())
+            if url.path == "/api/generator":
+                return self.send_json(generator_view(urllib.parse.parse_qs(url.query).get("project", [""])[0]))
             if url.path == "/api/system/usage":
                 return self.send_json(usage.report())
             if url.path == "/api/models":
@@ -1246,6 +1298,14 @@ class Handler(BaseHTTPRequestHandler):
                 return self.send_json(models.forget_token())
             if path == "/api/models/update":
                 return self.send_json(models.start_update(payload.get("id")))
+            if path == "/api/generator/save":
+                return self.send_json(generator_save(pid, payload.get("state")))
+            if path == "/api/generator/run":
+                return self.send_json(generator_run(pid, payload.get("box"), payload.get("state")))
+            if path == "/api/generator/apply":
+                return self.send_json(generator_apply(pid, payload.get("layer"), payload.get("image")))
+            if path == "/api/generator/remove":
+                return self.send_json(generator_remove(pid, payload.get("id")))
             if path == "/api/models/test_voice":
                 return self.test_voice(payload)
             if path == "/api/projects":
