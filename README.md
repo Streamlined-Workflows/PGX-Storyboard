@@ -218,6 +218,18 @@ A multi-track timeline for arranging a project's audio. It is a separate module 
 See `docs/Task_03_Milestone_C.md` for how the export is checked. The application's container
 includes ffmpeg for this (`Dockerfile`).
 
+## Speech service
+
+`speech-service/` is a third container (port 8192, local only) holding the software for two speech
+generation models: Qwen3-TTS (Apache 2.0) and Ming-3.0-tts (MIT). `run.sh` builds it last and carries
+on if the build fails. Model files are not in the image; each is downloaded from System status, AI
+Models, Speech generation, into the Docker volume `swift-director-speech-models`.
+
+One model is loaded at a time, each in its own process, so unloading always returns the memory. A
+model is released when another tab is opened, by Free memory, or after five idle minutes. **Test
+voice** speaks one line so a model can be heard; it is refused while a render is running or waiting.
+See `docs/Task_02_Milestone_2_Audio.md`.
+
 ## Lore
 
 Lore entries are stored on their own in `data/lore/<id>.json` and belong to no single project; a

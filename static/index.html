@@ -137,6 +137,8 @@
   @keyframes spin { to { transform:rotate(360deg); } }
   .model .mname { font-weight:600; } .model .mfile { color:var(--dim); font:11px ui-monospace,Consolas,monospace; word-break:break-all; }
   .model .muse { font-style:italic; color:var(--dim); margin-top:3px; max-width:78ch; }
+  .model .mlic { font-size:12px; color:var(--dim); margin-top:3px; } .model .mtest { font-size:12px; margin-top:6px; display:grid; gap:4px; } .model .mtest.bad { color:var(--accent); } .model .mtest audio { height:34px; max-width:100%; }
+  .model > div:last-child { display:grid; gap:6px; justify-items:end; }
   .model .mstate { font-size:12px; margin-top:4px; } .model .mstate.bad { color:var(--accent); } .model .mstate.good { color:var(--ok); }
   .mbar { height:5px; background:var(--bg); border-radius:3px; overflow:hidden; margin-top:5px; max-width:340px; }
   .mbar i { display:block; height:100%; background:var(--accent2); transition:width .4s; }
@@ -1804,6 +1806,7 @@ function renderModels(data) {
       body.append(node('div', 'mname', m.name));
       if (m.file && m.file !== m.name) body.append(node('div', 'mfile', m.file));
       body.append(node('div', 'muse', m.use));
+      if (m.licence) body.append(node('div', 'mlic', (m.maker ? m.maker + ' · ' : '') + 'Licence: ' + m.licence));
       const label = m.state === 'unknown' ? 'Not checked yet.' : (m.state === 'current' ? 'Up to date · ' : m.state === 'outdated' ? 'Update available · ' : '') + (m.detail || '')
         + (m.checked && !['checking', 'updating'].includes(m.state) ? ' · checked ' + ago(m.checked) : '');
       body.append(node('div', 'mstate ' + (m.state === 'current' ? 'good' : m.state === 'needs_key' ? 'key' : spare ? 'hint' : ['outdated', 'missing', 'error'].includes(m.state) ? 'bad' : 'hint'), label));
@@ -1813,6 +1816,7 @@ function renderModels(data) {
         b.onclick = async () => { b.disabled = true; try { renderModels(await post('/api/models/update', { id: m.id })); } catch (e) { toast(e.message); b.disabled = false; } };
         side.append(b);
       }
+      if (m.voice && (m.state === 'current' || m.state === 'outdated')) voiceTest(m, body, side);
       row.append(mark, body, side); box.append(row);
     });
     wrap.append(box);
@@ -1829,6 +1833,34 @@ function renderModels(data) {
   if (stale && !data.checking && all.some(m => m.state === 'needs_key')) $('modelsNote').textContent += ' Models with a yellow triangle require Hugging Face access to check.';
   clearTimeout(modelsTimer);
   if (active && currentView === 'system') modelsTimer = setTimeout(loadModels, 1500);
+}
+/* Test voice: speaks one short line with a speech model and plays it here. A model that copies voices can also be
+   given a short recording, which is sent for this one test and not kept. */
+function voiceTest(m, body, side) {
+  const out = node('div', 'mtest'), go = node('button', 'small', 'Test voice');
+  const run = async (file) => {
+    go.disabled = true; out.textContent = file ? 'Copying the voice and speaking… the first time loads the model, which can take a minute.' : 'Speaking… the first time loads the model, which can take a minute.';
+    try {
+      const ask = { id: m.id };
+      if (file) { ask.audio = await new Promise((ok, bad) => { const r = new FileReader(); r.onload = () => ok(r.result); r.onerror = () => bad(new Error('That file could not be read.')); r.readAsDataURL(file); });
+        ask.text = (prompt('Optional, and it improves the copy: type the exact words spoken in the recording. Leave empty to skip.' + (m.id === 'ming' ? ' This model needs them.' : '')) || '').trim(); }
+      const r = await fetch('/api/models/test_voice', { method:'POST', headers:{ 'Content-Type':'application/json' }, body: JSON.stringify(ask) });
+      if (!r.ok) { let why = 'The test failed.'; try { why = (await r.json()).error || why; } catch (e) { /* not JSON */ } throw new Error(why); }
+      const player = document.createElement('audio'); player.controls = true; player.src = URL.createObjectURL(await r.blob());
+      out.textContent = ''; out.append(player, node('div', 'hint', 'You are hearing ' + decodeURIComponent(r.headers.get('X-Voice-Test') || 'the model') + '.'));
+      player.play().catch(() => {});
+    } catch (e) { out.textContent = e.message; out.className = 'mtest bad'; }
+    go.disabled = false;
+  };
+  go.onclick = () => { out.className = 'mtest'; run(null); };
+  side.append(go);
+  if (m.copies) {
+    const pick = node('input'); pick.type = 'file'; pick.accept = 'audio/*,video/mp4'; pick.hidden = true;
+    const copy = node('button', 'small ghost', 'Test with a recording…'); copy.title = 'Choose 5 to 15 seconds of one person speaking. It is used for this test only and not kept.';
+    copy.onclick = () => pick.click(); pick.onchange = () => { if (pick.files[0]) { out.className = 'mtest'; run(pick.files[0]); } pick.value = ''; };
+    side.append(copy, pick);
+  }
+  body.append(out);
 }
 async function loadModels() { try { renderModels(await api('/api/models')); } catch (e) { $('modelsNote').textContent = e.message; } }
 async function runCheck() { $('modelsBtn').disabled = true; try { renderModels(await post('/api/models/check')); setTimeout(loadModels, 600); } catch (e) { toast(e.message); $('modelsBtn').disabled = false; } }

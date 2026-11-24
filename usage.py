@@ -15,10 +15,13 @@ import urllib.request
 
 OLLAMA = os.environ.get("OLLAMA_URL", "http://127.0.0.1:11434").rstrip("/")
 COMFY = os.environ.get("COMFY_URL", "http://127.0.0.1:8188").rstrip("/")
+SPEECH = os.environ.get("SPEECH_URL", "http://127.0.0.1:8192").rstrip("/")
 MIN_BYTES = 150 * 1024 * 1024         # programs smaller than this are not worth a row
 
 # (text to look for in the command line, the name shown). First match wins.
-KNOWN = (("ollama", "Ollama (language model)"),
+KNOWN = (("worker.py", "Speech generation (voice model)"),
+         ("/opt/qwen/bin/python", "Speech generation (service)"),
+         ("ollama", "Ollama (language model)"),
          ("comfyui", "ComfyUI (image and video models)"),
          ("service.py", "Song analysis (speech model)"),
          ("uvicorn", "Song analysis (speech model)"),
@@ -31,6 +34,7 @@ NOTES = {
     "ComfyUI (image and video models)": "The models from its last jobs, kept loaded so the next job starts quickly. It does not let go of them by itself while idle. Free memory releases them; the next job then takes longer to start while they load again.",
     "Ollama (language model)": "The language model used by Assisted Storyboard. Ollama releases it by itself after a few idle minutes.",
     "Song analysis (speech model)": "The speech model that listens to the song. Loaded while a song is analysed.",
+    "Speech generation (voice model)": "The voice model in use. Released when you open another tab, by Free memory, or after five idle minutes.",
 }
 
 
@@ -58,13 +62,23 @@ def _unload_llm():
     return False
 
 
+def _unload_speech():
+    """Ask the speech service to let go of its voice model. -> whether one was actually loaded."""
+    try:
+        req = urllib.request.Request(SPEECH + "/unload", data=b"{}", headers={"Content-Type": "application/json"})
+        with urllib.request.urlopen(req, timeout=20) as r:
+            return bool(json.loads(r.read() or b"{}").get("unloaded"))
+    except (OSError, ValueError):
+        return False
+
+
 def _comfy_idle(comfy_json):
     queue = comfy_json("/queue", timeout=5)
     return len(queue.get("queue_running", [])) + len(queue.get("queue_pending", [])) == 0
 
 
 def release(comfy_json, keep, llm_busy=False):
-    """Unload every model server not named in `keep` ("comfy", "llm"). ComfyUI is only ever asked while its queue is
+    """Unload every model server not named in `keep` ("comfy", "llm", "speech"). ComfyUI is only ever asked while its queue is
     empty, so a render or a waiting job is never disturbed. -> what was released, and what was left alone and why."""
     out = {"released": [], "left": []}
     if "comfy" not in keep:
@@ -81,6 +95,8 @@ def release(comfy_json, keep, llm_busy=False):
             out["left"].append("the language model is in the middle of writing")
         elif _unload_llm():
             out["released"].append("llm")
+    if "speech" not in keep and _unload_speech():
+        out["released"].append("speech")
     return out
 
 

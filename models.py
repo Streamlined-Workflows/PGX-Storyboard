@@ -4,10 +4,12 @@ Three kinds of model live on the server:
   file    - a weights file in ComfyUI's models folder, published on Hugging Face
   ollama  - the language model served by Ollama
   speech  - the speech-to-text model inside the song analysis service
+  voice   - a speech generation model inside the speech service, with its licence recorded here
 
 "Up to date" for a file means its SHA-256 equals the one Hugging Face publishes for that file today.
 Hashes of local files are cached (by size and modified time), so only the first check is slow.
 """
+import base64
 import fnmatch
 import hashlib
 import json
@@ -29,6 +31,9 @@ OLLAMA_MODEL = os.environ.get("OLLAMA_MODEL", "qwen3.6:35b")
 OLLAMA_REGISTRY = os.environ.get("OLLAMA_REGISTRY", "https://registry.ollama.ai").rstrip("/")
 ASSIST = os.environ.get("ASSIST_URL", "http://127.0.0.1:8191").rstrip("/")
 COMFY = os.environ.get("COMFY_URL", "http://127.0.0.1:8188").rstrip("/")
+SPEECH = os.environ.get("SPEECH_URL", "http://127.0.0.1:8192").rstrip("/")
+TEST_LINE = "This is SWIFT Director. Your story, your vision, directed by you."
+TEST_VOICE = "A warm, clear narrator with an even, unhurried pace."
 HASH_CACHE = os.path.join(DATA_DIR, "model_hashes.json")
 STATE_FILE = os.path.join(DATA_DIR, "model_status.json")
 TOKEN_FILE = os.path.join(DATA_DIR, "hf_token")          # a key entered in the AI models panel; data/ is never committed
@@ -48,6 +53,8 @@ GROUPS = [
     ("endshot", "Story clips that land on an end shot", "Wan 2.2. Only used when a Story segment has an end shot."),
     ("stills", "Stills", "FLUX.2 [dev]. Makes actor views and shots."),
     ("assist", "Assisted Storyboard", "The models that listen to the song and do the writing."),
+    ("voice", "Speech generation", "The voices for Narrator Studio and Podcast Studio, which are not built yet. Nothing is downloaded until you press Download. "
+     "Test voice plays a short line so you can hear each model. One model is loaded at a time, and it is released when you open another tab or after five idle minutes."),
     ("ltx", "LTX-2.5 (installed for testing)", "Not used by SWIFT Director yet. Listed so it stays current while we evaluate it as the next video engine."),
 ]
 
@@ -112,6 +119,20 @@ CATALOG = [
     dict(id="speech", group="assist", kind="speech", name="Whisper large-v3-turbo",
          use="Listens to the song and writes down the lyrics with the time of every word, "
              "which Assisted Storyboard uses to decide where the cuts go."),
+    # ---- Speech generation (the speech service) ----
+    dict(id="qwen_clone", group="voice", kind="voice", name="Qwen3-TTS 1.7B: copy a voice", source="Qwen/Qwen3-TTS-12Hz-1.7B-Base", optional=True,
+         licence="Apache 2.0 (commercial use allowed)", maker="Alibaba",
+         use="Speaks in a voice copied from a short recording, 5 to 15 seconds long. For a narrator or host who should sound like a particular person."),
+    dict(id="qwen_design", group="voice", kind="voice", name="Qwen3-TTS 1.7B: design a voice", source="Qwen/Qwen3-TTS-12Hz-1.7B-VoiceDesign", optional=True,
+         licence="Apache 2.0 (commercial use allowed)", maker="Alibaba",
+         use="Makes a new voice from a written description, such as an older, gravelly ship captain. For characters that have no real person behind them."),
+    dict(id="qwen_preset", group="voice", kind="voice", name="Qwen3-TTS 1.7B: built-in speakers", source="Qwen/Qwen3-TTS-12Hz-1.7B-CustomVoice", optional=True,
+         licence="Apache 2.0 (commercial use allowed)", maker="Alibaba",
+         use="A set of ready-made speakers that can be given direction on tone. The quickest way to hear a script read aloud."),
+    dict(id="ming", group="voice", kind="voice", name="Ming-3.0-tts 0.5B", source="inclusionAI/Ming-3.0-tts-0.5B", optional=True,
+         licence="MIT (commercial use allowed)", maker="Ant Group",
+         use="One model that copies a voice, designs one from a description, and has built-in speakers. Installed to compare by ear with Qwen3-TTS. "
+             "Its makers have not tested it on this kind of server, so it may not load."),
     # ---- LTX-2.5 ----
     dict(id="ltx_model", group="ltx", name="LTX-2.5 22B distilled", file="ltx-2.5-22b-distilled-transformer-comfy-int8-convrot.safetensors",
          folder="diffusion_models", repos=[LTX], optional=True,
@@ -433,6 +454,129 @@ def check_speech(model):
     return _set(mid, state="outdated", detail=f"{info.get('repo')} has published a newer version.")
 
 
+def _speech(path, data=None, timeout=30, raw=False):
+    """Ask the speech service. Its own error messages are passed on as they are."""
+    req = urllib.request.Request(SPEECH + path, data=json.dumps(data).encode() if data is not None else None, headers={"Content-Type": "application/json"})
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as r:
+            return r.read() if raw else json.load(r)
+    except urllib.error.HTTPError as e:
+        try:
+            raise ValueError(json.load(e).get("error") or f"The speech service answered with error {e.code}.")
+        except (OSError, json.JSONDecodeError):
+            raise ValueError(f"The speech service answered with error {e.code}.")
+    except OSError:
+        raise ConnectionError("The speech service is not running. It is built the first time update.sh runs with this version, which takes "
+                              "10 to 20 minutes; if that build failed, the reason is near the end of what update.sh printed.")
+
+
+def _voice_entry(mid, check=False, cache=None):
+    if cache is not None and "speech" in cache:
+        found = cache["speech"]
+    else:
+        found = _speech("/models?check=1" if check else "/models", timeout=60 if check else 15)
+        if cache is not None:
+            cache["speech"] = found
+    entry = next((m for m in found.get("models", []) if m.get("id") == mid), None)
+    if not entry:
+        raise ValueError("The speech service does not know this model. Run update.sh so both are the same version.")
+    return entry, found.get("gpu") or {}
+
+
+def _voice_facts(entry):
+    parts = []
+    if entry.get("bytes"):
+        parts.append(_size(entry["bytes"]) + " on disk")
+    if entry.get("memory"):
+        parts.append(f"{entry['memory'] / 1e9:.1f} GB of graphics memory when loaded (measured here)")
+    if entry.get("loaded"):
+        parts.append("loaded now")
+    return " · ".join(parts)
+
+
+def check_voice(model, cache=None, check=True):
+    mid = model["id"]
+    try:
+        entry, gpu = _voice_entry(mid, check, cache)
+    except (ConnectionError, ValueError) as e:
+        return _set(mid, state="error", detail=str(e))
+    if not entry.get("engine_ready"):
+        return _set(mid, state="error", detail=entry.get("engine_problem") or "This model's engine was not built into the speech service.")
+    if entry.get("downloading"):
+        total, done = entry.get("total") or 0, entry.get("done") or 0
+        with LOCK:
+            STATUS.setdefault(mid, {}).update(state="updating", progress=round(min(1, done / total), 3) if total else None,
+                                              detail=f"Downloading {_size(done)} of {_size(total)}" if total else "Starting the download…")
+        return
+    if entry.get("error"):
+        return _set(mid, state="error", detail="The download failed: " + entry["error"])
+    if not entry.get("installed"):
+        size = f" The download is {_size(entry['published_bytes'])}." if entry.get("published_bytes") else ""
+        return _set(mid, state="missing", detail="Not downloaded." + size)
+    warn = "" if gpu.get("ok", True) else " The speech service cannot use the graphics card: " + str(gpu.get("detail", ""))[:200]
+    if entry.get("check_error"):
+        return _set(mid, state="error", detail="Installed, but Hugging Face could not be reached to compare: " + entry["check_error"])
+    if entry.get("published_revision") and entry.get("revision") != entry["published_revision"]:
+        return _set(mid, state="outdated", detail=f"{model['source']} has published a newer version." + warn)
+    return _set(mid, state="current", detail=(_voice_facts(entry) or "installed") + warn)
+
+
+def update_voice(model):
+    mid = model["id"]
+    _speech("/install", {"id": mid})
+    while True:
+        time.sleep(2)
+        entry, _ = _voice_entry(mid)
+        if entry.get("error"):
+            raise ValueError(entry["error"])
+        if not entry.get("downloading"):
+            break
+        total, done = entry.get("total") or 0, entry.get("done") or 0
+        _set(mid, progress=round(min(1, done / total), 3) if total else None, detail=f"Downloading {_size(done)} of {_size(total)}" if total else "Starting the download…")
+    if not entry.get("installed"):
+        raise ValueError("The download ended without finishing. Press Download to try again.")
+    _set(mid, state="current", detail=(_voice_facts(entry) or "installed") + " · downloaded just now")
+
+
+def test_voice(mid, reference=None, reference_text=""):
+    """Speak one short line with a speech model so it can be heard. -> (WAV bytes, what was done, in words).
+    reference: the bytes of a recording to copy, for a model that copies voices. It is used once and not kept."""
+    model = BY_ID.get(mid)
+    if not model or model.get("kind") != "voice":
+        raise ValueError("Unknown speech model.")
+    try:
+        entry, _ = _voice_entry(mid)
+    except ConnectionError as e:
+        raise ValueError(str(e))
+    modes = entry.get("modes") or []
+    ask = {"id": mid, "text": TEST_LINE, "language": "English"}
+    if reference:
+        if "clone" not in modes:
+            raise ValueError("This model does not copy voices.")
+        ask.update(mode="clone", ref_audio=base64.b64encode(reference).decode(), ref_text=str(reference_text or "").strip())
+        did = "a copy of the voice in your recording"
+    elif "design" in modes:
+        ask.update(mode="design", instruct=TEST_VOICE)
+        did = "a voice designed from: " + TEST_VOICE
+    elif "preset" in modes:
+        ask.update(mode="preset")
+        did = "the model's first built-in speaker"
+    else:
+        raise ValueError("Choose a short recording of the voice to copy.")
+    try:
+        wav = _speech("/speak", ask, timeout=1200, raw=True)
+    except ConnectionError as e:
+        raise ValueError(str(e))
+    try:                                                 # picks up the memory figure just measured, and which model is loaded now
+        cache = {}
+        for other in CATALOG:
+            if other.get("kind") == "voice" and STATUS.get(other["id"], {}).get("state") == "current":
+                check_voice(other, cache, check=False)
+    except Exception:
+        pass
+    return wav, did
+
+
 def _busy(mid):
     return STATUS.get(mid, {}).get("state") in ("updating", "checking")
 
@@ -455,7 +599,7 @@ def check_all():
                 continue
             try:
                 kind = model.get("kind", "file")
-                check_ollama(model) if kind == "ollama" else check_speech(model) if kind == "speech" else check_file(model, local, repo_cache)
+                check_ollama(model) if kind == "ollama" else check_speech(model) if kind == "speech" else check_voice(model, repo_cache) if kind == "voice" else check_file(model, local, repo_cache)
             except NeedsKey as e:
                 _set(mid, state="needs_key", detail=str(e))
             except Exception as e:                      # one model failing must not stop the rest
@@ -562,7 +706,7 @@ def _run_update(model):
     mid = model["id"]
     try:
         kind = model.get("kind", "file")
-        update_ollama(model) if kind == "ollama" else update_speech(model) if kind == "speech" else update_file(model)
+        update_ollama(model) if kind == "ollama" else update_speech(model) if kind == "speech" else update_voice(model) if kind == "voice" else update_file(model)
     except Exception as e:
         _set(mid, state="error", detail="Update failed: " + str(getattr(e, "reason", e))[:300])
 
@@ -591,7 +735,9 @@ def listing():
                     continue
                 s = STATUS.get(m["id"], {})
                 items.append({"id": m["id"], "name": m["name"], "use": m["use"], "optional": bool(m.get("optional")),
-                              "file": s.get("file") or m.get("default_file") or m.get("file") or "",
+                              "file": s.get("file") or m.get("default_file") or m.get("file") or m.get("source") or "",
+                              "licence": m.get("licence", ""), "maker": m.get("maker", ""), "voice": m.get("kind") == "voice",
+                              "copies": m.get("kind") == "voice" and m["id"] in ("qwen_clone", "ming"),
                               "state": s.get("state", "unknown"), "detail": s.get("detail", ""),
                               "progress": s.get("progress"), "checked": s.get("checked")})
             groups.append({"id": gid, "title": title, "note": note, "models": items})

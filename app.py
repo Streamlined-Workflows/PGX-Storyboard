@@ -1038,6 +1038,31 @@ class Handler(BaseHTTPRequestHandler):
     def log_message(self, fmt, *args):
         pass
 
+    def test_voice(self, payload):
+        """Speak one short line with a speech model and send back the sound. Like every other use of the graphics
+        card outside the render queue, it waits its turn: it is refused while a render is running or waiting."""
+        try:
+            if not usage._comfy_idle(comfy_json):
+                raise ValueError("A render is running or waiting. Test the voice when the queue is empty, so the render is not slowed.")
+        except OSError:
+            pass                                             # ComfyUI not running: nothing to disturb
+        reference = None
+        if payload.get("audio"):
+            try:
+                reference = base64.b64decode(str(payload["audio"]).split(",", 1)[-1], validate=True)
+            except ValueError:
+                raise ValueError("That recording could not be read.")
+            if len(reference) > 20 * 1024 * 1024:
+                raise ValueError("That recording is too large. A clip of 5 to 15 seconds is enough.")
+        wav, did = models.test_voice(payload.get("id"), reference, payload.get("text") or "")
+        self.send_response(200)
+        self.send_header("Content-Type", "audio/wav")
+        self.send_header("Content-Length", str(len(wav)))
+        self.send_header("X-Voice-Test", urllib.parse.quote(did))
+        self.send_header("Cache-Control", "no-store")
+        self.end_headers()
+        self.wfile.write(wav)
+
     def send_json(self, payload, status=200):
         body = json.dumps(payload).encode()
         self.send_response(status)
@@ -1208,6 +1233,8 @@ class Handler(BaseHTTPRequestHandler):
                 return self.send_json(models.forget_token())
             if path == "/api/models/update":
                 return self.send_json(models.start_update(payload.get("id")))
+            if path == "/api/models/test_voice":
+                return self.test_voice(payload)
             if path == "/api/projects":
                 return self.send_json(save_project(empty_project(str(payload.get("name") or "Untitled project")[:80])))
             if path == "/api/projects/duplicate":

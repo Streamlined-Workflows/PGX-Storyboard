@@ -26,4 +26,19 @@ docker rm -f swift-director-assist >/dev/null 2>&1 || true
 docker run -d --name swift-director-assist --restart unless-stopped --network host \
   -v storyboard-assist-cache:/root/.cache swift-director-assist >/dev/null
 
+# Speech generation (Qwen3-TTS and Ming-3.0-tts). Built last and allowed to fail, so a problem here never stops the rest.
+# The image holds the software only; model files are downloaded from System status, into the volume below, when you ask.
+echo
+echo "SWIFT Director itself is up. Now preparing the speech service."
+echo "The first time, this downloads several GB of software and takes 10 to 20 minutes. Lines will scroll; that is normal."
+if docker build -t swift-director-speech speech-service; then
+  docker rm -f swift-director-speech >/dev/null 2>&1 || true
+  docker run -d --name swift-director-speech --restart unless-stopped --network host --gpus all \
+    -v swift-director-speech-models:/models -v "$HOME/.cache/huggingface":/hf:ro swift-director-speech >/dev/null \
+    && echo "The speech service is running." \
+    || echo "PROBLEM: the speech service was built but would not start. Everything else works. Send Claude the lines above."
+else
+  echo "PROBLEM: the speech service could not be built. Everything else works. Send Claude the last 30 lines above."
+fi
+echo
 echo "SWIFT Director is running. Open http://$(hostname).local:8190 in your browser."
