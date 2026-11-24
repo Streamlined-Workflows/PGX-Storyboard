@@ -199,7 +199,7 @@ class Rows(unittest.TestCase):
         todo = reference.plan_views(p, "rpaaaaaa01", "rowaaaa001", "missing")
         self.assertEqual([(v["direction"], v["count"], v["width"], v["height"]) for v in todo], [("right", 2, 688, 1024), ("rear", 2, 688, 1024)])
         self.assertIn("Right side view", todo[0]["prompt"])
-        self.assertEqual(todo[0]["sources"], ["g1.png", "g2.png"])                                         # the locked view first, then the row's other chosen view
+        self.assertEqual(todo[0]["sources"], ["g1.png"])                                                   # the locked view only: an unlocked view may be the one being replaced
         row["locked"] = True
         with self.assertRaises(ValueError):
             reference.plan_views(p, "rpaaaaaa01", "rowaaaa001", "row")
@@ -261,7 +261,23 @@ class Rows(unittest.TestCase):
         self.assertEqual(reference.delete(p, ["g1"]), [])                                                  # the other record still needs the file
         self.assertEqual(reference.delete(p, ["u1"]), ["g1.png"])
 
-    def test_denying_a_locked_views_only_picture_unlocks_the_empty_slot(self):
+    def test_a_locked_views_picture_cannot_be_denied_until_it_is_unlocked(self):
+        from tests import test_core
+        import app
+        p, ref = advanced()
+        import time
+        t = time.time()                                                                                    # real time: the server's own clock decides expiry here
+        view(p, "g1", "front", t - 3); view(p, "g2", "front", t - 2); view(p, "g3", "left", t - 1); reference.sync(p)
+        row = p["reference"]["projects"][0]["rows"][0]; row["slots"]["front"]["locked"] = True
+        self.assertEqual(reference.locked_pictures(p["reference"]), {"g1"})                                # the one in use, not the slot's other candidate
+        p.update(app.empty_project("Locks"), generated=p["generated"], image_jobs=p["image_jobs"], reference=p["reference"]); pid = app.save_project(p)["id"]
+        with self.assertRaises(ValueError) as e:
+            app.reference_decide(pid, ["g1"], "deny")
+        self.assertIn("locked view", str(e.exception))
+        self.assertEqual(app.reference_decide(pid, ["g2", "g3"], "deny")["denied"], 2)                     # other candidates and unlocked views can go
+        self.assertEqual(app.reference_decide(pid, ["g1"], "deny", force=True)["denied"], 1)              # removing the whole row says so itself
+
+    def test_a_locked_view_that_loses_its_only_picture_to_expiry_is_unlocked(self):
         p, ref = advanced()
         view(p, "g1", "front", 1000.0); reference.sync(p, now=1001.0)
         row = p["reference"]["projects"][0]["rows"][0]; row["slots"]["front"].update(locked=True, selected="g1")

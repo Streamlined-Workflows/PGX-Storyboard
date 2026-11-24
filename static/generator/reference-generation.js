@@ -93,9 +93,9 @@ window.ReferenceGeneration = (function () {
     const link = document.createElement('a'); link.href = host.view(a.image); link.download = name; document.body.append(link); link.click(); link.remove();
   }
   const stem = () => (P().name.replace(/[^A-Za-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'reference');
-  function actions(a, name) {
+  function actions(a, name, held) {                                        // held: the picture is in a locked view, so it cannot be denied
     const bar = el(`<span class="rg-actions">${a.state === 'approved' ? '' : '<button class="small rg-approve" type="button" title="Keep this picture permanently">Approve</button>'}
-      <button class="small rg-deny" type="button" title="${a.state === 'approved' ? 'Delete this picture' : 'Reject this picture and delete it now'}">${a.state === 'approved' ? 'Delete' : 'Deny'}</button>
+      <button class="small rg-deny" type="button"${held ? ' disabled' : ''} title="${held ? 'This view is locked. Unlock it to ' + (a.state === 'approved' ? 'delete' : 'deny') + ' its picture.' : a.state === 'approved' ? 'Delete this picture' : 'Reject this picture and delete it now'}">${a.state === 'approved' ? 'Delete' : 'Deny'}</button>
       <button class="small rg-download" type="button">Download</button></span>`);
     const ok = bar.querySelector('.rg-approve'); if (ok) ok.onclick = () => decide([a.id], 'approve');
     bar.querySelector('.rg-deny').onclick = () => deny(a); bar.querySelector('.rg-download').onclick = () => download(a, name);
@@ -138,7 +138,7 @@ window.ReferenceGeneration = (function () {
     box.querySelector('.rg-del').onclick = async () => {
       const mine = data.artifacts.filter(a => a.project === p.id).length;
       if (!await dialog('Delete this reference project?', `<p><b>${esc(p.name)}</b> and its settings are deleted${mine ? `, together with its ${mine} picture${mine > 1 ? 's' : ''}, approved ones included` : ''}. This cannot be undone.</p>`, [['Cancel', null], ['Delete', 'yes', true]])) return;
-      try { flush(); if (mine) await call('POST', '/decide', { project: host.pid, ids: data.artifacts.filter(a => a.project === p.id).map(a => a.id), action: 'deny' });
+      try { flush(); if (mine) await call('POST', '/decide', { project: host.pid, ids: data.artifacts.filter(a => a.project === p.id).map(a => a.id), action: 'deny', force: true });
         S().projects = S().projects.filter(x => x.id !== p.id); S().open = (S().projects[0] || {}).id || null; take(await call('POST', '/save', { project: host.pid, state: S() }), true); }
       catch (e) { host.toast(e.message); }
     };
@@ -236,7 +236,7 @@ window.ReferenceGeneration = (function () {
       const gen = el(`<button class="small rg-genview" type="button">${use ? 'Regenerate' : 'Generate'}</button>`); gen.onclick = () => runViews(row, d, gen);
       btns.append(gen, source('Upload', image => placeIn(row, d, image), []));
     }
-    if (shown) btns.append(actions(shown, `${stem()}-${(row.label || row.role || 'row').toLowerCase().replace(/[^a-z0-9]+/g, '-')}-${d}-${n + 1}.png`));
+    if (shown) btns.append(actions(shown, `${stem()}-${(row.label || row.role || 'row').toLowerCase().replace(/[^a-z0-9]+/g, '-')}-${d}-${n + 1}.png`, locked && shown === use));
     return card;
   }
   function rowCard(row, index) {
@@ -275,7 +275,7 @@ window.ReferenceGeneration = (function () {
     card.querySelector('.rg-rowdel').onclick = async () => {
       const mine = data.artifacts.filter(a => a.row === row.id);
       if (!await dialog('Remove this row?', `<p><b>${esc(row.label || row.role || 'This row')}</b> is removed${mine.length ? `, together with its ${mine.length} picture${mine.length > 1 ? 's' : ''}, approved ones included` : ''}. Other rows are not touched. This cannot be undone.</p>`, [['Cancel', null], ['Remove', 'yes', true]])) return;
-      try { flush(); if (mine.length) await call('POST', '/decide', { project: host.pid, ids: mine.map(a => a.id), action: 'deny' }); p.rows = p.rows.filter(x => x.id !== row.id); await saveNow(); } catch (e) { host.toast(e.message); }
+      try { flush(); if (mine.length) await call('POST', '/decide', { project: host.pid, ids: mine.map(a => a.id), action: 'deny', force: true }); p.rows = p.rows.filter(x => x.id !== row.id); await saveNow(); } catch (e) { host.toast(e.message); }
     };
     const src = card.querySelector('.rg-sources');
     row.sources.forEach((s0, k) => {

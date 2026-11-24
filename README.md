@@ -327,16 +327,18 @@ it prepares for is in `3d_Generation_Plan/`. Code: `reference.py`, the `/api/ref
 - **Sheet Generation, Advanced mode.** The reference is built one row at a time. A row is one thing to document (the
   complete asset, base anatomy, a hat, a coat) in the Base or Detail section, with a name, a component role, and
   optionally its own classification. Each row has up to six source pictures, its own prompt, resolution, shape and
-  candidate count, and six view slots: Front, Left, Right, Rear, Top, Bottom.
+  candidate count (pictures per view slot), and six view slots: Front, Left, Right, Rear, Top, Bottom.
   - **Generate Row / Regenerate Row** makes candidates for every view that is switched on and not locked. **Generate
     Missing Views** fills only the empty ones. Each slot also has its own Generate / Regenerate and Upload. Before a row
     run, a box lists the views it will make, the ones left alone and why, and which pictures are sent.
   - New candidates never replace the picture in use: each slot has previous / next and **Use this one**. **Lock** keeps
     a view's picture through any run or upload; **Lock row** does the same for the whole row. A switched-off view is
     left out.
-  - **Which pictures are sent.** The image model takes four. They are, in order: the row's sources, the row's locked
-    views, then its other views in use, so a new view is drawn to match the ones already there. Anything beyond four
-    is named as not sent.
+  - **Which pictures are sent.** The image model takes four. They are, in order: the row's sources, then the pictures
+    of the row's locked views. A view that is not locked is never sent, because it may be the picture you are trying
+    to replace. Anything beyond four is named as not sent.
+  - **A locked view's picture cannot be denied** until the view is unlocked. The slot's other candidates still can.
+    Locking does not stop the ten-day expiry: approve a picture to keep it.
   - **From another row** adds another row's view in use as a source. It is looked up each time, so nothing is copied,
     changing the other row regenerates nothing, and a view that has gone shows as not available. Rows cannot inherit
     from each other in a circle.

@@ -304,8 +304,9 @@ def targets(state, row, what):
 
 def conditioning(state, p, row, direction):
     """The pictures sent to the image model for one view, in order, and the ones left out because it takes only so many
-    (design 10: say which are used). First the row's own sources, then this row's locked views, then its other chosen
-    views, so a new view is drawn to match the ones already there.
+    (design 10: say which are used). First the row's own sources, then this row's locked views. A view that is not
+    locked is never sent: it may be the very picture the person is trying to replace, and sending it would pull the
+    new one towards it.
     -> {"used": [{"image", "what"}], "unused": [...], "unavailable": [what...]}"""
     listed, missing = [], []
     for n, src in enumerate(row["sources"], 1):
@@ -316,11 +317,10 @@ def conditioning(state, p, row, direction):
         got = chosen(state, other, src["direction"]) if other else None
         name = f"source {n} (the {src['direction']} view of {(other['label'] or other['role'] or 'another row') if other else 'a row that was removed'})"
         (listed.append({"image": got["image"], "what": name}) if got else missing.append(name))
-    mine = [(d, chosen(state, row, d)) for d in DIRECTIONS if d != direction and row["slots"][d]["enabled"]]
-    for locked in (True, False):
-        for d, a in mine:
-            if a and bool(row["slots"][d]["locked"] or row["locked"]) == locked:
-                listed.append({"image": a["image"], "what": f"this row's {'locked ' if locked else ''}{d} view"})
+    for d in DIRECTIONS:
+        a = chosen(state, row, d) if d != direction and row["slots"][d]["enabled"] and (row["slots"][d]["locked"] or row["locked"]) else None
+        if a:
+            listed.append({"image": a["image"], "what": f"this row's locked {d} view"})
     seen, unique = set(), []
     for x in listed:
         if x["image"] not in seen:
@@ -412,6 +412,13 @@ def in_use(project, artifact):
     """Is a picture being read by a job that has not finished? Such a picture is not cleaned up until the job ends."""
     return any(j.get("kind") == "ref" and j.get("status") in ("queued", "running") and artifact["image"] in (j.get("ref_sources") or [])
                for j in project.get("image_jobs", []))
+
+
+def locked_pictures(state):
+    """The pictures that locked views are holding: the one in use in each locked slot, and in every slot of a locked row.
+    They cannot be denied until the view is unlocked."""
+    return {a["id"] for p in state["projects"] for r in p["rows"] for d in DIRECTIONS
+            if (r["locked"] or r["slots"][d]["locked"]) for a in [chosen(state, r, d)] if a}
 
 
 def protected(state, ids):

@@ -782,7 +782,7 @@ def reference_place(pid, rid, row_id, direction, image, state=None):
         return reference_out(project, placed=art["id"])
 
 
-def reference_decide(pid, ids, action, confirmed=False):
+def reference_decide(pid, ids, action, confirmed=False, force=False):
     """Approve or deny pictures. Approving one that needs other pending pictures changes nothing and returns `needs`
     until the page sends it again with confirmed set."""
     with LOCK:
@@ -797,6 +797,9 @@ def reference_decide(pid, ids, action, confirmed=False):
             return reference_out(project, approved=result["approved"])
         if action != "deny":
             raise ValueError("Unknown action.")
+        # A locked view keeps its picture. `force` is for removing a whole row or reference project, which says so itself.
+        if not force and reference.locked_pictures(project["reference"]) & set(ids):
+            raise ValueError("That picture is in a locked view. Unlock the view to deny it.")
         held = reference.protected(project["reference"], ids)
         busy = [a["id"] for a in project["reference"]["artifacts"] if a["id"] in ids and reference.in_use(project, a)]
         if busy:
@@ -1638,7 +1641,7 @@ class Handler(BaseHTTPRequestHandler):
             if path == "/api/reference/place":
                 return self.send_json(reference_place(pid, payload.get("reference"), payload.get("row"), payload.get("direction"), payload.get("image"), payload.get("state")))
             if path == "/api/reference/decide":
-                return self.send_json(reference_decide(pid, payload.get("ids"), payload.get("action"), payload.get("confirmed")))
+                return self.send_json(reference_decide(pid, payload.get("ids"), payload.get("action"), payload.get("confirmed"), bool(payload.get("force"))))
             if path == "/api/reference/extract":
                 return self.send_json(reference_extract(pid, payload.get("reference"), payload.get("source"), payload.get("cuts")))
             if path == "/api/generator/save":
