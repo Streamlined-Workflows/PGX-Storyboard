@@ -23,9 +23,9 @@ LAYERS = ("background", "middle", "foreground")
 BOXES = ("image",) + LAYERS + ("composed",)
 TITLES = {"image": "Image", "background": "Background", "middle": "Middle ground", "foreground": "Foreground", "composed": "Composed output"}
 MAX_PROMPT, MAX_REFS, MAX_COUNT = 3000, 4, 10
-# FLUX.2 reads a prompt as tokens (word pieces), not characters, and its makers' own pipeline takes at most 512 of them.
-# English runs at about four characters a token, so the count shown on the page is an estimate, and says so.
-PROMPT_LIMIT = {"model": "FLUX.2 [dev]", "tokens": 512, "characters": 2000}
+import workflows
+
+PROMPT_LIMIT = workflows.PROMPT_LIMITS["image"]         # what the count beside each prompt box is measured against
 SIZE = (1248, 720)                               # the size every picture here is made at
 USES = ("insert", "keep exactly", "style guide", "inspiration")
 USE_WORDS = {"insert": "Insert as it is", "keep exactly": "Follow closely (redrawn)", "style guide": "Style guide", "inspiration": "Inspiration"}

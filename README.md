@@ -231,6 +231,14 @@ model is released when another tab is opened, by Free memory, or after five idle
 voice** speaks one line so a model can be heard; it is refused while a render is running or waiting.
 See `docs/Task_02_Milestone_2_Audio.md`.
 
+## Prompt counts
+
+Every prompt box that feeds a model shows `x / y` at its bottom right: the characters that will be sent against about how
+many the model reads. The limits live in one place, `workflows.PROMPT_LIMITS`: FLUX.2 [dev] for stills and Wan 2.1 / 2.2
+for clips each read 512 tokens, shown as about 2,000 characters of English. The count warns near and past the limit and
+never blocks. It covers the segment video prompts (sent as typed), the Shots descriptions (the server reports what each
+frame adds for its ticked cast and assets, the style and the closing line), and the Asset Generator's prompts.
+
 ## Asset Generator
 
 `generator.py` and `static/generator/`. What is stored per project (`project["generator"]`) is only what was typed and

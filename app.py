@@ -1046,6 +1046,41 @@ def assist_shots_save(pid, shots):
         return update_assist(pid, shots=current)
 
 
+def shot_references(shot, cast, items):
+    """Who and what one key frame sends to the image model: (cast members with a picture, the reference pictures in order,
+    assets shown by picture, assets described in words)."""
+    people = [cast[n] for n in shot.get("who", []) if n in cast and cast[n]["views"]][:4]
+    refs = [next((v for v in c["views"] if "waist" in (v.get("label") or "").lower()), c["views"][0])["image"] for c in people]
+    # Assets and props take the reference slots the cast leaves free (FLUX.2 has four), so a frame with nobody in it
+    # can show up to four of them. One that does not fit, or has no picture yet, is described in words instead.
+    named = [items[n] for n in shot.get("what", []) if n in items]
+    shown = [t for t in named if t.get("views")][:max(0, 4 - len(people))]
+    refs += [t["views"][0]["image"] for t in shown]
+    told = [t for t in named if t not in shown]
+    return people, refs, shown, told
+
+
+def assist_shot_lengths(pid):
+    """For each key frame, how many characters are sent on top of its own description: the sentences for its ticked cast
+    and assets, the visual style and the closing line. The page adds the description's own length for the count it shows."""
+    project = load_project(pid)
+    shots = (project.get("assist") or {}).get("shots") or {}
+    style = (approved_story(project) or {}).get("style", "") if (project.get("assist") or {}).get("story") else ""
+    cast = {c["name"]: c for c in cast_members(project)}
+    items = {t["name"]: t for t in stage_items(project)}
+
+    def added(shot):
+        people, _, shown, told = shot_references(shot or {}, cast, items)
+        return len(assist.shot_prompt("X", style, people, shown, told)) - len("X.")
+    frames = {}
+    if shots.get("first"):
+        frames["first"] = added(shots["first"])
+    for e in shots.get("ends", []):
+        frames[e.get("segment_id")] = added(e)
+        frames["begin:" + str(e.get("segment_id"))] = added(e.get("begin"))
+    return {"frames": frames}
+
+
 def assist_shot_images(pid, targets):
     """Queue key frame images. `targets` lists "first", "begin:<segment id>" and segment ids (end frames); None means every frame."""
     with LOCK:
@@ -1075,14 +1110,7 @@ def assist_shot_images(pid, targets):
                 continue                    # locked pictures are kept when everything else is regenerated
             if not seg or not (shot.get("text") or "").strip() or (targets is not None and key not in targets) or (seg["id"], slot) in busy:
                 continue
-            people = [cast[n] for n in shot.get("who", []) if n in cast and cast[n]["views"]][:4]
-            refs = [next((v for v in c["views"] if "waist" in (v.get("label") or "").lower()), c["views"][0])["image"] for c in people]
-            # Assets and props take the reference slots the cast leaves free (FLUX.2 has four), so a frame with nobody in it
-            # can show up to four of them. One that does not fit, or has no picture yet, is described in words instead.
-            named = [items[n] for n in shot.get("what", []) if n in items]
-            shown = [t for t in named if t.get("views")][:max(0, 4 - len(people))]
-            refs += [t["views"][0]["image"] for t in shown]
-            told = [t for t in named if t not in shown]
+            people, refs, shown, told = shot_references(shot, cast, items)
             label = label or f"{seg.get('name') or 'Segment'} end"
             project["image_jobs"] = [j for j in project["image_jobs"] if not (j.get("kind") == "shot" and j.get("status") == "error"
                                                                            and j.get("segment_id") == seg["id"] and j.get("slot") == slot)]
@@ -1308,6 +1336,10 @@ class Handler(BaseHTTPRequestHandler):
                 return self.send_json(dict(config.options(), in_use=models_in_use()))
             if url.path == "/api/lore":
                 return self.send_json(lore_listing())
+            if url.path == "/api/prompt_limits":
+                return self.send_json(workflows.PROMPT_LIMITS)
+            if url.path == "/api/assist/shot_lengths":
+                return self.send_json(assist_shot_lengths(urllib.parse.parse_qs(url.query).get("project", [""])[0]))
             if url.path == "/api/generator/library":
                 return self.send_json(generator_library(urllib.parse.parse_qs(url.query).get("project", [""])[0]))
             if url.path == "/api/generator":

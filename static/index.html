@@ -162,6 +162,10 @@
   .keyframe { display:grid; grid-template-columns:150px 1fr 200px; gap:12px; padding:10px 0; border-top:1px solid var(--line); align-items:start; }
   button.locked { border-color:var(--ok); color:var(--ok); }
   .keyframe textarea { width:100%; min-height:84px; }
+  /* The count at the bottom right of a prompt box: characters sent / about how many the model reads. Same as the Asset Generator's. */
+  .pcwrap { position:relative; display:block; } .pcwrap > textarea { padding-bottom:22px; }
+  .pcount { position:absolute; right:14px; bottom:8px; padding:0 6px; font-size:11px; font-variant-numeric:tabular-nums; color:var(--swift-text-muted); background:var(--swift-base); border-radius:8px; cursor:help; }
+  .pcount.near { color:var(--swift-warn, var(--swift-amber-400)); } .pcount.over { color:var(--swift-danger); font-weight:600; }
   .inpic { display:flex; flex-wrap:wrap; gap:4px 14px; align-items:center; margin-top:6px; font-size:13px; }
   .inpic-tick { display:inline-flex; align-items:center; gap:4px; margin:0; color:var(--swift-text); cursor:pointer; } .inpic-note { flex-basis:100%; }
   .keyframe img, .keyframe .noimg { width:200px; aspect-ratio:16/9; object-fit:cover; border-radius:6px; background:var(--bg); border:1px solid var(--line); display:block; }
@@ -1247,7 +1251,7 @@ function renderSegments() {
     el.querySelector('.b').appendChild(shotBox(seg, 'begin_image', 'Begin shot', begin.inherited ? begin.image : null, begin.first));
     el.querySelector('.e').appendChild(shotBox(seg, 'end_image', 'End shot'));
     const bind = (sel, key, num) => el.querySelector(sel).oninput = ev => { seg[key] = num ? +ev.target.value : ev.target.value; dirty(); drawWave(); updateAllHint(); };
-    bind('.name', 'name'); bind('.prompt', 'prompt'); bind('.runs', 'runs', true);
+    bind('.name', 'name'); bind('.prompt', 'prompt'); promptCount(el.querySelector('.prompt'), 'video'); bind('.runs', 'runs', true);
     const lenEl = el.querySelector('.len'), startEl = el.querySelector('.start');
     lenEl.oninput = () => { seg.end = seg.start + (+lenEl.value); retime(); el.querySelector('.lenval').textContent = (+lenEl.value).toFixed(1) + ' s'; refreshTimes(); drawWave(); dirty(); };
     lenEl.onchange = () => renderSegments();
@@ -1514,7 +1518,7 @@ $('castRecBtn').onclick = () => busy($('castRecBtn'), $('castStatus'), 'Reading 
 
 /* ----- step 5: shots ----- */
 let shotsTimer = null;
-function saveShots() { clearTimeout(shotsTimer); shotsTimer = setTimeout(() => post('/api/assist/shots_save', { project: PID, shots: A().shots }).catch(e => toast(e.message)), 700); }
+function saveShots() { clearTimeout(shotsTimer); shotsTimer = setTimeout(() => post('/api/assist/shots_save', { project: PID, shots: A().shots }).then(() => loadShotAdds()).catch(e => toast(e.message)), 700); }
 async function makeShots(targets, btn) {
   const rows = shotRows().filter(r => !r.off && !r.cont && (targets ? targets.includes(r.key) : !r.shot.locked));
   if (!rows.length) { toast('Every picture is locked. Unlock the ones you want to redo.'); return; }
@@ -1535,6 +1539,32 @@ function shotRows() {
     title: `${i + 1}. ${P.segments[i].name}`, off: P.segments[i].type === 'singing', sub: P.segments[i].type === 'singing' ? 'Singing: no end shot. The next segment continues from the last frame of the clip you pick here.' : 'End shot' + (i + 1 < P.segments.length ? `, and where segment ${i + 2} begins if it continues` : '') }); });
   return rows;
 }
+/* ---------- prompt counts ----------
+   Every prompt box shows "x / y" at its bottom right: x is the number of characters that will be sent, y is about how many the
+   model reads. The models count word pieces, not characters, so y is an estimate (about four characters a piece in English).
+   `extra()` returns the characters the application adds to what was typed, so x is what is actually sent. */
+let LIMITS = { image: { model: 'FLUX.2 [dev]', tokens: 512, characters: 2000 }, video: { model: 'Wan 2.1 / 2.2', tokens: 512, characters: 2000 } };
+api('/api/prompt_limits').then(l => { LIMITS = l; document.querySelectorAll('textarea').forEach(t => t._pc && t._pc()); }).catch(() => {});
+function promptCount(area, kind, extra, addedFor) {
+  if (!area._pc) { const wrap = node('span', 'pcwrap'); area.replaceWith(wrap); wrap.append(area, node('span', 'pcount')); area.addEventListener('input', () => area._pc()); }
+  const out = area.parentNode.querySelector('.pcount');
+  area._pc = () => {
+    const lim = LIMITS[kind], typed = area.value.trim().length, more = Math.max(0, (extra && extra()) || 0), x = typed + more;
+    out.textContent = x.toLocaleString() + ' / ' + lim.characters.toLocaleString();
+    out.className = 'pcount' + (x > lim.characters ? ' over' : x > lim.characters * 0.85 ? ' near' : '');
+    out.title = `${typed.toLocaleString()} typed${more ? ' + ' + more.toLocaleString() + ' added ' + (addedFor || 'by SWIFT Director') : ''}. ${lim.model} reads about ${lim.tokens} word pieces, which is roughly ${lim.characters.toLocaleString()} characters of English. `
+      + (x > lim.characters ? 'This prompt is past that: the end of it may be ignored or weaken the rest. Put what matters most first, or shorten it.' : 'The limit is an estimate, since the model counts word pieces, not characters.');
+  };
+  area._pc();
+}
+/* What each key frame sends on top of its own description (cast and asset sentences, style, closing line), from the server. */
+let shotAdds = {}, shotAddsTimer = null;
+function loadShotAdds(wait) {
+  clearTimeout(shotAddsTimer);
+  shotAddsTimer = setTimeout(async () => { const forPid = PID; if (!forPid) return;
+    try { const got = (await api('/api/assist/shot_lengths?project=' + forPid)).frames; if (forPid !== PID) return; shotAdds = got; document.querySelectorAll('#shotsOut textarea').forEach(t => t._pc && t._pc()); } catch (e) { /* the counts keep their last figures */ } }, wait || 0);
+}
+
 /* Which actors and assets one picture uses. A ticked name has its reference picture sent with the description and the
    image model is told to keep it exactly, so untick anyone or anything that should not be in this picture. */
 function inPicture(shot) {
@@ -1567,6 +1597,7 @@ function renderShots() {
   if (!rows.length) { out.className = 'hint'; out.textContent = ready ? 'Writes the opening frame and the end frame of every segment from its lyrics, beat and story beat. Then generates the images and puts them on the storyboard.' : 'Approve a story concept first.'; return; }
   out.className = ''; out.textContent = '';
   out.append(node('div', 'hint', 'Edit any description before generating. Each end frame is also where the next segment starts, so the video carries through from shot to shot.'));
+  loadShotAdds(150);
   rows.forEach(r => {
     const row = node('div', 'keyframe'), left = node('div'), mid = node('div'), right = node('div');
     left.append(node('b', '', r.title), node('div', 'hint', r.sub));
@@ -1581,6 +1612,7 @@ function renderShots() {
     }
     const text = node('textarea'); text.value = r.shot.text || ''; text.oninput = () => { r.shot.text = text.value; saveShots(); };
     mid.append(text, inPicture(r.shot));
+    promptCount(text, 'image', () => shotAdds[r.key], 'for the ticked actors and assets, the visual style and the closing line');
     const job = (P.image_jobs || []).filter(j => j.kind === 'shot' && j.segment_id === r.seg.id && j.slot === r.slot).pop();
     const pic = r.seg[r.slot] ? node('img') : node('div', 'noimg'); if (r.seg[r.slot]) pic.src = view(r.seg[r.slot]);
     right.append(pic);

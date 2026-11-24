@@ -37,6 +37,13 @@ SING_MOTION = 9          # frames of overlap fed back into each extension pass
 STORY_STEPS = 4
 SING_STEPS = 6
 NEGATIVE = "blurry, distorted, low quality, static, watermark, text"
+# How much prompt each kind of model reads. Both count tokens (word pieces), not characters; English runs at about four
+# characters a token, so the character figure is an estimate and the page says so.
+#   image  FLUX.2 [dev]: its makers' pipeline takes at most 512 tokens.
+#   video  Wan 2.1 and 2.2, and the singing clips built on Wan 2.1: their UMT5-XXL text encoder was trained at 512 tokens.
+#          ComfyUI does not cut a longer prompt off for Wan; it passes the rest to a model that never saw prompts that long.
+PROMPT_LIMITS = {"image": {"model": "FLUX.2 [dev]", "tokens": 512, "characters": 2000},
+                 "video": {"model": "Wan 2.1 / 2.2", "tokens": 512, "characters": 2000}}
 
 
 class Graph:

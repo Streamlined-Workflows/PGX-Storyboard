@@ -233,3 +233,31 @@ class HttpTests(Base):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class PromptLengthTests(Base):
+    def test_a_key_frame_reports_what_it_adds_to_its_description(self):
+        segs = [dict(SEG, id="a")]
+        frame = lambda text, **k: dict({"text": text, "who": [], "what": []}, **k)
+        shots = {"first": frame("The ship drifts.", who=["Misty"]),
+                 "ends": [dict(frame("Lights out."), segment_id="a", start="new", begin=frame("The ship drifts.", what=["Ship"]))]}
+        story = {"title": "T", "logline": "L", "style": "Painted", "beats": [""], "segment_ids": ["a"]}
+        p = self.project(segs, actors=[{"id": "m", "name": "Misty", "description": "teal suit", "views": [{"image": "misty.png", "label": "waist-up"}]}],
+                         things=[{"id": "s", "name": "Ship", "kind": "scene", "context": "", "description": "", "views": [{"image": "ship.png"}]}],
+                         assist={"analysis": {"tempo": 120}, "story": story, "story_draft": story, "cast": [{"actor_id": "m", "role": "pilot"}], "shots": shots})
+        got = app.assist_shot_lengths(p["id"])["frames"]
+        self.assertEqual(sorted(got), ["a", "begin:a", "first"])
+        cast = app.cast_members(app.load_project(p["id"]))
+        # The page shows description + added. That must equal the length of what is really sent.
+        sent = len(app.assist.shot_prompt("The ship drifts.", "Painted", cast))
+        self.assertEqual(len("The ship drifts") + 1 + got["first"], sent)
+        plain = len(app.assist.shot_prompt("Lights out.", "Painted", []))
+        self.assertEqual(len("Lights out") + 1 + got["a"], plain)
+        self.assertGreater(got["first"], got["a"])                             # a ticked actor adds a sentence
+        self.assertGreater(got["begin:a"], got["a"])                           # so does a ticked asset
+
+    def test_prompt_limits_name_the_model_and_say_how_much_it_reads(self):
+        import workflows
+        self.assertEqual(sorted(workflows.PROMPT_LIMITS), ["image", "video"])
+        for limit in workflows.PROMPT_LIMITS.values():
+            self.assertEqual((limit["tokens"], limit["characters"]), (512, 2000))
