@@ -315,7 +315,7 @@ asset and cutting pictures out of them. The design is `docs/Reference_Generation
 it prepares for is in `3d_Generation_Plan/`. Code: `reference.py`, the `/api/reference` routes in `app.py`,
 `static/generator/reference-generation.js`, tests in `tests/test_reference.py`.
 
-**Built so far** (the design's section 16, steps 1 to 5 and part of 6):
+**Built so far** (the design's section 16, steps 1 to 7, with the limits listed at the end):
 
 - **Reference projects.** One per asset, several per SWIFT Director project, each with a name and a classification:
   four parents, eight asset types, optional subtype including Custom (the registry of `3d_Phase_3.md`).
@@ -363,6 +363,23 @@ it prepares for is in `3d_Generation_Plan/`. Code: `reference.py`, the `/api/ref
 - **An assembled sheet needs the pictures on it.** Approving one while some of those are still pending shows the
   design's "Approve Required Dependencies" question, listing each with the reason, and approves them together or not
   at all. A picture an approved sheet shows cannot be denied.
+- **Consistency checks.** Each row lists plain facts the application can see by itself (views switched on but empty,
+  views of different shapes, an inherited source with no picture). **Check consistency** has the language model compare
+  the row's views in use and list where they disagree, each with the views involved, the kind of difference and
+  whether it is sure (`assist.compare_references`, `POST /api/reference/check`). Findings are advice: they never stop
+  a generation and change no picture. They are marked as out of date once the pictures in use change. A size the image
+  model cannot make is different: that is refused before anything is queued.
+- **Export.** Four choices, as in the design: Sheet Only; Individual Views; Complete Reference Package (sheet, views
+  and `ReferenceManifest.json`); Component Reference Sheets (one sheet per row, assembled from that row, with its panel
+  if ticked). An export contains only pictures that already exist: a sheet is never split into views to fill it, and
+  nothing is generated. If anything in it is pending, the "Export Unapproved Asset" notice lists each picture and the
+  time it has left; exporting changes no approval or expiry. The ZIP is made in the browser
+  (`static/generator/zip-store.js`), and the server only says what belongs in it (`POST /api/reference/export`).
+- **Hand-over to 3D Generation.** **Send to 3D Generation** records the selected sheet, each row's views in use and the
+  extracted views, with the classification and each view's row and component role. Only ids are kept: no file is
+  copied and nothing is approved. 3D Generation shows what was sent above its 3D view, with buttons back to Reference
+  Generation, and has no picture-making controls of its own. A picture denied or expired later shows there as gone.
+  Assigning these to 3D assets waits for the asset definition phase of `3d_Generation_Plan/`.
 - **Sheet Extraction.** A separate workflow that only starts when you open it. Choose a sheet made here, upload one
   (PNG, JPEG, WebP) or take one from the Library; mark regions by dragging, or use **Detect regions**; say what each
   shows (a direction or a detail, Base or Detail, a component name) and adjust its edges by number; then extract. The
@@ -379,10 +396,11 @@ it prepares for is in `3d_Generation_Plan/`. Code: `reference.py`, the `/api/ref
   deleted and the file stays in ComfyUI's input folder. Start with `COMFY_INPUT=/path/to/ComfyUI/input ./run.sh` and
   the file is deleted too, unless something else in the project still uses it.
 
-**Not built yet:** validation reporting, the four export profiles, the
-hand-over to 3D Generation, choosing between providers (there is one), specification panels on Simple sheets, and
-branding beyond the title line. Automatic detection does not suggest
-directions or tell text from pictures beyond the size rule above.
+**Not built yet, or limited:** choosing between providers (there is one, FLUX.2); specification panels on Simple
+sheets; branding beyond the title line; background removal, padding and resizing of extracted views; and automatic
+detection that suggests which way a view faces or tells text from pictures beyond a size rule. The design's step 8,
+evaluating the image model against its constraints, needs the real model on the PGX and has not been done: every
+check so far ran against stand-ins.
 
 ## Lore
 

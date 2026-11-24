@@ -320,6 +320,92 @@ class PanelsAndAssembly(unittest.TestCase):
         self.assertEqual(len([x for x in p["reference"]["artifacts"] if x["role"] == "view"]), 2)         # assembling changed no view
 
 
+class ChecksExportAndHandOver(unittest.TestCase):
+    def setUp(self):
+        self.p, _ = advanced()
+        view(self.p, "g1", "front", 1000.0); view(self.p, "g2", "left", 1000.0); view(self.p, "g3", "front", 1000.0, row="rowaaaa002")
+        finish(self.p, "s1", 1000.0)
+        reference.sync(self.p, now=1001.0)
+        self.ref = self.p["reference"]["projects"][0]
+
+    def test_plain_notes_about_a_row_never_block_anything(self):
+        by = {a["id"]: a for a in self.p["reference"]["artifacts"]}
+        by["g2"].update(width=1024, height=1024)
+        got = reference.notes(self.p["reference"], self.ref, self.ref["rows"][0])
+        self.assertEqual([n["aspect"] for n in got], ["completeness", "projection"])
+        self.assertIn("right, rear", got[0]["description"])
+        self.assertEqual(reference.view(self.p, now=1002.0)["state"]["projects"][0]["rows"][0]["notes"], got)
+        self.assertNotIn("notes", self.p["reference"]["projects"][0]["rows"][0])                           # for the page only, not stored
+        self.assertEqual(len(reference.plan_views(self.p, "rpaaaaaa01", "rowaaaa001", "missing")), 2)      # generation goes ahead regardless
+
+    def test_a_check_needs_two_views_and_its_findings_are_stored_as_advice(self):
+        with self.assertRaises(ValueError):
+            reference.to_check(self.p, "rpaaaaaa01", "rowaaaa002")
+        _, _, views = reference.to_check(self.p, "rpaaaaaa01", "rowaaaa001")
+        self.assertEqual([d for d, _ in views], ["front", "left"])
+        v = reference.checked(self.p, "rpaaaaaa01", "rowaaaa001", [{"views": ["front", "left", "sideways"], "aspect": "components", "description": "The left view has no sword.", "certain": True},
+                                                                    {"views": ["left"], "aspect": "nonsense", "description": "  ", "certain": True}, "junk"], "qwen", now=5.0)
+        self.assertEqual(v["findings"], [{"views": ["front", "left"], "aspect": "components", "description": "The left view has no sword.", "certain": True}])
+        self.assertEqual(v["pictures"], {"front": "g1", "left": "g2"})
+        shown = reference.view(self.p, now=1002.0)["state"]["projects"][0]["rows"][0]["validation"]
+        self.assertFalse(shown["stale"])
+        view(self.p, "g9", "left", 2000.0); reference.sync(self.p, now=2001.0)
+        self.p["reference"]["projects"][0]["rows"][0]["slots"]["left"]["selected"] = "g9"
+        self.assertTrue(reference.view(self.p, now=2002.0)["state"]["projects"][0]["rows"][0]["validation"]["stale"])   # it was about other pictures
+        kept = reference.clean({"projects": [dict(self.p["reference"]["projects"][0], rows=[dict(r, validation={"findings": ["forged"]}) for r in self.p["reference"]["projects"][0]["rows"]])]}, self.p["reference"])
+        self.assertEqual(kept["projects"][0]["rows"][0]["validation"]["findings"][0]["description"], "The left view has no sword.")   # the page cannot write findings
+
+    def test_sheet_only_needs_a_selected_sheet(self):
+        with self.assertRaises(ValueError):
+            reference.export_plan(self.p, "rpaaaaaa01", "sheet")
+        self.ref["selected"] = "s1"
+        out = reference.export_plan(self.p, "rpaaaaaa01", "sheet", now=1000.0 + DAY)
+        self.assertEqual((out["zip"], out["name"], [f["image"] for f in out["files"]], out["pending"][0]["hours_left"]), (False, "Misty_Reference_Sheet.png", ["s1.png"], 9 * 24))
+
+    def test_individual_views_are_only_ones_that_exist_and_exporting_changes_nothing(self):
+        before = repr(self.p["reference"])
+        out = reference.export_plan(self.p, "rpaaaaaa01", "views", now=2000.0)
+        self.assertEqual([f["path"] for f in out["files"]], ["Views/Complete_character/Front.png", "Views/Complete_character/Left.png", "Views/Pirate_hat/Front.png"])
+        self.assertEqual(len(out["pending"]), 3); self.assertEqual(repr(self.p["reference"]), before)
+        entry = out["manifest"]["files"][2]
+        self.assertEqual((entry["direction"], entry["component"], entry["approval"], entry["classification"]["type"]), ("front", "Headwear", "pending", "humanoid"))
+        empty, _ = advanced(); finish(empty, "s1", 1000.0); reference.sync(empty, now=1001.0)
+        with self.assertRaises(ValueError) as e:                                                         # a sheet alone is not split into views
+            reference.export_plan(empty, "rpaaaaaa01", "views")
+        self.assertIn("not split automatically", str(e.exception))
+
+    def test_the_complete_package_has_the_sheet_the_views_and_a_manifest(self):
+        self.ref["selected"] = "s1"; reference.approve(self.p, ["g1"])
+        out = reference.export_plan(self.p, "rpaaaaaa01", "package", now=2000.0)
+        self.assertEqual(len(out["files"]), 4); self.assertEqual(out["name"], "Misty_Complete_Reference_Package.zip")
+        m = out["manifest"]
+        self.assertEqual((m["reference"]["type"], m["profile"], len(m["rows"]), m["rows"][1]["component_role"], m["rows"][1]["classification"]["inherited"]), ("humanoid", "Complete Reference Package", 2, "Headwear", True))
+        self.assertEqual(sorted(x["id"] for x in out["pending"]), ["g2", "g3", "s1"])                      # the approved view is not in the warning
+        self.assertEqual(m["files"][1]["expires"], None)
+
+    def test_component_sheets_are_one_per_row_and_carry_the_panel_setting(self):
+        self.ref["rows"][1]["panel"]["include"] = True
+        out = reference.export_plan(self.p, "rpaaaaaa01", "components", now=2000.0)
+        self.assertEqual([(c["path"], c["pictures"]) for c in out["components"]], [("Complete_asset/Complete_character_Reference.png", ["g1", "g2"]), ("Headwear/Pirate_hat_Reference.png", ["g3"])])
+        self.assertEqual([f["panel_included"] for f in out["manifest"]["files"]], [False, True]); self.assertEqual(out["files"], [])
+
+    def test_sending_to_3d_records_ids_only_and_follows_the_pictures(self):
+        self.ref["selected"] = "s1"
+        h = reference.send_to_3d(self.p, "rpaaaaaa01", lambda: "h1", now=3000.0)
+        self.assertEqual([(i["artifact"], i["role"], i["component"]) for i in h["items"]], [("s1", "sheet", ""), ("g1", "front", "Complete asset"), ("g2", "left", "Complete asset"), ("g3", "front", "Headwear")])
+        self.assertEqual({a["state"] for a in self.p["reference"]["artifacts"]}, {"pending"})             # nothing was approved
+        self.assertEqual([a["expires"] for a in self.p["reference"]["artifacts"]][0], 1000.0 + 10 * DAY)   # or given more time
+        reference.send_to_3d(self.p, "rpaaaaaa01", lambda: "h2", now=4000.0)
+        self.assertEqual(len(self.p["reference"]["handover"]), 1)                                          # sending again updates the same one
+        reference.delete(self.p, ["g2"])
+        shown = reference.handed_over(self.p["reference"])[0]
+        self.assertEqual([(i["state"], i["image"]) for i in shown["items"]][2], ("gone", None))
+        self.assertEqual((shown["type_label"], shown["parent_label"], shown["name"]), ("Humanoid", "Actors", "Misty"))
+        kept = reference.clean({"projects": self.p["reference"]["projects"]}, self.p["reference"])
+        self.assertEqual(len(kept["handover"]), 1)
+        self.assertEqual(reference.clean({"projects": []}, self.p["reference"])["handover"], [])
+
+
 class Files(unittest.TestCase):
     def test_a_deleted_pictures_file_is_removed_only_when_the_folder_is_known_and_nothing_else_uses_it(self):
         import os, tempfile

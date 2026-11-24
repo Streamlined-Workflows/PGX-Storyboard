@@ -144,3 +144,10 @@
 .rg .rg-checker { background-image:repeating-conic-gradient(var(--swift-surface-900) 0% 25%, var(--swift-base) 0% 50%); background-size:24px 24px; }
 .rg .rg-sheets { display:grid; grid-template-columns:repeat(auto-fill, minmax(320px, 1fr)); gap:12px; } .rg .rg-sheetcard img { height:220px; }
 @media (max-width: 700px) { .rg .rg-pline { grid-template-columns:minmax(0, 1fr) auto auto auto; } .rg .rg-pline input:first-child, .rg .rg-pline input:nth-child(2) { grid-column:1 / -1; } .rg .rg-dim input { width:56px; } .rg .rg-sheets { grid-template-columns:minmax(0, 1fr); } .rg .rg-rowcard { padding:10px; } }
+/* Reference Generation: checks, export and the hand-over shown in 3D Generation. */
+.rg .rg-findings { margin:0; padding-left:18px; display:grid; gap:4px; font-size:13px; color:var(--swift-warn); } .rg .rg-findings b { font-weight:600; } .rg .rg-findings .rg-old { opacity:.6; }
+.rg .rg-exports { display:grid; gap:8px; } .rg .rg-exports > div { display:flex; gap:10px; align-items:center; flex-wrap:wrap; } .rg .rg-exportbtn { min-width:250px; text-align:left; }
+.rg .rg-handed { display:grid; gap:12px; } .rg .rg-handcard { display:grid; gap:8px; padding:10px; border:1px solid var(--swift-border); border-radius:var(--swift-radius-lg); }
+.rg .rg-handitems { display:flex; gap:8px; flex-wrap:wrap; } .rg .rg-handitem { display:grid; gap:3px; width:110px; font-size:11px; color:var(--swift-text-muted); text-align:center; padding:4px; border:1px solid transparent; border-radius:6px; }
+.rg .rg-handitem img { width:100%; height:80px; object-fit:contain; background:var(--swift-base); border-radius:6px; cursor:zoom-in; }
+.rg.rg-handover { margin-bottom:0; }

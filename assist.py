@@ -352,6 +352,26 @@ def describe_reference(image_b64, use):
     return label + text
 
 
+def compare_references(pictures, what, aspects):
+    """Compare several views of one subject and report where they disagree. `pictures` is [(name, image_b64)], in order.
+    Advice only: the pictures are not changed and nothing is blocked because of what comes back.
+    -> [{"views": [name...], "aspect", "description", "certain": bool}]"""
+    names = [n for n, _ in pictures]
+    system = ("You check reference sheets for 3D artists. You are shown several views of what should be the same subject, in a fixed order. "
+              "Report only real disagreements between the views: a feature present in one view and missing or different in another, "
+              "a different count of parts, different proportions, colours or materials, a different pose, a view that faces the wrong way "
+              "for its name, or more than the one subject in a picture. Do not report things that differ only because the camera moved. "
+              "For each finding name the views involved using exactly the names given, choose the one aspect that fits best, describe it in "
+              "one or two plain sentences, and set certain to false if you are not sure. If the views agree, return an empty list.")
+    schema = {"type": "object", "required": ["findings"], "properties": {"findings": {"type": "array", "items": {
+        "type": "object", "required": ["views", "aspect", "description", "certain"],
+        "properties": {"views": {"type": "array", "items": {"type": "string", "enum": names}}, "aspect": {"type": "string", "enum": list(aspects)},
+                       "description": {"type": "string"}, "certain": {"type": "boolean"}}}}}}
+    user = f"The subject: {what}. The pictures, in order: " + ", ".join(f"{i}. {n} view" for i, n in enumerate(names, 1)) + ". List the disagreements."
+    out = chat(system, user, schema, think=False, temperature=0.2, images=[b for _, b in pictures])
+    return out.get("findings") if isinstance(out.get("findings"), list) else []
+
+
 def _fit(text, room):
     """Trim to `room` characters at the end of a sentence if one fits, else at a word, and end with a full stop."""
     text = " ".join(str(text).split())

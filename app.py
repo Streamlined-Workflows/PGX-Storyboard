@@ -807,6 +807,50 @@ def reference_assemble(pid, rid, png, used, state=None):
         return reference_out(project, assembled=aid)
 
 
+def reference_check(pid, rid, row_id):
+    """Have the language model compare a row's views and store what it finds. The model is asked outside the lock, since
+    it can take a while; the result is stored only if the row still exists."""
+    with LOCK:
+        project = load_project(pid)
+        reference.sync(project)
+        ref, row, views = reference.to_check(project, rid, row_id)
+        what = f"{row['label'] or row['role'] or ref['name']} ({reference.TYPES[row['type'] or ref['type']]['label'].lower()})"
+    pictures = []
+    for d, a in views:
+        try:
+            pictures.append((d, base64.b64encode(comfy_bytes("/view?" + urllib.parse.urlencode({"filename": a["image"], "type": "input"}))).decode()))
+        except OSError as e:
+            raise ValueError(f"Could not read the {d} view from the server: {e}")
+    found = assist.compare_references(pictures, what, reference.ASPECTS_CHECKED)
+    with LOCK:
+        project = load_project(pid)
+        reference.sync(project)
+        reference.checked(project, rid, row_id, found, assist.MODEL)
+        save_project(project, touch=False)
+        return reference_out(project, checked=row_id)
+
+
+def reference_export(pid, rid, profile):
+    """What an export contains. Reading this changes nothing: the page fetches the pictures and builds the download."""
+    with LOCK:
+        project = load_project(pid)
+        reference.sync(project)
+        return reference.export_plan(project, rid, profile)
+
+
+def reference_send(pid, rid, remove=None):
+    """Hand a reference's chosen pictures to 3D Generation, or take a hand-over back out with `remove`."""
+    with LOCK:
+        project = load_project(pid)
+        reference.sync(project)
+        if remove:
+            project["reference"]["handover"] = [h for h in project["reference"]["handover"] if h["id"] != remove]
+        else:
+            reference.send_to_3d(project, rid, new_id)
+        save_project(project, touch=False)
+        return reference_out(project)
+
+
 def reference_decide(pid, ids, action, confirmed=False, force=False):
     """Approve or deny pictures. Approving one that needs other pending pictures changes nothing and returns `needs`
     until the page sends it again with confirmed set."""
@@ -1665,6 +1709,12 @@ class Handler(BaseHTTPRequestHandler):
                 return self.send_json(reference_views(pid, payload.get("reference"), payload.get("row"), payload.get("what"), payload.get("state"), bool(payload.get("preview"))))
             if path == "/api/reference/assemble":
                 return self.send_json(reference_assemble(pid, payload.get("reference"), payload.get("png"), payload.get("used"), payload.get("state")))
+            if path == "/api/reference/check":
+                return self.send_json(reference_check(pid, payload.get("reference"), payload.get("row")))
+            if path == "/api/reference/export":
+                return self.send_json(reference_export(pid, payload.get("reference"), payload.get("profile")))
+            if path == "/api/reference/send":
+                return self.send_json(reference_send(pid, payload.get("reference"), payload.get("remove")))
             if path == "/api/reference/place":
                 return self.send_json(reference_place(pid, payload.get("reference"), payload.get("row"), payload.get("direction"), payload.get("image"), payload.get("state")))
             if path == "/api/reference/decide":

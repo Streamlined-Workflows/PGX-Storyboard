@@ -13,6 +13,8 @@
  *   ReferenceGeneration.panel(host, tools) -> the element to show; the same element is put back after a redraw
  *     host   { pid, upload(file) -> name, view(name) -> url, toast(text), openViewer(url) }
  *     tools  { library(choose, already), layer() -> the element modals are added to }
+ *   ReferenceGeneration.handover(host, tools) -> the element 3D Generation shows: what has been sent to it from here
+ *     tools also has go(mode), which switches the Asset Generator to another mode
  *   ReferenceGeneration.hide() stops the checking for finished pictures.
  * Cutting is done here in the browser at the sheet's own pixels, with no resizing, so the server needs no image library.
  */
@@ -20,6 +22,7 @@ window.ReferenceGeneration = (function () {
   'use strict';
   let lastLoad = 0, host = null, tools = null, data = null, loadedFor = null, workflow = 'generate', timer = null, saveTimer = null, showing = false, chosen = null;
   const root = document.createElement('div'); root.className = 'rg';
+  const side = document.createElement('div'); side.className = 'rg rg-handover';      // shown by 3D Generation
   let preview = null;                      // the assembled sheet last previewed: { pid, canvas, used, stamp }
   const openPanels = new Set();            // which specification panels are open, so a redraw does not close them
   const batch = {};                        // per reference project, while a run is going: how many were asked for and how many sheets there were before
@@ -50,6 +53,7 @@ window.ReferenceGeneration = (function () {
     data = fresh;
     if (fresh.expired) host.toast(`${fresh.expired} unapproved picture${fresh.expired > 1 ? 's' : ''} reached ten days and ${fresh.expired > 1 ? 'were' : 'was'} deleted.`);
     if (all || before !== JSON.stringify([data.artifacts.map(a => [a.id, a.state, a.days_left]), data.jobs]) || !root.firstChild) draw();
+    if (side.isConnected) drawSide();
     clearTimeout(timer); if (showing && anyBusy()) timer = setTimeout(load, 2500);
   }
   function keep() { clearTimeout(saveTimer); saveTimer = setTimeout(() => call('POST', '/save', { project: host.pid, state: S() }).catch(e => host.toast(e.message)), 700); }
@@ -112,6 +116,7 @@ window.ReferenceGeneration = (function () {
     if (!data) { root.append(el('<div class="panel hint">Loading…</div>')); return; }
     root.append(head());
     if (P()) root.append(workflow === 'generate' ? generation() : extraction());
+    if (P() && workflow === 'generate') root.append(exportBox());
     if (focus) { const again = root.querySelector(`[data-k="${focus}"]`); if (again) again.focus(); }
   }
   const fit = area => { if (area.offsetParent) { area.style.height = 'auto'; area.style.height = (area.scrollHeight + 2) + 'px'; } };
@@ -271,6 +276,7 @@ window.ReferenceGeneration = (function () {
       ${row.section === 'detail' ? '<div class="cc rg-rowpanel"></div>' : ''}
       ${dims.blocked ? `<div class="rg-blocked">${esc(dims.blocked)}</div>` : ''}
       <div class="rg-slots"></div>
+      <div class="rg-checks"></div>
       ${whole.length ? `<div class="ag-label">Complete row picture <span class="hint">Kept whole for assembly. It is not split into views; use Sheet Extraction for that.</span></div><div class="rg-wholes"></div>` : ''}</section>`);
     const set = (sel, key, after) => { const f = card.querySelector(sel); if (!f) return; f[f.tagName === 'SELECT' ? 'onchange' : 'oninput'] = () => { row[key] = f.type === 'number' ? +f.value : f.value; keep(); if (f.tagName === 'SELECT') (after || draw)(); }; if (f.tagName !== 'SELECT') f.onchange = after || draw; };
     set('.rg-rsection', 'section', saveNow); set('.rg-rlabel', 'label', saveNow); set('.rg-rrole', 'role', saveNow); set('.rg-rsub', 'subtype');
@@ -308,6 +314,13 @@ window.ReferenceGeneration = (function () {
     const asm = card.querySelector('.rg-rassemble'); if (asm) asm.onchange = () => { row.assemble = asm.value; keep(); draw(); };
     const rp = card.querySelector('.rg-rowpanel'); if (rp) rp.append(panelEditor(row.panel, row.id, 'Specification panel for this row', 'Drawn beside this row.', [row.label, row.role]));
     const slots = card.querySelector('.rg-slots'); data.directions.forEach(d => slots.append(slotCard(row, d)));
+    /* Consistency: plain facts worked out by the application, and what the language model found when asked to compare the views. Advice only. */
+    const val = row.validation, inUse = data.directions.filter(d => row.slots[d].enabled && chosenOf(row, d)).length, checks = card.querySelector('.rg-checks');
+    checks.innerHTML = `<div class="rg-fields"><button class="small rg-check" type="button"${inUse >= 2 ? '' : ' disabled'} title="The language model compares this row's views in use and lists where they disagree. It does not change or block anything.">${val ? 'Check consistency again' : 'Check consistency'}</button>
+        <span class="hint">${inUse < 2 ? 'Needs at least two views with pictures.' : val ? `Checked by ${esc(val.model)}. ${val.findings.length ? '' : 'No disagreements were found. '}${val.stale ? 'The pictures in use have changed since, so this may no longer apply.' : ''}` : 'Not checked yet.'} Findings are advice: they never stop a generation.</span></div>
+      ${(row.notes || []).length || (val && val.findings.length) ? `<ul class="rg-findings">${(row.notes || []).map(n => `<li><b>${esc(cap(n.aspect))}</b> ${esc(n.description)}</li>`).join('')}${val ? val.findings.map(f => `<li class="${val.stale ? 'rg-old' : ''}"><b>${esc(cap(f.aspect))}${f.views.length ? ' · ' + esc(f.views.map(cap).join(', ')) : ''}</b> ${esc(f.description)}${f.certain ? '' : ' <i>(not certain)</i>'}</li>`).join('') : ''}</ul>` : ''}`;
+    checks.querySelector('.rg-check').onclick = async ev => { ev.target.disabled = true; ev.target.textContent = 'Comparing the views…'; flush();
+      try { await call('POST', '/save', { project: host.pid, state: S() }); take(await call('POST', '/check', { project: host.pid, reference: p.id, row: row.id }), true); } catch (e) { host.toast(e.message); draw(); } };
     const wholes = card.querySelector('.rg-wholes');
     if (wholes) whole.forEach((a, k) => { const c = el(`<div class="rg-view"><img alt="Complete row picture ${k + 1}" loading="lazy" src="${esc(host.view(a.image))}">${pill(a)}${a === wholeUse ? '<span class="pill rg-selected">In use</span>' : '<button class="small rg-usewhole" type="button">Use this one</button>'}</div>`);
       c.querySelector('img').onclick = () => host.openViewer(host.view(a.image)); const u = c.querySelector('.rg-usewhole'); if (u) u.onclick = () => { row.selected = a.id; keep(); draw(); };
@@ -342,13 +355,13 @@ window.ReferenceGeneration = (function () {
     return box;
   }
   /* Everything reference-assembly.js needs to lay the sheet out: the pictures in use, loaded, and the text to draw. */
-  async function sheetSpec() {
+  async function sheetSpec(only) {                                      // only: one row's id, for a component sheet
     const p = P(), L = p.layout, load = image => new Promise(done => { const i = new Image(); i.onload = () => done(i); i.onerror = () => done(null); i.src = host.view(image); });
     const panelOf = (pn, names) => pn.include ? { label: pn.label.trim() || names[0], sub: pn.sub_label.trim() || names[1], lines: [...['height', 'width', 'depth'].filter(d => pn.dims[d]).map(d => ({ name: d, value: RA().length(pn.dims[d], L.units) })), ...pn.fields.filter(f => f.value.trim()).map(f => ({ name: f.name, value: f.value }))] } : null;
     const sections = [];
     for (const section of data.sections) {
       const blocks = [];
-      for (const row of p.rows.filter(r => r.section === section)) {
+      for (const row of p.rows.filter(r => r.section === section && (!only || r.id === only))) {
         const views = data.directions.filter(d => row.slots[d].enabled && chosenOf(row, d)).map(d => ({ a: chosenOf(row, d), caption: cap(d) })), whole = chosenOf(row, null);
         const pick = (row.assemble === 'whole' || !views.length) && whole ? [{ a: whole, caption: '' }] : views, images = [];
         for (const x of pick) { const img = await load(x.a.image); if (img && img.naturalWidth) images.push({ img, caption: x.caption, id: x.a.id }); }
@@ -358,8 +371,9 @@ window.ReferenceGeneration = (function () {
       sections.push({ name: section, blocks });
     }
     const css = getComputedStyle(document.documentElement), width = L.orientation === 'portrait' ? Math.round(L.resolution / Math.SQRT2 / 16) * 16 : L.resolution;
-    return { width, height: L.height, background: L.background === 'solid' ? L.colour : null, margin: Math.round(L.margin * width / 2048), spacing: Math.round(L.spacing * width / 2048), labels: L.labels, align: L.align,
-      title: L.title ? p.name : '', accent: css.getPropertyValue('--swift-green').trim(), font: getComputedStyle(document.body).fontFamily, panelStyle: L.panel_style, sections };
+    const one = only && p.rows.find(r => r.id === only);
+    return { width, height: only ? 0 : L.height, background: L.background === 'solid' ? L.colour : null, margin: Math.round(L.margin * width / 2048), spacing: Math.round(L.spacing * width / 2048), labels: L.labels, align: L.align,
+      title: one ? `${p.name} · ${one.label || one.role || 'Component'}` : L.title ? p.name : '', accent: css.getPropertyValue('--swift-green').trim(), font: getComputedStyle(document.body).fontFamily, panelStyle: L.panel_style, sections };
   }
   const stampOf = p => JSON.stringify([p.name, p.rows.map(r => [r.id, r.section, r.label, r.role, r.width, r.width_pct, r.assemble, r.selected, r.panel, data.directions.map(d => [r.slots[d].enabled, (chosenOf(r, d) || {}).id])]), p.panel, p.layout]);
   function assembleBox() {
@@ -400,6 +414,69 @@ window.ReferenceGeneration = (function () {
       const cut = el('<button class="small" type="button" title="Open Sheet Extraction with this sheet. Nothing is cut until you say so.">Extract from this sheet…</button>'); cut.onclick = () => { p.extraction = { source: a.image, regions: [] }; workflow = 'extract'; keep(); draw(); };
       c.querySelector('.rg-sheetbtns').append(pick, cut); c.append(actions(a, `${stem()}-assembled-${k + 1}.png`)); grid.append(c); });
     return box;
+  }
+
+  /* ----- Export (design 11) and the hand-over to 3D Generation ----- */
+  const EXPORT_HELP = { sheet: 'The selected sheet, as one picture.', views: 'A ZIP of the individual views that exist: each row\u2019s views in use and the extracted views.',
+    package: 'A ZIP of the selected sheet, the individual views, and ReferenceManifest.json describing them.', components: 'A ZIP with one sheet for each row that has pictures, assembled from that row, with its panel if the panel is ticked.' };
+  const hoursText = h => h >= 24 ? `${Math.ceil(h / 24)} day${Math.ceil(h / 24) > 1 ? 's' : ''}` : `${Math.max(1, h)} hour${h > 1 ? 's' : ''}`;
+  const bytesOf = async url => { const r = await fetch(url); if (!r.ok) throw new Error('A picture could not be read from the server.'); return new Uint8Array(await r.arrayBuffer()); };
+  const saveBlob = (blob, name) => { const url = URL.createObjectURL(blob), link = document.createElement('a'); link.href = url; link.download = name; document.body.append(link); link.click(); link.remove(); setTimeout(() => URL.revokeObjectURL(url), 30000); };
+  async function runExport(profile, button) {
+    const p = P(), label = button.textContent; button.disabled = true; flush();
+    try {
+      await call('POST', '/save', { project: host.pid, state: S() });
+      const plan = await call('POST', '/export', { project: host.pid, reference: p.id, profile });
+      if (plan.pending.length) {                                         // design 11 and 2.13: name what is pending and how long it has
+        const rows = plan.pending.map(x => `<li><img alt="" src="${esc(host.view(x.image))}"><span><b>${esc(x.what)}</b> · not approved · deleted in ${hoursText(x.hours_left)}</span></li>`).join('');
+        const go = await dialog('Export Unapproved Asset', `<p>This export contains pictures that have not been approved for permanent storage. They will be deleted from SWIFT Director when their time runs out unless you approve them first. Exporting does not approve them or give them more time. Your downloaded copy is not affected when the local ones are deleted. Continue?</p><p><b>${esc(p.name)}</b></p><ul class="rg-needs">${rows}</ul>`, [['Cancel', null], ['Continue Export', 'yes', true]]);
+        if (!go) return;
+      }
+      button.textContent = 'Preparing…';
+      if (!plan.zip) { saveBlob(new Blob([await bytesOf(host.view(plan.files[0].image))], { type: 'image/png' }), plan.name); return; }
+      const entries = [];
+      for (const f of plan.files) entries.push({ path: f.path, data: await bytesOf(host.view(f.image)) });
+      if (plan.components.length && document.fonts && document.fonts.ready) await document.fonts.ready;
+      for (const c of plan.components) {                                 // each component sheet is laid out from its own row, the same way a full sheet is
+        const canvas = RA().draw(RA().plan(await sheetSpec(c.row))), blob = await new Promise(done => canvas.toBlob(done, 'image/png'));
+        entries.push({ path: c.path, data: new Uint8Array(await blob.arrayBuffer()) });
+        const entry = plan.manifest.files.find(x => x.path === c.path); if (entry) { entry.width = canvas.width; entry.height = canvas.height; }
+      }
+      entries.push({ path: 'ReferenceManifest.json', data: new TextEncoder().encode(JSON.stringify(plan.manifest, null, 2)) });
+      saveBlob(window.ZipStore.build(entries), plan.name);
+      host.toast(`Exported ${entries.length - 1} picture${entries.length === 2 ? '' : 's'} and the manifest.`);
+    } catch (e) { host.toast(e.message); }
+    finally { button.disabled = false; button.textContent = label; }
+  }
+  function exportBox() {
+    const p = P(), sent = data.handover.find(h => h.reference === p.id);
+    const box = el(`<section class="panel rg-export"><h2>Export</h2><p class="hint">Exports contain only pictures that already exist. Nothing is generated or extracted to fill a gap, and exporting does not approve anything.</p>
+      <div class="rg-exports">${data.exports.map(x => `<div><button class="rg-exportbtn" data-profile="${x.key}" type="button">${esc(x.label)}</button><span class="hint">${EXPORT_HELP[x.key]}</span></div>`).join('')}</div>
+      <h2>3D Generation</h2><div class="rg-fields"><button class="rg-send" type="button">${sent ? 'Send again to 3D Generation' : 'Send to 3D Generation'}</button>
+        <span class="hint">${sent ? `${sent.items.length} picture${sent.items.length === 1 ? '' : 's'} sent. ` : ''}Hands over the selected sheet, each row's views in use and the extracted views, with the classification. Nothing is copied or approved. <button class="small ghost rg-to3d" type="button">Open 3D Generation</button></span></div></section>`);
+    box.querySelectorAll('.rg-exportbtn').forEach(b => { b.onclick = () => runExport(b.dataset.profile, b); });
+    box.querySelector('.rg-send').onclick = async ev => { ev.target.disabled = true; flush();
+      try { await call('POST', '/save', { project: host.pid, state: S() }); take(await call('POST', '/send', { project: host.pid, reference: p.id }), true); host.toast('Sent to 3D Generation.'); } catch (e) { host.toast(e.message); draw(); } };
+    box.querySelector('.rg-to3d').onclick = () => tools.go('3d');
+    return box;
+  }
+  /* What 3D Generation shows: the references sent from here, looked up as they are now. */
+  function drawSide() {
+    side.innerHTML = '';
+    if (!data) { side.append(el('<section class="panel"><span class="hint">Loading…</span></section>')); return; }
+    const box = el(`<section class="panel"><div class="rg-fields"><h2>Reference pictures</h2><span class="ag-grow"></span><button class="small rg-getrefs" type="button">Make or choose references in Reference Generation</button></div>
+      <p class="hint">3D Generation uses reference pictures made elsewhere; it has no picture-making controls of its own. ${data.handover.length ? 'These were sent from Reference Generation. They are the same pictures, not copies, so one that is denied or expires there disappears here.' : 'Nothing has been sent yet.'} Assigning them to 3D assets arrives with the asset definition phase.</p><div class="rg-handed"></div></section>`);
+    box.querySelector('.rg-getrefs').onclick = () => tools.go('reference');
+    const list = box.querySelector('.rg-handed');
+    data.handover.forEach(h => { const gone = h.items.filter(i => i.state === 'gone').length, pend = h.items.filter(i => i.state === 'pending').length;
+      const card = el(`<div class="rg-handcard"><div class="rg-fields"><b>${esc(h.name)}</b><span class="hint">${esc(h.parent_label)} / ${esc(h.type_label)}${h.subtype ? ' / ' + esc(h.subtype) : ''} · ${h.items.length} picture${h.items.length === 1 ? '' : 's'}${pend ? ` · ${pend} not approved yet` : ''}${gone ? ` · ${gone} no longer there` : ''}</span><span class="ag-grow"></span>
+          <button class="small rg-openref" type="button">Open in Reference Generation</button><button class="small ghost rg-unsend" type="button">Remove</button></div><div class="rg-handitems"></div></div>`);
+      h.items.forEach(i => { const what = i.role === 'sheet' ? 'Sheet' : cap(i.role), c = el(`<div class="rg-handitem${i.state === 'gone' ? ' rg-missing' : ''}" title="${esc([i.row_label, i.component].filter(Boolean).join(' · '))}">${i.image ? `<img alt="${esc(what)}" loading="lazy" src="${esc(host.view(i.image))}">` : '<span class="hint">Gone</span>'}<span>${esc(what)}${i.component && i.role !== 'sheet' ? ' · ' + esc(i.component) : ''}</span></div>`);
+        const img = c.querySelector('img'); if (img) img.onclick = () => host.openViewer(host.view(i.image)); card.querySelector('.rg-handitems').append(c); });
+      card.querySelector('.rg-openref').onclick = () => { if (S().projects.some(x => x.id === h.reference)) { S().open = h.reference; workflow = 'generate'; keep(); } tools.go('reference'); };
+      card.querySelector('.rg-unsend').onclick = async () => { try { take(await call('POST', '/send', { project: host.pid, remove: h.id }), true); } catch (e) { host.toast(e.message); } };
+      list.append(card); });
+    side.append(box);
   }
 
   function advanced() {
@@ -580,6 +657,7 @@ window.ReferenceGeneration = (function () {
       if (!data || Date.now() - lastLoad > 5000) { lastLoad = Date.now(); load(); }      // the page above redraws often; asking again every time would be wasteful
       return root;
     },
+    handover(h, t) { host = h; tools = t; if (loadedFor !== host.pid) data = null; drawSide(); if (!data || Date.now() - lastLoad > 5000) { lastLoad = Date.now(); load(); } return side; },
     hide() { showing = false; clearTimeout(timer); },
     _state: () => data, _preview: () => preview,
   };

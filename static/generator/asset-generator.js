@@ -62,8 +62,9 @@ window.AssetGenerator = (function () {
     body.append(configBox());
     if (window.ReferenceGeneration && mode !== 'reference') window.ReferenceGeneration.hide();
     if (mode === 'reference') {
-      body.append(window.ReferenceGeneration ? window.ReferenceGeneration.panel(host, { library, layer: () => root.querySelector('.ag') }) : el('<div class="panel hint">Reference Generation did not load. Reload the page.</div>'));
+      body.append(window.ReferenceGeneration ? window.ReferenceGeneration.panel(host, refTools()) : el('<div class="panel hint">Reference Generation did not load. Reload the page.</div>'));
     } else if (mode === '3d') {
+      if (window.ReferenceGeneration) body.append(window.ReferenceGeneration.handover(host, refTools()));
       body.append(view3d());
     } else if (mode === 'image') {
       body.append(el('<p class="hint ag-lead">One picture from a prompt and up to four reference pictures. Made with FLUX.2, the same image model the storyboard uses.</p>'), box('image'));
@@ -75,6 +76,9 @@ window.AssetGenerator = (function () {
     root.append(page);
     if (focus) { const again = root.querySelector(`[data-k="${focus}"]`); if (again) again.focus(); }
   }
+
+  /* What reference-generation.js is handed besides the host: the Library picker, where to put its dialogs, and a way to change mode. */
+  const refTools = () => ({ library, layer: () => root.querySelector('.ag'), go: m => { mode = m; draw(); } });
 
   /* ---------- 3D Generation: the 3D view ----------
    * The view is made once and the same element is put back each time the page is redrawn, so the camera stays where it was.

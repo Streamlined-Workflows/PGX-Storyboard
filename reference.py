@@ -5,7 +5,9 @@ of step 6): the workspace with its two separately started workflows, the classif
 generation with candidates, approval and ten-day retention, Advanced rows with six directional slots (generate,
 upload, lock, disable, inherit from other rows, row classification), specification panels, assembling the rows
 into one sheet, and Sheet Extraction by hand-drawn regions.
-Not built yet: validation reporting, the export profiles and the hand-over to 3D Generation.
+Also built (step 7): consistency checks on a row's views, the four export profiles, and the hand-over of chosen
+pictures to 3D Generation. Not built yet: choosing between providers (there is one) and detection that tells
+which way a view faces.
 
 Assembly is done by the page (static/generator/reference-assembly.js): it lays the chosen pictures out on a canvas,
 never asking a model to redraw anything, and sends the finished PNG here to be stored as a new pending sheet that
@@ -19,6 +21,8 @@ What is kept for a SWIFT Director project (project["reference"]):
              A row source is {"image": name} or {"row": id, "direction": d}: the picture another row has chosen for
              that view, looked up each time it is used, so nothing is copied.
   open       the reference project being worked on
+  handover   what has been sent to 3D Generation: [{id, reference, name, parent, type, subtype, created, updated,
+             items: [{artifact, role, row, component}]}]. Only ids are kept, so nothing is copied and nothing is approved.
   artifacts  one record per picture made or cut out here:
              {id, project, role: "sheet" | "view", image, state: "pending" | "approved", created, expires,
               width, height, upscaled, requires: [{id, reason}], origin: "generated" | "extracted" | "uploaded",
@@ -34,6 +38,7 @@ Retention (design 2, RG-006 to RG-009): a new picture is pending and expires ten
 is approved. Denying or expiring removes its record, its prompt and settings, and its entry in the Library.
 Selecting, downloading or extracting from a pending picture neither approves it nor moves its expiry.
 """
+import json
 import re
 import time
 
@@ -234,6 +239,7 @@ def _row(incoming, current, project_type, name, known):
     except (TypeError, ValueError):
         out["width_pct"] = 50
     out["assemble"] = get("assemble") if get("assemble") in ("views", "whole") else "views"      # which of its pictures go on the sheet
+    out["validation"] = current.get("validation") if isinstance(current.get("validation"), dict) else None      # written by check(), never by the page
     out["panel"] = _panel(get("panel"), current.get("panel") or {})
     slots, was, starts = get("slots") if isinstance(get("slots"), dict) else {}, current.get("slots") or {}, ROW_VIEWS.get(real, DIRECTIONS[:4])
     out["slots"] = {}
@@ -312,7 +318,8 @@ def clean(incoming, current=None, new_id=None):
             projects.append(done)
     opened = incoming.get("open", current.get("open"))
     return {"projects": projects, "open": opened if opened in seen else (projects[0]["id"] if projects else None),
-            "artifacts": [a for a in current.get("artifacts", []) if isinstance(a, dict) and a.get("project") in seen]}
+            "artifacts": [a for a in current.get("artifacts", []) if isinstance(a, dict) and a.get("project") in seen],
+            "handover": [h for h in current.get("handover", []) if isinstance(h, dict) and h.get("reference") in seen]}
 
 
 def find(state, rid):
@@ -464,6 +471,182 @@ def assembled(project, rid, image, width, height, used, new_id, now=None):
     return art
 
 
+# ---- checking a row's views against each other (design 10) ----
+ASPECTS_CHECKED = ("identity", "proportions", "components", "anatomy", "pose", "materials", "colour", "orientation", "asymmetry", "isolation", "projection", "configuration")
+
+
+def notes(state, p, row):
+    """What can be said about a row without a model: plain facts, never a reason to stop. -> [{"views", "aspect", "description"}]"""
+    out, used = [], [(d, chosen(state, row, d)) for d in DIRECTIONS if row["slots"][d]["enabled"]]
+    empty = [d for d, a in used if not a]
+    have = [(d, a) for d, a in used if a]
+    if empty and have:
+        out.append({"views": empty, "aspect": "completeness", "description": "Switched on but empty: " + ", ".join(empty) + "."})
+    shapes = {}
+    for d, a in have:
+        if a.get("width") and a.get("height"):
+            shapes.setdefault(round(a["width"] / a["height"], 2), []).append(d)
+    if len(shapes) > 1:
+        out.append({"views": [d for ds in shapes.values() for d in ds], "aspect": "projection",
+                    "description": "The views are not all the same shape (" + "; ".join(f"{', '.join(ds)} at {k}:1" for k, ds in shapes.items()) + "), so the subject may not be the same size in each."})
+    for n, src in enumerate(row["sources"], 1):
+        other = next((r for r in p["rows"] if r["id"] == src.get("row")), None) if "row" in src else None
+        if "row" in src and not (other and chosen(state, other, src["direction"])):
+            out.append({"views": [], "aspect": "sources", "description": f"Source {n} points at a view in another row that has no picture, so it is not sent."})
+    return out
+
+
+def checked(project, rid, row_id, findings, model, now=None):
+    """Store what the language model found when it compared a row's views. Findings are advice only: nothing is blocked
+    or changed because of them. Each: {"views": [direction...], "aspect", "description", "certain": bool}."""
+    state = project["reference"]
+    p = find(state, rid)
+    row = find_row(p, row_id)
+    kept = []
+    for f in findings if isinstance(findings, list) else []:
+        if isinstance(f, dict) and str(f.get("description") or "").strip():
+            kept.append({"views": [v for v in f.get("views", []) if v in DIRECTIONS] if isinstance(f.get("views"), list) else [],
+                         "aspect": f.get("aspect") if f.get("aspect") in ASPECTS_CHECKED else "identity",
+                         "description": _text(f["description"], 400).strip(), "certain": bool(f.get("certain", False))})
+    row["validation"] = {"checked": now or time.time(), "model": _text(model, 80), "findings": kept[:20],
+                         "pictures": {d: chosen(state, row, d)["id"] for d in DIRECTIONS if row["slots"][d]["enabled"] and chosen(state, row, d)}}
+    return row["validation"]
+
+
+def to_check(project, rid, row_id):
+    """The pictures a consistency check compares: the row's views in use. -> (reference project, row, [(direction, artifact)])"""
+    state = project["reference"]
+    p = find(state, rid)
+    row = find_row(p, row_id)
+    views = [(d, chosen(state, row, d)) for d in DIRECTIONS if row["slots"][d]["enabled"] and chosen(state, row, d)]
+    if len(views) < 2:
+        raise ValueError("A check compares views with each other, so the row needs at least two views with pictures.")
+    return p, row, views
+
+
+# ---- export (design 11) and the hand-over to 3D Generation (design 12) ----
+PROFILES_OUT = {"sheet": "Sheet Only", "views": "Individual Views", "package": "Complete Reference Package", "components": "Component Reference Sheets"}
+
+
+def _safe(text, fallback):
+    return re.sub(r"[^A-Za-z0-9]+", "_", str(text or "")).strip("_")[:50] or fallback
+
+
+def _unique(path, taken):
+    stem, dot, ext = path.rpartition(".")
+    n, out = 2, path
+    while out.lower() in taken:
+        out, n = f"{stem}_{n}{dot}{ext}", n + 1
+    taken.add(out.lower())
+    return out
+
+
+def export_plan(project, rid, profile, now=None):
+    """What an export contains (design 11). Nothing is generated, extracted or approved by exporting: only pictures that
+    already exist are listed. The page fetches the files and makes the ZIP; for component sheets it also assembles one
+    sheet per row from that row's pictures.
+    -> {"profile", "zip", "name", "files": [{"path", "image", "id"}], "components": [{"row", "path"}], "manifest", "pending": [...]}"""
+    now = now or time.time()
+    if profile not in PROFILES_OUT:
+        raise ValueError("Unknown export.")
+    state = project["reference"]
+    p = find(state, rid)
+    by = {a["id"]: a for a in state["artifacts"] if a["project"] == rid}
+    stem, taken, files, components, used = _safe(p["name"], "Reference"), set(), [], [], []
+    def add(a, path, **more):
+        path = _unique(path, taken)
+        files.append({"path": path, "image": a["image"], "id": a["id"]})
+        used.append(dict({"path": path, "artifact": a["id"], "role": a["role"], "origin": a.get("origin", ""), "width": a.get("width"), "height": a.get("height"),
+                          "upscaled": bool(a.get("upscaled")), "approval": a["state"], "expires": None if a["state"] == "approved" else a["expires"]}, **more))
+    sheet = by.get(p["selected"]) if by.get(p["selected"], {}).get("role") == "sheet" else None
+    if profile in ("sheet", "package"):
+        if sheet:
+            add(sheet, f"{stem}_Reference_Sheet.png")
+        elif profile == "sheet":
+            raise ValueError("Select a sheet first: use “Select as the sheet” on the one to export.")
+    if profile in ("views", "package"):
+        for row in p["rows"]:
+            for d in DIRECTIONS:
+                a = chosen(state, row, d) if row["slots"][d]["enabled"] else None
+                if a:
+                    add(a, f"Views/{_safe(row['label'] or row['role'], 'Row')}/{d.capitalize()}.png", row=row["id"], direction=d, component=row["role"],
+                        classification={"type": row["type"] or p["type"], "subtype": row["subtype"] if row["type"] else p["subtype"]})
+        for a in sorted((a for a in by.values() if a["role"] == "view" and a.get("region")), key=lambda a: a["created"]):
+            add(a, f"Views/Extracted/{_safe(a.get('direction') or a.get('component'), 'Detail').capitalize()}.png", direction=a.get("direction", ""), component=a.get("component", ""),
+                section=a.get("section", ""), source=a.get("source", ""), region=a.get("region"))
+    if profile == "components":
+        for row in p["rows"]:
+            views = [chosen(state, row, d) for d in DIRECTIONS if row["slots"][d]["enabled"] and chosen(state, row, d)]
+            whole = chosen(state, row, None)
+            shown = [whole] if whole and (row["assemble"] == "whole" or not views) else views
+            if not shown:
+                continue
+            path = _unique(f"{_safe(row['role'], 'Components')}/{_safe(row['label'] or row['role'], 'Component')}_Reference.png", taken)
+            components.append({"row": row["id"], "path": path, "pictures": [a["id"] for a in shown]})
+            panel = row["panel"] if row["section"] == "detail" else p["panel"]
+            used.append({"path": path, "role": "component sheet", "row": row["id"], "component": row["role"], "made_from": [a["id"] for a in shown],
+                         "classification": {"type": row["type"] or p["type"], "subtype": row["subtype"] if row["type"] else p["subtype"]},
+                         "panel_included": bool(panel["include"]), "approval": "approved" if all(a["state"] == "approved" for a in shown) else "pending"})
+    if not files and not components:
+        raise ValueError({"views": "There are no individual views yet. A view exists once a row's slot has a picture or a region has been extracted; a complete sheet is not split automatically.",
+                          "components": "No row has pictures yet, so there are no component sheets to make."}.get(profile, "There is nothing to export yet."))
+    touched = {f["id"] for f in files} | {i for c in components for i in c["pictures"]}
+    pending = [{"id": a["id"], "image": a["image"], "expires": a["expires"], "hours_left": max(0, int((a["expires"] - now) // 3600)),
+                "what": ("Sheet" if a["role"] == "sheet" else f"{(a.get('direction') or a.get('component') or 'Detail').capitalize()} view" if a["role"] == "view" else "Complete row picture")}
+               for a in by.values() if a["id"] in touched and a["state"] != "approved"]
+    manifest = {"format": "SWIFT Director reference export", "version": 1, "profile": PROFILES_OUT[profile], "exported": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(now)),
+                "reference": {"id": p["id"], "name": p["name"], "parent": p["parent"], "type": p["type"], "subtype": p["custom_subtype"] if p["subtype"] == CUSTOM else p["subtype"], "mode": p["mode"]},
+                "units": {"stored": "centimetres", "shown": p["layout"]["units"]},
+                "rows": [{"id": r["id"], "section": r["section"], "label": r["label"], "component_role": r["role"],
+                          "classification": {"type": r["type"] or p["type"], "subtype": r["subtype"] if r["type"] else p["subtype"], "inherited": not r["type"]},
+                          "locked": r["locked"], "panel": r["panel"] if r["section"] == "detail" else None} for r in p["rows"]],
+                "base_panel": p["panel"], "files": used,
+                "note": "Exporting does not approve pending pictures or change when they expire. This copy is not affected when a local picture is deleted."}
+    single = profile == "sheet"
+    return {"profile": profile, "zip": not single, "name": f"{stem}_Reference_Sheet.png" if single else f"{stem}_{_safe(PROFILES_OUT[profile], 'Export')}.zip",
+            "files": files, "components": components, "manifest": manifest, "pending": pending}
+
+
+def send_to_3d(project, rid, new_id, now=None):
+    """Hand the reference's chosen pictures to 3D Generation: the selected sheet, each row's views in use, and the
+    extracted views. Only their ids are recorded, so no file is copied and nothing is approved or given more time.
+    Sending again replaces what was sent before for the same reference. -> the hand-over entry"""
+    now = now or time.time()
+    state = project["reference"]
+    p = find(state, rid)
+    by = {a["id"]: a for a in state["artifacts"] if a["project"] == rid}
+    items = []
+    if by.get(p["selected"], {}).get("role") == "sheet":
+        items.append({"artifact": p["selected"], "role": "sheet", "row": "", "component": ""})
+    for row in p["rows"]:
+        for d in DIRECTIONS:
+            a = chosen(state, row, d) if row["slots"][d]["enabled"] else None
+            if a:
+                items.append({"artifact": a["id"], "role": d, "row": row["id"], "component": row["role"]})
+    for a in sorted((a for a in by.values() if a["role"] == "view" and a.get("region")), key=lambda a: a["created"]):
+        items.append({"artifact": a["id"], "role": a.get("direction") or "detail", "row": "", "component": a.get("component", "")})
+    if not items:
+        raise ValueError("There is nothing to send yet: select a sheet, or give a row's view a picture.")
+    entry = next((h for h in state["handover"] if h["reference"] == rid), None)
+    if not entry:
+        entry = {"id": new_id(), "reference": rid, "created": now}
+        state["handover"].append(entry)
+    entry.update(name=p["name"], parent=p["parent"], type=p["type"], subtype=p["custom_subtype"] if p["subtype"] == CUSTOM else p["subtype"], updated=now, items=items)
+    return entry
+
+
+def handed_over(state):
+    """The hand-overs with each picture looked up as it is now, so one that was denied or expired shows as gone."""
+    by = {a["id"]: a for a in state["artifacts"]}
+    rows = {r["id"]: r for p in state["projects"] for r in p["rows"]}
+    out = []
+    for h in state.get("handover", []):
+        items = [dict(i, image=by[i["artifact"]]["image"] if i["artifact"] in by else None, state=by[i["artifact"]]["state"] if i["artifact"] in by else "gone",
+                      row_label=(rows.get(i["row"]) or {}).get("label", "")) for i in h["items"]]
+        out.append(dict(h, items=items, type_label=TYPES[h["type"]]["label"] if h.get("type") in TYPES else "", parent_label=TYPES[h["type"]]["parent_label"] if h.get("type") in TYPES else ""))
+    return out
+
+
 def sync(project, now=None):
     """Bring the artifact list in step with the pictures: record newly finished sheets as pending, and delete the ones
     whose ten days have run out. -> (state, the picture names whose records were deleted). Changes `project` in place."""
@@ -594,7 +777,14 @@ def view(project, now=None):
     arts = [dict(a, days_left=max(0, -int(-(a["expires"] - now) // 86400)) if a["state"] == "pending" else None,
                  hours_left=max(0, int((a["expires"] - now) // 3600)) if a["state"] == "pending" else None)
             for a in sorted(state["artifacts"], key=lambda a: a["created"])]
-    return {"state": {"projects": state["projects"], "open": state["open"]}, "artifacts": arts, "jobs": jobs,
+    shown = json.loads(json.dumps(state["projects"]))           # a copy: what is added below is for the page, not for storing
+    for p in shown:                                             # plain facts about each row, worked out fresh each time
+        for r in p["rows"]:
+            r["notes"] = notes(state, p, r)
+            if r["validation"]:
+                r["validation"]["stale"] = r["validation"]["pictures"] != {d: chosen(state, r, d)["id"] for d in DIRECTIONS if r["slots"][d]["enabled"] and chosen(state, r, d)}
+    return {"state": {"projects": shown, "open": state["open"]}, "artifacts": arts, "jobs": jobs, "handover": handed_over(state),
+            "exports": [{"key": k, "label": v} for k, v in PROFILES_OUT.items()],
             "registry": [{"key": p, "label": pl, "types": [{"key": t, "label": tl, "subtypes": list(s) + [CUSTOM]} for t, tl, s in kinds]} for p, pl, kinds in REGISTRY],
             "profiles": [{"profile": pr, "sizes": {a: {"size": list(size(pr, a)), "blocked": supported(pr, a)} for a, _, _ in ASPECTS}} for pr in PROFILES],
             "aspects": [a for a, _, _ in ASPECTS], "directions": list(DIRECTIONS), "sections": list(SECTIONS),
