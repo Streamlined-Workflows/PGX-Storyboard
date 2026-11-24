@@ -11,7 +11,7 @@
 <link rel="stylesheet" href="/static/identity/identity-studio.css?v=9">
 <link rel="stylesheet" href="/static/config/config-center.css?v=1">
 <link rel="stylesheet" href="/static/audio/audio-lab.css?v=3">
-<link rel="stylesheet" href="/static/generator/asset-generator.css?v=2">
+<link rel="stylesheet" href="/static/generator/asset-generator.css?v=3">
 <style>
   /* Montserrat (SIL Open Font License 1.1), served from the server so the page needs no outside network. */
   @font-face { font-family:Montserrat; font-weight:400; font-display:swap; src:url('/static/fonts/montserrat-latin-400-normal.woff2') format('woff2'); }
@@ -677,11 +677,25 @@ function show(name) {
    It waits a few seconds first, so passing through a tab on the way to another does nothing. System status is left
    out on the server side: looking at memory should not change it. */
 var releaseTimer = null, releasedFor = null;
-/* Asset Generator: keep one of its pictures as a scene asset or prop of this project. */
-function assetFromPicture(image, kind) {
-  const name = (prompt('Name this ' + (kind === 'prop' ? 'prop' : 'scene asset') + ':') || '').trim(); if (!name) return;
-  (P.things = P.things || []).push({ id: uid(), kind: kind === 'prop' ? 'prop' : 'scene', name: name.slice(0, 80), context: '', description: '', views: [{ id: uid(), image, label: 'Asset Generator' }] });
-  dirty(); toast('Saved to Assets as “' + name + '”. It can now be ticked on any picture in the Shots step.');
+/* Asset Generator: keep one of its pictures in Assets. What it becomes is set in that mode's Asset Configuration:
+   an actor, a scene asset or prop of this storyboard, or a world asset of a lore entry tagged to it. */
+async function assetFromPicture(image, as) {
+  const words = { actor: 'actor', scene: 'scene asset', prop: 'prop', world: 'world asset' }, type = words[as.type] ? as.type : 'scene';
+  const name = ((as.name || '').trim() || (prompt('Name this ' + words[type] + ':') || '').trim()).slice(0, 80); if (!name) return;
+  const picture = { id: uid(), image, label: 'Asset Generator' }, same = t => (t.name || '').trim().toLowerCase() === name.toLowerCase();
+  const into = (list, fresh) => { const have = list.find(same); if (have) { if (!have.views.some(v => v.image === image)) have.views.push(picture); return 'Added as another picture of'; } list.push(fresh); return 'Saved to Assets as'; };
+  let did;
+  if (type === 'actor') did = into(P.actors, { id: uid(), name, description: '', views: [picture] });
+  else if (type === 'world') {
+    if (!(P.lore || []).length) return toast('A world asset belongs to a world. Tag a Lore entry to this storyboard first (Lore tab), then save again.');
+    if (!LORE.entries.length) { try { LORE = await api('/api/lore'); } catch (e) { return toast(e.message); } }
+    const worlds = P.lore.map(id => LORE.entries.find(e => e.id === id)).filter(Boolean); if (!worlds.length) return toast('The tagged Lore entry could not be loaded.');
+    let world = worlds[0];
+    if (worlds.length > 1) { const pick = prompt('Which world does it belong to?\n' + worlds.map((w, i) => `${i + 1}. ${w.title}`).join('\n'), '1'); world = worlds[(parseInt(pick, 10) || 0) - 1]; if (!world) return; }
+    did = into(world.assets, { id: uid(), kind: 'world', name, context: '', description: '', views: [picture] }) + ' (' + world.title + ')'; worldChanged(world.id);
+  } else did = into(P.things = P.things || [], { id: uid(), kind: type, name, context: '', description: '', views: [picture] });
+  if (type !== 'world') dirty();
+  toast(`${did} “${name}” (${words[type]}).` + (type === 'actor' ? ' Cast them in Assisted Storyboard to use them in shots.' : ' It can be ticked on any picture in the Shots step.'));
 }
 function releaseFor(name) {
   clearTimeout(releaseTimer);
@@ -1947,7 +1961,7 @@ async function boot() {
 <script src="/static/config/config-center.js?v=1"></script>
 <script src="/static/audio/audio-mix.js?v=3"></script>
 <script src="/static/audio/audio-lab.js?v=3"></script>
-<script src="/static/generator/asset-generator.js?v=2"></script>
+<script src="/static/generator/asset-generator.js?v=3"></script>
 <script src="/static/identity/vendor/imagetracer_v1.2.6.js"></script>
 <script src="/static/identity/teams-icons.js?v=9"></script>
 <script src="/static/identity/download.js?v=10"></script>

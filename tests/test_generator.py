@@ -36,6 +36,7 @@ class GeneratorTests(test_core.Base if hasattr(test_core, "Base") else unittest.
         v = app.generator_view(self.pid)
         self.assertEqual(sorted(v["boxes"]), ["background", "composed", "foreground", "image", "middle"])
         self.assertEqual(v["state"]["image"], {"prompt": "", "refs": [], "at": None, "count": 1})
+        self.assertEqual(v["state"]["approved"], [])
         self.assertEqual(v["state"]["composed"]["prompt"], generator.COMPOSE_PROMPT)
         self.assertIn("image 1 as the background", v["state"]["composed"]["prompt"])
         self.assertEqual(v["state"]["composed"]["applied"], {"background": None, "middle": None, "foreground": None})
@@ -143,6 +144,42 @@ class GeneratorTests(test_core.Base if hasattr(test_core, "Base") else unittest.
         while graph[node]["class_type"] == "ReferenceLatent":
             chain.append(source(graph[node]["inputs"]["latent"][0])); node = graph[node]["inputs"]["conditioning"][0]
         self.assertEqual(chain[::-1], ["a.png", "b.png", "c.png", uploads[0]])
+
+    def test_every_mode_has_its_own_asset_configuration(self):
+        v = app.generator_view(self.pid)
+        self.assertEqual(sorted(v["state"]["config"]), ["3d", "character", "depth", "image"])
+        self.assertEqual([(m, v["state"]["config"][m]["type"]) for m in ("image", "character", "depth", "3d")],
+                         [("image", "scene"), ("character", "actor"), ("depth", "scene"), ("3d", "prop")])
+        c = v["state"]["config"]["image"]
+        self.assertEqual((c["name"], c["rating"]), ("", "PG-13"))                        # the rating starts as the project's own
+        self.assertEqual(c["models"], {"prompting": "auto", "image": "auto", "image_lora": "auto", "background_removal": "auto", "upscale": "auto"})
+        self.assertEqual(c["workflow"], {"confirm_before_run": False, "approve_before_save": False, "keep_alternatives": True, "keep_history": True, "auto_model_recommendations": True})
+        o = v["options"]
+        self.assertEqual(([t["label"] for t in o["types"]], o["ratings"]), (["Actor", "Scene", "Prop", "World"], ["E", "PG-13", "R", "M", "X"]))
+        self.assertEqual([r["label"] for r in o["roles"]], ["Prompting Model", "Image Model", "Image Model LoRA", "Background Removal Model", "Upscale Model"])
+        self.assertEqual((o["in_use"]["image"]["name"], o["in_use"]["upscale"]["name"], o["in_use"]["background_removal"]["ready"]), ("FLUX.2 [dev]", "", False))
+        # One mode's settings do not touch another's, and anything invalid keeps what was there.
+        v = app.generator_save(self.pid, {"config": {"depth": {"name": "  Cockpit, damaged  ", "rating": "R", "type": "world", "workflow": {"approve_before_save": True, "keep_history": "yes"},
+                                                               "models": {"image": "comfyui:other.safetensors", "upscale": 7}},
+                                                     "image": {"rating": "PG", "type": "vehicle"}, "bogus": {"name": "x"}}})
+        d, i = v["state"]["config"]["depth"], v["state"]["config"]["image"]
+        self.assertEqual((d["name"], d["rating"], d["type"], d["workflow"]["approve_before_save"], d["workflow"]["keep_history"]), ("Cockpit, damaged", "R", "world", True, True))
+        self.assertEqual((d["models"]["image"], d["models"]["upscale"]), ("comfyui:other.safetensors", "auto"))
+        self.assertEqual((i["rating"], i["type"], i["name"]), ("PG-13", "scene", ""))
+        self.assertNotIn("bogus", v["state"]["config"])
+        v = app.generator_save(self.pid, {"image": {"prompt": "Unrelated edit."}})
+        self.assertEqual(v["state"]["config"]["depth"]["name"], "Cockpit, damaged")      # saving something else keeps the configuration
+
+    def test_a_new_asset_configuration_starts_at_the_projects_rating(self):
+        with app.LOCK:
+            p = app.load_project(self.pid); p["config"]["identity"]["rating"] = "R"; p.pop("generator"); app.save_project(p, touch=False)
+        self.assertEqual(app.generator_view(self.pid)["state"]["config"]["character"]["rating"], "R")
+
+    def test_approvals_are_kept_per_picture_and_dropped_with_the_picture(self):
+        self.finish("image", "one.png", "two.png")
+        v = app.generator_save(self.pid, {"approved": ["one.png", "one.png", "never-made", 5]})
+        self.assertEqual(v["state"]["approved"], ["one.png"])
+        self.assertEqual(app.generator_remove(self.pid, "one.png")["state"]["approved"], [])
 
     def test_only_a_layers_own_pictures_can_be_applied_and_a_removed_one_is_no_longer_applied(self):
         self.finish("background", "bg.png"); self.finish("middle", "mid.png"); self.finish("foreground", "fg.png")

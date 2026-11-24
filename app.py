@@ -79,11 +79,11 @@ def normalize(project):
     project.setdefault("photos", [])
     project.setdefault("image_jobs", [])
     project.setdefault("lore", [])               # ids of the lore entries tagged to this storyboard
-    project["generator"] = generator.clean(project.get("generator"))      # Asset Generator: prompts, references and choices
     project.setdefault("things", [])             # this storyboard's scene assets and props
     # Schema 2: the configuration block. A file from before it gets the built-in defaults, which reproduce the old
     # behaviour exactly. A file from a newer version keeps its own number and any fields this version does not know.
     project["config"] = config.clean(project.get("config"))
+    project["generator"] = generator.clean(project.get("generator"), rating=project["config"]["identity"]["rating"])      # Asset Generator: prompts, references, choices
     project["schema"] = max(config.SCHEMA, project["schema"]) if isinstance(project.get("schema"), int) else config.SCHEMA
     project.setdefault("intake", {"kind": "song", "text": "", "brief": {}})
     project.setdefault("collection_id", None)
@@ -523,8 +523,17 @@ def queue_still(project, prompt, refs, stem, graph=None, **fields):
 
 # ---------- Asset Generator ----------
 
+def generator_models():
+    """What performs each of the Asset Generator's model roles today."""
+    use = models_in_use()
+    nothing = {"name": "", "runtime": "", "ready": False}
+    return {"prompting": use["prompting"], "image": use["image"], "image_lora": use["image_lora"],
+            "background_removal": dict(nothing, note="No background removal model is installed."),
+            "upscale": dict(nothing, note="No upscale model is installed.")}
+
+
 def generator_view(pid):
-    return generator.view(refresh_statuses(pid))
+    return generator.view(refresh_statuses(pid), generator_models())
 
 
 def generator_save(pid, state):
@@ -532,7 +541,7 @@ def generator_save(pid, state):
         project = load_project(pid)
         project["generator"] = generator.clean(state, project.get("generator"))
         save_project(project, touch=False)
-        return generator.view(project)
+        return generator.view(project, generator_models())
 
 
 def comfy_upload(name, data):
@@ -585,7 +594,7 @@ def generator_run(pid, box, state=None, placed=None):
         for i in range(todo["count"]):
             queue_still(project, todo["prompt"], todo["refs"], "gen_" + box, graph=graph, kind="gen", slot=box, label=f"Asset Generator · {label}")
         save_project(project, touch=False)
-        return generator.view(project)
+        return generator.view(project, generator_models())
 
 
 def generator_apply(pid, layer, image):
@@ -593,7 +602,7 @@ def generator_apply(pid, layer, image):
         project = load_project(pid)
         project["generator"] = generator.apply(project, layer, image)
         save_project(project, touch=False)
-        return generator.view(project)
+        return generator.view(project, generator_models())
 
 
 def generator_remove(pid, gid):
@@ -602,7 +611,7 @@ def generator_remove(pid, gid):
         project = load_project(pid)
         project["generated"] = [g for g in project.get("generated", []) if not (g.get("id") == gid and g.get("kind") == "gen")]
         save_project(project, touch=False)
-        return generator.view(project)
+        return generator.view(project, generator_models())
 
 
 def generated_remove(pid, gid):

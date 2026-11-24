@@ -237,6 +237,12 @@ See `docs/Task_02_Milestone_2_Audio.md`.
 chosen: each box's prompt, references and count, which picture is showing, and which three pictures are applied to the
 composed output. The pictures are ordinary FLUX.2 stills marked `kind: "gen"` with the box they belong to.
 
+- Each mode (Image, Character, Depth, 3D) opens with an **Asset Configuration** box, stored per mode in
+  `project["generator"]["config"]`: Project Identity (asset name, rating, asset type), AI Model Configuration (prompting,
+  image, image LoRA, background removal, upscale) and Workflow and Approval Controls. Each setting is tagged In use or
+  Stored, as in the Project Configuration Center. In use today: the name and type (what **Save to Assets** creates: an
+  actor, a scene asset, a prop, or a world asset of a tagged Lore entry), asking before a run, and requiring approval
+  before a picture can be saved. The rating and the model choices are stored; one model per role is installed.
 - Every reference picture has a **How to use it** choice, the same four as Identity Studio: Insert as it is, Follow
   closely (redrawn), Style guide, Inspiration. The last three each add one sentence after the typed prompt, and the page
   shows those sentences before anything runs. With no references, the prompt is sent exactly as typed.

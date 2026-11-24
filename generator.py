@@ -37,6 +37,39 @@ USE_TEXT = {"keep exactly": "Image {n}: reproduce what it shows faithfully, with
             "insert": "One element is already in the centre of the picture and must stay exactly as it is. Draw the rest of the picture around it "
                       "so it belongs in the scene. Do not draw over it and do not repeat it."}
 
+# ---- Asset Configuration: one per generator mode, shown in the box at the top of that mode ----
+MODES = ("image", "character", "depth", "3d")
+RATINGS = ("E", "PG-13", "R", "M", "X")          # the same list as the project's own rating, so one filtering rule can cover both later
+TYPES = (("actor", "Actor"), ("scene", "Scene"), ("prop", "Prop"), ("world", "World"))
+MODE_TYPE = {"image": "scene", "character": "actor", "depth": "scene", "3d": "prop"}       # what each mode starts as
+MODEL_ROLES = (("prompting", "Prompting Model"), ("image", "Image Model"), ("image_lora", "Image Model LoRA"),
+               ("background_removal", "Background Removal Model"), ("upscale", "Upscale Model"))
+WORKFLOW = (("confirm_before_run", "Ask me before running generations", False),
+            ("approve_before_save", "Only pictures I approve can be saved to Assets", False),
+            ("keep_alternatives", "Keep the other pictures when one is saved", True),
+            ("keep_history", "Keep each picture's prompt with it", True),
+            ("auto_model_recommendations", "Allow automatic model recommendations", True))
+# The settings that change what the Asset Generator does today. Everything else is stored for the update that will act on it.
+USED = ("name", "type", "workflow.confirm_before_run", "workflow.approve_before_save")
+MAX_APPROVED = 2000
+
+
+def _config(incoming, current, mode, rating):
+    incoming = incoming if isinstance(incoming, dict) else {}
+    get = lambda key, fallback: incoming.get(key, current.get(key, fallback))
+    out = {"name": str(get("name", "") or "").strip()[:80],
+           "rating": get("rating", rating) if get("rating", rating) in RATINGS else (rating if rating in RATINGS else "PG-13"),
+           "type": get("type", MODE_TYPE[mode]) if get("type", MODE_TYPE[mode]) in [k for k, _ in TYPES] else MODE_TYPE[mode]}
+    was, now = current.get("models") or {}, incoming.get("models") if isinstance(incoming.get("models"), dict) else {}
+    out["models"] = {}
+    for role, _ in MODEL_ROLES:                              # "auto", or "<where it runs>:<which one>" once there is more than one to choose from
+        value = now.get(role, was.get(role, "auto"))
+        out["models"][role] = value if value == "auto" or (isinstance(value, str) and ":" in value and len(value) <= 200) else "auto"
+    was, now = current.get("workflow") or {}, incoming.get("workflow") if isinstance(incoming.get("workflow"), dict) else {}
+    out["workflow"] = {key: now[key] if isinstance(now.get(key), bool) else was[key] if isinstance(was.get(key), bool) else default for key, _, default in WORKFLOW}
+    return out
+
+
 COMPOSE_PROMPT = ("Combine the reference images into one finished picture. "
                   "Use image 1 as the background: keep its setting, layout and lighting. "
                   "Place the subject of image 2 in the middle ground, keeping it exactly as shown. "
@@ -72,8 +105,9 @@ def _box(incoming, current, refs=MAX_REFS, uses=USES):
     return out
 
 
-def clean(incoming, current=None):
-    """What the browser sent, limited to what may be stored. Anything missing keeps its stored value."""
+def clean(incoming, current=None, rating="PG-13"):
+    """What the browser sent, limited to what may be stored. Anything missing keeps its stored value.
+    `rating` is the project's own rating, which a mode's asset configuration starts from."""
     incoming = incoming if isinstance(incoming, dict) else {}
     current = current if isinstance(current, dict) else {}
     out = {name: _box(incoming.get(name), current.get(name) or {}) for name in ("image",) + LAYERS}
@@ -84,6 +118,10 @@ def clean(incoming, current=None):
     applied = applied if isinstance(applied, dict) else was.get("applied") or {}
     composed["applied"] = {layer: applied.get(layer) if isinstance(applied.get(layer), str) and applied.get(layer) else None for layer in LAYERS}
     out["composed"] = composed
+    given, kept = incoming.get("config") if isinstance(incoming.get("config"), dict) else {}, current.get("config") if isinstance(current.get("config"), dict) else {}
+    out["config"] = {mode: _config(given.get(mode), kept.get(mode) or {}, mode, rating) for mode in MODES}
+    approved = incoming.get("approved") if isinstance(incoming.get("approved"), list) else current.get("approved") or []
+    out["approved"] = list(dict.fromkeys(a for a in approved if isinstance(a, str) and a))[-MAX_APPROVED:]
     return out
 
 
@@ -99,13 +137,17 @@ def jobs(project, box):
             for j in project.get("image_jobs", []) if j.get("kind") == "gen" and j.get("slot") == box and j.get("status") != "done"]
 
 
-def view(project):
-    """Everything the page needs to draw the Asset Generator."""
+def view(project, in_use=None):
+    """Everything the page needs to draw the Asset Generator. `in_use` says what performs each model role today."""
     state = clean(project.get("generator"))
+    made = {g["id"] for g in project.get("generated", []) if g.get("kind") == "gen"}
+    state["approved"] = [a for a in state["approved"] if a in made]      # a picture that was removed is no longer approved
     for layer in LAYERS:                                 # a picture that was removed can no longer be the applied one
         if state["composed"]["applied"][layer] not in [r["image"] for r in results(project, layer)]:
             state["composed"]["applied"][layer] = None
     return {"state": state, "boxes": {b: {"results": results(project, b), "jobs": jobs(project, b)} for b in BOXES},
+            "options": {"ratings": list(RATINGS), "types": [{"key": k, "label": l} for k, l in TYPES], "roles": [{"key": k, "label": l} for k, l in MODEL_ROLES],
+                        "workflow": [{"key": k, "label": l} for k, l, _ in WORKFLOW], "used": list(USED), "in_use": in_use or {}},
             "compose_prompt": COMPOSE_PROMPT, "limits": {"refs": MAX_REFS, "count": MAX_COUNT}, "size": list(SIZE),
             "uses": [{"id": u, "name": USE_WORDS[u], "help": USE_HELP[u], "adds": USE_TEXT[u]} for u in USES]}
 
