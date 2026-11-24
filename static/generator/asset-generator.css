@@ -58,3 +58,16 @@
 .ag .ag-empty.ag-working { color:var(--swift-green); font-size:15px; }
 .ag select.ag-useref { width:auto; padding:3px 8px; font-size:12px; }
 .ag .ag-reset { display:flex; gap:12px; align-items:center; flex-wrap:wrap; padding-top:4px; }
+/* Reference colours: one per reference number. Green is the SWIFT token; the design tokens have no blue, cyan or magenta yet, so those three are set here. */
+.ag { --ag-ref1:var(--swift-green-400); --ag-ref2:#60a5fa; --ag-ref3:#22d3ee; --ag-ref4:#e879f9; }
+.ag .ag-c1 { color:var(--ag-ref1); } .ag .ag-c2 { color:var(--ag-ref2); } .ag .ag-c3 { color:var(--ag-ref3); } .ag .ag-c4 { color:var(--ag-ref4); }
+.ag .ag-num.ag-b1 { background:var(--ag-ref1); } .ag .ag-num.ag-b2 { background:var(--ag-ref2); } .ag .ag-num.ag-b3 { background:var(--ag-ref3); } .ag .ag-num.ag-b4 { background:var(--ag-ref4); }
+.ag .ag-num { color:#04130a; font-weight:700; }
+.ag .ag-reftext { font-size:12px; line-height:1.4; overflow-wrap:anywhere; } .ag .ag-apply-ref { width:100%; }
+/* The prompt box: see-through typing over a coloured copy of the same text. Both must wrap identically, so they share every measurement. */
+.ag .ag-promptwrap .ag-back, .ag .ag-promptwrap .ag-prompt { box-sizing:border-box; width:100%; margin:0; padding:9px 12px 22px; border:1px solid transparent; font:inherit; font-size:14px; line-height:1.5; letter-spacing:normal;
+  white-space:pre-wrap; overflow-wrap:break-word; word-break:normal; tab-size:4; overflow-y:auto; scrollbar-gutter:stable; }
+.ag .ag-promptwrap .ag-back { position:absolute; inset:0; height:100%; color:var(--swift-text); background:var(--swift-base); border-radius:var(--swift-radius-lg); pointer-events:none; }
+.ag .ag-promptwrap .ag-prompt { position:relative; display:block; color:transparent; caret-color:var(--swift-text-strong); background:transparent; border-color:var(--swift-border); border-radius:var(--swift-radius-lg); resize:vertical; }
+.ag .ag-promptwrap .ag-prompt::placeholder { color:var(--swift-text-muted); }
+.ag .ag-promptwrap .ag-prompt::selection { color:transparent; background:rgba(74, 222, 128, .28); }

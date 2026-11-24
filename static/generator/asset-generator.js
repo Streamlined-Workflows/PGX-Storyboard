@@ -41,7 +41,7 @@ window.AssetGenerator = (function () {
   /* New results from the server replace what is shown, but never what the person is typing. */
   function take(fresh) {
     const before = data ? JSON.stringify(data.boxes) : '', first = !data;
-    if (data) { ['image', ...LAYERS, 'composed'].forEach(n => { const mine = S()[n]; fresh.state[n].prompt = mine.prompt; fresh.state[n].count = mine.count; fresh.state[n].refs = mine.refs; fresh.state[n].at = mine.at; });
+    if (data) { ['image', ...LAYERS, 'composed'].forEach(n => { const mine = S()[n]; fresh.state[n].prompt = mine.prompt; fresh.state[n].marks = mine.marks; fresh.state[n].count = mine.count; fresh.state[n].refs = mine.refs; fresh.state[n].at = mine.at; });
       fresh.state.config = S().config; fresh.state.approved = S().approved.filter(id => fresh.state.approved.includes(id) || Object.values(fresh.boxes).some(b => b.results.some(r => r.id === id))); }
     data = fresh;
     if (first || before !== JSON.stringify(data.boxes) || !root.querySelector('.ag')) draw(); else status();
@@ -145,7 +145,7 @@ window.AssetGenerator = (function () {
           ? '<button class="small ag-useref" type="button" title="Add this picture to the reference pictures here as loose inspiration. It is not saved to Assets.">Use as Reference</button>'
           : `<select class="ag-useref" aria-label="Use this picture as a reference" title="Add this picture to a box's reference pictures as loose inspiration. It is not saved to Assets."><option value="">Use as Reference in…</option>${[name, ...['background', 'middle', 'foreground', 'composed'].filter(b => b !== name)].map(b => `<option value="${b}">${TITLE[b]}${b === name ? ' (this box)' : b === 'composed' ? ' (as image 4)' : ''}</option>`).join('')}</select>`}<button class="small ghost ag-del" type="button" title="Remove this picture from the list">Remove</button>` : ''}</div>
       ${composed ? '<div class="ag-layers"></div>' : ''}
-      <label class="ag-label">Prompt<span class="ag-promptwrap"><textarea data-k="p-${name}" class="ag-prompt" rows="${composed ? 4 : 5}" placeholder="${esc(HINT[name] || '')}">${esc(st.prompt)}</textarea><span class="ag-chars" aria-live="off"></span></span></label>
+      <label class="ag-label">Prompt<span class="ag-promptwrap"><span class="ag-back" aria-hidden="true"></span><textarea data-k="p-${name}" class="ag-prompt" rows="${composed ? 4 : 5}" placeholder="${esc(HINT[name] || '')}">${esc(st.prompt)}</textarea><span class="ag-chars" aria-live="off"></span></span></label>
       ${composed ? '<p class="hint">Images 1, 2 and 3 are always the background, middle ground and foreground above, in that order. If you add a fourth reference, say what it is, for example: “Use image 4 as the colour and lighting style.” <button class="small ghost ag-reset" type="button">Reset prompt</button></p>' : ''}
       <div class="ag-refs"></div>
       <div class="ag-run"><label>Generations<input data-k="n-${name}" class="ag-n" type="number" min="1" max="${data.limits.count}" step="1" value="${st.count}"></label>
@@ -165,10 +165,11 @@ window.AssetGenerator = (function () {
       if (needOk) q('.ag-ok').onclick = () => { const a = S().approved, n = a.indexOf(cur.id); if (n < 0) a.push(cur.id); else a.splice(n, 1); keep(); draw(); };
       q('.ag-del').onclick = async () => { if (!confirm('Remove this picture from the list?')) return; try { st.at = null; take(await call('POST', '/remove', { project: host.pid, id: cur.id })); draw(); } catch (e) { host.toast(e.message); } };
     }
-    q('.ag-prompt').oninput = ev => { st.prompt = ev.target.value; keep(); counter(card, name); };
+    q('.ag-prompt').oninput = ev => { edited(st, ev.target.value); keep(); counter(card, name); backdrop(card, name); };
+    q('.ag-prompt').onscroll = ev => { q('.ag-back').scrollTop = ev.target.scrollTop; };
     q('.ag-n').onchange = ev => { st.count = Math.max(1, Math.min(data.limits.count, Math.round(+ev.target.value || 1))); ev.target.value = st.count; keep(); };
     if (composed) {
-      q('.ag-reset').onclick = () => { st.prompt = data.compose_prompt; keep(); draw(); };
+      q('.ag-reset').onclick = () => { st.prompt = data.compose_prompt; st.marks = []; st.refs.forEach(r => { r.text = ''; }); keep(); draw(); };
       const layers = q('.ag-layers');
       LAYERS.forEach((l, n) => { const img = st.applied[l];
         layers.append(el(`<div class="ag-layer"><div class="ag-thumb">${img ? `<img alt="" src="${esc(host.view(img))}">` : '<span class="hint">not applied</span>'}</div><span class="hint">Image ${n + 1}: ${TITLE[l]}</span></div>`)); });
@@ -188,44 +189,100 @@ window.AssetGenerator = (function () {
     };
     const ap = q('.ag-apply');
     if (ap) ap.onclick = async () => { clearTimeout(saveTimer); try { await call('POST', '/save', { project: host.pid, state: S() }); take(await call('POST', '/apply', { project: host.pid, layer: name, image: cur.image })); draw(); } catch (e) { host.toast(e.message); } };
-    paint(card, name); counter(card, name);
+    paint(card, name); counter(card, name); backdrop(card, name);
     return card;
   }
 
-  /* The reference slots of a box: four, or for the composed output the one free slot that becomes image 4.
-   * Each picture has a "How to use it" choice, the same four as Identity Studio. A picture set to "Insert as it is"
-   * is kept pixel for pixel; the others are numbered in the order the image model sees them. */
+  /* ---------- reference pictures ----------
+   * Each reference has a number from 1 to 4 that it keeps while it is there, and the colour that goes with the number
+   * (green, blue, cyan, magenta). Its "How to use it" choice decides what happens to it:
+   *   Insert as it is            its own pixels are kept and the rest is drawn around it
+   *   Follow closely (redrawn)   the picture is sent to the image model
+   *   Style guide, Inspiration   the picture is NOT sent. Apply has the language model put it into words, and those words
+   *                              go at the start of the prompt, in the reference's colour. */
   const useOf = id => data.uses.find(u => u.id === id) || data.uses[1];
-  function numbers(name) {                 // image number per reference, null for the inserted one
+  const sent = r => r.use === 'keep exactly';
+  /* The number the image model knows each attached picture by. Not the same as the reference's own number: only
+   * pictures that are sent are counted. null = not sent; 0 = would be sent but does not fit beside a kept picture. */
+  function numbers(name) {
     const st = S()[name], base = name === 'composed' ? 3 : 0, kept = st.refs.some(r => r.use === 'insert'); let n = base;
-    return st.refs.map(r => r.use === 'insert' ? null : (kept && n - base >= 3 ? 0 : ++n));      // 0: beyond what fits beside a kept picture
+    return st.refs.map(r => !sent(r) ? null : (kept && n - base >= 3 ? 0 : ++n));
   }
-  function added(name) {                   // the sentences the reference pictures add after the typed prompt
-    const st = S()[name], nums = numbers(name);
-    return [...(st.refs.some(r => r.use === 'insert') ? [useOf('insert').adds] : []), ...st.refs.map((r, n) => nums[n] ? useOf(r.use).adds.replace('{n}', nums[n]) : null).filter(Boolean)];
+  function added(name) {                   // [{slot, text}]: the sentences added after the typed prompt, and which reference each is for
+    const st = S()[name], nums = numbers(name), kept = st.refs.find(r => r.use === 'insert');
+    return [...(kept ? [{ slot: kept.slot, text: useOf('insert').adds }] : []), ...st.refs.map((r, n) => nums[n] ? { slot: r.slot, text: useOf(r.use).adds.replace('{n}', nums[n]) } : null).filter(Boolean)];
   }
   /* The count at the bottom right of a prompt box: characters that will be sent / about how many the image model reads.
-   * It counts what is actually sent, so the sentences added for reference pictures are included. */
+   * It counts what is actually sent: the prompt, which includes any description a reference put there, plus the sentences added after it. */
   function counter(card, name) {
-    const out = card.querySelector('.ag-chars'), lim = data.prompt_limit, typed = S()[name].prompt.trim().length, extra = added(name).reduce((n, t) => n + t.length + 1, 0), x = typed + extra;
+    const out = card.querySelector('.ag-chars'), lim = data.prompt_limit, st = S()[name], typed = st.prompt.trim().length, extra = added(name).reduce((n, t) => n + t.text.length + 1, 0), x = typed + extra;
+    const fromRefs = st.marks.reduce((n, m) => n + m[1] - m[0], 0);
     out.textContent = x.toLocaleString() + ' / ' + lim.characters.toLocaleString();
     out.className = 'ag-chars' + (x > lim.characters ? ' ag-over' : x > lim.characters * 0.85 ? ' ag-near' : '');
-    out.title = `${typed.toLocaleString()} typed${extra ? ' + ' + extra.toLocaleString() + ' added for the reference pictures' : ''}. ${lim.model} reads about ${lim.tokens} word pieces, which is roughly ${lim.characters.toLocaleString()} characters of English. `
+    out.title = `${typed.toLocaleString()} in the prompt${fromRefs ? ' (' + fromRefs.toLocaleString() + ' of them written by the language model for your references)' : ''}${extra ? ' + ' + extra.toLocaleString() + ' added after it for pictures sent to the image model' : ''}. ${lim.model} reads about ${lim.tokens} word pieces, which is roughly ${lim.characters.toLocaleString()} characters of English. `
       + (x > lim.characters ? 'This prompt is past that: the end of it may be ignored or weaken the rest. Put what matters most first, or shorten it.' : 'The limit is an estimate, since the model counts word pieces, not characters.');
+  }
+
+  /* ---------- the prompt box: plain typing, with the words a reference added shown in that reference's colour ----------
+   * The box is an ordinary text area with see-through text, lying exactly over a copy of the same text that carries the
+   * colours. `marks` records which stretches of the prompt a reference's description put there. Whatever is typed, pasted
+   * or changed, even inside one of those stretches, is outside the marks and so shows in the normal colour. */
+  function backdrop(card, name) {
+    const st = S()[name], back = card.querySelector('.ag-back'), area = card.querySelector('.ag-prompt'); let html = '', at = 0;
+    st.marks.forEach(([a, b, slot]) => { html += esc(st.prompt.slice(at, a)) + `<span class="ag-c${slot}">${esc(st.prompt.slice(a, b))}</span>`; at = b; });
+    back.innerHTML = html + esc(st.prompt.slice(at)) + '\n';      // the last line break keeps the copy as tall as the text area's own content
+    back.scrollTop = area.scrollTop;
+  }
+  /* Called with the box's new text: works out what was put in or taken out, and moves, cuts or splits the marks to match. */
+  function edited(st, value) {
+    const old = st.prompt, most = Math.min(old.length, value.length); let p = 0, e = 0;
+    while (p < most && old[p] === value[p]) p++;
+    while (e < most - p && old[old.length - 1 - e] === value[value.length - 1 - e]) e++;
+    const cutEnd = old.length - e, shift = value.length - old.length;
+    st.marks = st.marks.flatMap(([a, b, c]) => [...(a < p ? [[a, Math.min(b, p), c]] : []), ...(b > cutEnd ? [[Math.max(a, cutEnd) + shift, b + shift, c]] : [])]).filter(m => m[1] > m[0]);
+    st.prompt = value;
+  }
+  /* Take a reference's remaining words out of the prompt (what the person typed or changed stays). */
+  function unwrite(st, slot) {
+    let removed = 0;
+    [...st.marks].reverse().forEach(([a, b, c]) => { if (c !== slot) return; const end = st.prompt[b] === ' ' ? b + 1 : b; edited(st, st.prompt.slice(0, a) + st.prompt.slice(end)); removed += end - a; });
+    st.marks = st.marks.filter(m => m[2] !== slot);
+    return removed;
+  }
+  /* Apply: the language model describes the picture (its look, or its general idea) and the words go at the start of the prompt. */
+  async function applyRef(name, r, button) {
+    const st = S()[name];
+    if (button) { button.disabled = true; button.textContent = 'Describing…'; }
+    try {
+      const got = await call('POST', '/describe', { project: host.pid, image: r.image, use: r.use });
+      if (!S()[name].refs.includes(r) || r.use !== got.use) return;                    // it was removed or changed while the model worked
+      unwrite(st, r.slot);
+      const lead = got.text + (st.prompt ? ' ' : '');
+      st.marks = [[0, got.text.length, r.slot], ...st.marks.map(([a, b, c]) => [a + lead.length, b + lead.length, c])];
+      st.prompt = lead + st.prompt; r.text = got.text; keep();
+    } catch (e) { host.toast(e.message); }
+    draw();
   }
   function refs(holder, name) {
     const st = S()[name], composed = name === 'composed', max = composed ? 1 : data.limits.refs, nums = numbers(name);
-    holder.append(el(`<span class="hint">${composed ? 'Image 4 (optional)' : 'Reference pictures (up to ' + max + ')'}</span>`));
+    holder.append(el(`<span class="hint">${composed ? 'Reference 4 (optional)' : 'Reference pictures (up to ' + max + ')'}</span>`));
     st.refs.forEach((r, n) => {
-      const num = nums[n], uses = data.uses.filter(u => !composed || u.id !== 'insert');
-      const slot = el(`<div class="ag-refcard"><div class="ag-ref"><img alt="Reference" src="${esc(host.view(r.image))}"><button class="ag-x" type="button" title="Take this reference out" aria-label="Remove reference">×</button><span class="ag-num">${num === null ? 'kept' : num === 0 ? 'not used' : num}</span></div>
-        <label>How to use it<select data-k="u-${name}-${n}" class="ag-use">${uses.map(u => `<option value="${u.id}"${u.id === r.use ? ' selected' : ''}>${esc(u.name)}</option>`).join('')}</select></label>
-        <div class="hint ag-usehelp">${esc(useOf(r.use).help)}</div></div>`);
-      slot.querySelector('.ag-x').onclick = () => { st.refs.splice(n, 1); keep(); draw(); };
-      slot.querySelector('img').onclick = () => host.openViewer(host.view(r.image), 'Reference');
+      const uses = data.uses.filter(u => !composed || u.id !== 'insert'), use = useOf(r.use), live = st.marks.some(m => m[2] === r.slot);
+      const says = use.described ? (r.text ? (live ? r.text : r.text + ' (No longer in the prompt as written: it was edited or removed there.)') : 'Not applied yet, so this reference has no effect. Press Apply.')
+        : r.use === 'insert' ? 'Kept exactly as it is; the rest is drawn around it.'
+        : nums[n] ? `Sent to the image model as image ${nums[n]}.` : 'Not sent: a kept picture takes one of the four places, so only three others fit.';
+      const slot = el(`<div class="ag-refcard"><div class="ag-ref"><img alt="Reference ${r.slot}" src="${esc(host.view(r.image))}"><button class="ag-x" type="button" title="Take this reference out" aria-label="Remove reference ${r.slot}">×</button><span class="ag-num ag-b${r.slot}">${r.slot}</span></div>
+        <label title="${esc(use.help)}">How to use it<select data-k="u-${name}-${r.slot}" class="ag-use">${uses.map(u => `<option value="${u.id}"${u.id === r.use ? ' selected' : ''}>${esc(u.name)}</option>`).join('')}</select></label>
+        ${use.described ? `<button data-k="ap-${name}-${r.slot}" class="small ag-apply-ref" type="button" title="${esc(use.help)}">${r.text ? 'Apply again' : 'Apply'}</button>` : ''}
+        <div class="ag-reftext ag-c${r.slot}">${esc(says)}</div></div>`);
+      slot.querySelector('.ag-x').onclick = () => { const gone = unwrite(st, r.slot); st.refs.splice(n, 1); keep(); draw(); if (gone) host.toast('The reference was taken out, and so was its description in the prompt.'); };
+      slot.querySelector('img').onclick = () => host.openViewer(host.view(r.image), 'Reference ' + r.slot);
       slot.querySelector('.ag-use').onchange = ev => {
         if (ev.target.value === 'insert') st.refs.forEach(o => { if (o !== r && o.use === 'insert') { o.use = 'keep exactly'; host.toast('Only one picture in a box can be inserted as it is. The other one is now followed closely.'); } });
-        r.use = ev.target.value; keep(); draw(); };
+        const gone = unwrite(st, r.slot); r.use = ev.target.value; r.text = ''; keep(); draw();
+        if (gone) host.toast('Its earlier description was taken out of the prompt. Press Apply for a new one.');
+      };
+      const apply = slot.querySelector('.ag-apply-ref'); if (apply) apply.onclick = () => applyRef(name, r, apply);
       holder.append(slot);
     });
     if (st.refs.length < max) {
@@ -234,13 +291,17 @@ window.AssetGenerator = (function () {
         <div class="ag-source" hidden><button class="small ag-up" type="button">Upload</button><button class="small ag-lib" type="button">Apply from Library</button></div></div>`), pick = add.querySelector('input'), menu = add.querySelector('.ag-source'), plus = add.querySelector('.ag-addref');
       plus.onclick = () => { menu.hidden = !menu.hidden; plus.setAttribute('aria-expanded', !menu.hidden); if (!menu.hidden) add.querySelector('.ag-up').focus(); };
       add.querySelector('.ag-up').onclick = () => pick.click();
-      add.querySelector('.ag-lib').onclick = () => library(image => { st.refs.push({ image, use: 'keep exactly' }); keep(); draw(); }, st.refs.map(r => r.image));
-      pick.onchange = async () => { const f = pick.files[0]; if (!f) return; add.classList.add('ag-loading'); try { st.refs.push({ image: await host.upload(f), use: 'keep exactly' }); keep(); } catch (e) { host.toast(e.message); } draw(); };
+      add.querySelector('.ag-lib').onclick = () => library(image => { st.refs.push(fresh(name, image, 'keep exactly')); keep(); draw(); }, st.refs.map(r => r.image));
+      pick.onchange = async () => { const f = pick.files[0]; if (!f) return; add.classList.add('ag-loading'); try { st.refs.push(fresh(name, await host.upload(f), 'keep exactly')); keep(); } catch (e) { host.toast(e.message); } draw(); };
       holder.append(add);
     }
     const adds = added(name);
-    if (adds.length) holder.append(el(`<div class="hint ag-adds"><b>Added after your prompt:</b> ${esc(adds.join(' '))}</div>`));
-    if (nums.includes(0)) holder.append(el('<div class="hint ag-adds">A kept picture takes one of the four places, so only three others are used with it.</div>'));
+    if (adds.length) holder.append(el(`<div class="hint ag-adds"><b>Added after your prompt:</b> ${adds.map(t => `<span class="ag-c${t.slot}">${esc(t.text)}</span>`).join(' ')}</div>`));
+  }
+  /* A new reference takes the lowest number not in use in its box (the composed output's one slot is always 4). */
+  function fresh(name, image, use) {
+    const taken = S()[name].refs.map(r => r.slot), slot = name === 'composed' ? 4 : [1, 2, 3, 4].find(n => !taken.includes(n));
+    return { image, use, slot, text: '' };
   }
 
   /* Apply from Library: every picture the project already has, grouped, to pick one as a reference. */
@@ -292,14 +353,15 @@ window.AssetGenerator = (function () {
     return { image, canvas: canvas.toDataURL('image/png'), mask: mask.toDataURL('image/png'), soft: k > 1.5 };
   }
 
-  /* Use as Reference: put one of the generated pictures into a box's reference slots as loose inspiration.
-   * Nothing is saved to Assets; the "How to use it" choice can be changed afterwards like any other reference. */
+  /* Use as Reference: put one of the generated pictures into a box's reference slots as Inspiration and apply it straight away,
+   * so its general idea is described at the start of that prompt. Nothing is saved to Assets. */
   function asReference(image, to) {
     const st = S()[to], max = to === 'composed' ? 1 : data.limits.refs;
     if (st.refs.some(r => r.image === image)) return host.toast('That picture is already a reference in ' + TITLE[to] + '.');
     if (st.refs.length >= max) return host.toast(to === 'composed' ? 'Composed Output has one free reference slot and it is taken. Take that picture out first.' : TITLE[to] + ' already has ' + max + ' reference pictures. Take one out first.');
-    st.refs.push({ image, use: 'inspiration' }); keep(); draw();
-    host.toast('Added to ' + TITLE[to] + ' as a reference, used as loose inspiration. Change “How to use it” on the reference if you want it followed more closely.');
+    const r = fresh(to, image, 'inspiration'); st.refs.push(r); keep(); draw();
+    host.toast('Added to ' + TITLE[to] + ' as Inspiration. The language model is describing it now, and the description will appear at the start of that prompt.');
+    applyRef(to, r, root.querySelector(`[data-k="ap-${to}-${r.slot}"]`));
   }
 
   /* What a box says while it works. With no picture to show yet, the picture area itself says which one it is on

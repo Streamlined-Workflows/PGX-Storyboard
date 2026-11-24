@@ -265,9 +265,15 @@ composed output. The pictures are ordinary FLUX.2 stills marked `kind: "gen"` wi
 - An empty reference slot asks **Upload** or **Apply from Library**. The library lists every picture the project already
   has (generated pictures newest first, actors' views, assets and props, photos, storyboard shots), each once, with a name
   filter. Choosing one uses the existing file; nothing is copied.
-- Every reference picture has a **How to use it** choice, the same four as Identity Studio: Insert as it is, Follow
-  closely (redrawn), Style guide, Inspiration. The last three each add one sentence after the typed prompt, and the page
-  shows those sentences before anything runs. With no references, the prompt is sent exactly as typed.
+- Every reference picture has a **How to use it** choice. Only **Follow closely (redrawn)** sends the picture to the
+  image model, with one sentence added after the prompt. **Style guide** and **Inspiration** never send the picture: an
+  attached image outweighs any wording, so the model copies it. Instead **Apply** has the language model (vision) describe
+  the picture's look, or its general idea, in at most 300 characters, and puts that at the start of the prompt. Until
+  Apply is pressed such a reference has no effect.
+- Each reference keeps a number from 1 to 4 while it is there, with a colour: green, blue, cyan, magenta. The text under a
+  reference is in its colour, and so are the words it put in the prompt. Those words are tracked as ranges of the prompt
+  (`marks`); anything typed or changed, even inside one, falls outside the ranges and shows in the normal colour. The
+  prompt box is a plain text area with see-through text over a coloured copy of the same text.
 - **Insert as it is** keeps that picture's own pixels: the page places it in the centre of a blank picture with a mask, and
   the inpainting graph draws everything around it and pastes the original back. One per box. The composed output's fourth
   reference cannot be inserted, because images 1 to 3 are fixed as the three layers.

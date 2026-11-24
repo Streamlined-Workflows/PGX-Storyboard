@@ -321,6 +321,42 @@ VIEW_FRAMINGS = [
 STANDARD_VIEWS = ("close-up", "waist up", "full body")
 
 
+REFERENCE_LIMIT = 300                # characters a described reference may add to a prompt, label included
+REFERENCE_ASKS = {
+    "style guide": ("Visual style: ",
+                    "You are shown one picture. Describe ONLY its visual style so an image generator can match the look on a "
+                    "different subject: colour palette, materials and surface finish, lighting, and rendering style. Do not say what "
+                    "the picture shows. Do not mention the subject, its shape, its parts, its layout, how many of anything there "
+                    "are, or the background. Return JSON with 'description': one or two plain sentences, at most 250 characters, "
+                    "with no preamble and no line breaks."),
+    "inspiration": ("Loosely inspired by: ",
+                    "You are shown one picture. Describe in general terms the idea it conveys, as loose inspiration for an image "
+                    "generator: what kind of thing it is, its overall shape language and its mood. Stay general. Leave out exact "
+                    "details, counts, colours, text, the background and the camera angle. Return JSON with 'description': one or "
+                    "two plain sentences, at most 250 characters, with no preamble and no line breaks."),
+}
+
+
+def describe_reference(image_b64, use):
+    """Turn a reference picture into words for the prompt, so the picture itself need not be sent to the image model.
+    `use` is "style guide" (its look only) or "inspiration" (its general idea). -> text of at most REFERENCE_LIMIT characters,
+    starting with a label that says what it is."""
+    if use not in REFERENCE_ASKS:
+        raise ValueError("Only a style guide or an inspiration reference is described in words.")
+    label, system = REFERENCE_ASKS[use]
+    schema = {"type": "object", "required": ["description"], "properties": {"description": {"type": "string"}}}
+    out = chat(system, "Describe this picture as instructed.", schema, think=False, temperature=0.3, images=[image_b64])
+    text = " ".join(str(out.get("description", "")).split())
+    if not text:
+        raise ValueError("The language model returned no description. Try again.")
+    room = REFERENCE_LIMIT - len(label)
+    if len(text) > room:                                 # cut at the end of a sentence if one fits, else at a word
+        cut = text[:room]
+        stop = max(cut.rfind(". "), cut.rfind("; "))
+        text = cut[:stop + 1] if stop > room * 0.5 else cut[:cut.rfind(" ")].rstrip(",;:") + "."
+    return label + (text if text.endswith((".", "!", "?")) else text + ".")
+
+
 def describe_actor(name, images_b64):
     """Look at an actor's views and write the description used to generate more images of them."""
     schema = {"type": "object", "required": ["description"], "properties": {"description": {"type": "string"}}}

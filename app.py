@@ -623,6 +623,20 @@ def generator_run(pid, box, state=None, placed=None):
         return generator.view(project, generator_models())
 
 
+def generator_describe(pid, image, use):
+    """Have the language model put a reference picture into words (its look, or its general idea), for the prompt.
+    The picture must be one this project can already see: a reference in the generator or a picture in its library."""
+    project = load_project(pid)
+    known = {r["image"] for box in generator.BOXES for r in project["generator"][box]["refs"]} | {p["image"] for p in generator_library(pid)["pictures"]}
+    if not isinstance(image, str) or image not in known:
+        raise ValueError("That reference picture is not part of this project. Add it again.")
+    try:
+        data = comfy_bytes("/view?" + urllib.parse.urlencode({"filename": image, "type": "input"}))
+    except OSError as e:
+        raise ValueError(f"Could not read the reference picture from the server: {e}")
+    return {"text": assist.describe_reference(base64.b64encode(data).decode(), use), "use": use, "image": image, "model": assist.MODEL}
+
+
 def generator_reset(pid, mode):
     with LOCK:
         project = refresh_statuses(pid)
@@ -1416,6 +1430,8 @@ class Handler(BaseHTTPRequestHandler):
                 return self.send_json(generator_save(pid, payload.get("state")))
             if path == "/api/generator/run":
                 return self.send_json(generator_run(pid, payload.get("box"), payload.get("state"), payload.get("placed")))
+            if path == "/api/generator/describe":
+                return self.send_json(generator_describe(pid, payload.get("image"), payload.get("use")))
             if path == "/api/generator/reset":
                 return self.send_json(generator_reset(pid, payload.get("mode")))
             if path == "/api/generator/apply":

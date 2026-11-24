@@ -35,7 +35,7 @@ class GeneratorTests(test_core.Base if hasattr(test_core, "Base") else unittest.
     def test_a_new_project_starts_empty_with_the_composed_prompt_ready(self):
         v = app.generator_view(self.pid)
         self.assertEqual(sorted(v["boxes"]), ["background", "composed", "foreground", "image", "middle"])
-        self.assertEqual(v["state"]["image"], {"prompt": "", "refs": [], "at": None, "count": 1})
+        self.assertEqual(v["state"]["image"], {"prompt": "", "refs": [], "at": None, "marks": [], "count": 1})
         self.assertEqual(v["state"]["approved"], [])
         self.assertEqual(v["prompt_limit"], {"model": "FLUX.2 [dev]", "tokens": 512, "characters": 2000})      # what the count beside each prompt is measured against
         self.assertEqual(v["state"]["composed"]["prompt"], generator.COMPOSE_PROMPT)
@@ -59,7 +59,7 @@ class GeneratorTests(test_core.Base if hasattr(test_core, "Base") else unittest.
                                           "composed": {"refs": ["x.png", "y.png"]}})
         self.assertEqual((len(v["state"]["image"]["prompt"]), v["state"]["image"]["count"], len(v["state"]["image"]["refs"])), (3000, 10, 4))
         self.assertEqual((v["state"]["background"]["count"], v["state"]["middle"]["count"]), (1, 1))
-        self.assertEqual(v["state"]["composed"]["refs"], [{"image": "x.png", "use": "keep exactly"}])      # one free slot: the fourth reference
+        self.assertEqual(v["state"]["composed"]["refs"], [{"image": "x.png", "use": "keep exactly", "slot": 4, "text": ""}])      # one free slot, and it is always reference 4
         for bad in ("nope", None):
             with self.assertRaises(ValueError):
                 app.generator_run(self.pid, bad)
@@ -70,7 +70,7 @@ class GeneratorTests(test_core.Base if hasattr(test_core, "Base") else unittest.
 
     def test_depth_generation_composes_the_three_applied_pictures_in_a_fixed_order(self):
         for layer, prompt in (("background", "Ship interior."), ("middle", "Misty floating."), ("foreground", "Dust and a canister.")):
-            app.generator_run(self.pid, layer, {layer: {"prompt": prompt, "refs": [{"image": layer + "-ref.png", "use": "inspiration"}], "count": 2}})
+            app.generator_run(self.pid, layer, {layer: {"prompt": prompt, "refs": [{"image": layer + "-ref.png", "use": "keep exactly"}], "count": 2}})
             self.finish(layer, layer + "1.png", layer + "2.png")
         self.assertEqual([(s, r) for s, _, r in self.sent][::2], [("background", ["background-ref.png"]), ("middle", ["middle-ref.png"]), ("foreground", ["foreground-ref.png"])])
         with self.assertRaises(ValueError) as e:
@@ -87,25 +87,76 @@ class GeneratorTests(test_core.Base if hasattr(test_core, "Base") else unittest.
         self.assertEqual(self.sent, [("composed", generator.COMPOSE_PROMPT, ["background1.png", "middle2.png", "foreground2.png"])])      # the three layers add no sentence
         # A fourth reference and an edited prompt.
         self.sent.clear()
-        app.generator_run(self.pid, "composed", {"composed": {"prompt": "Custom.", "refs": [{"image": "style.png", "use": "style guide"}], "count": 2}})
-        self.assertEqual(self.sent, [("composed", "Custom. Image 4 is a style guide: match its visual style, colour treatment and lighting, not what it shows.",
-                                      ["background1.png", "middle2.png", "foreground2.png", "style.png"])] * 2)
+        app.generator_run(self.pid, "composed", {"composed": {"prompt": "Custom.", "refs": [{"image": "extra.png", "use": "keep exactly"}], "count": 2}})
+        self.assertEqual(self.sent, [("composed", "Custom. Image 4: reproduce what it shows faithfully, with the same shape, proportions and colours.",
+                                      ["background1.png", "middle2.png", "foreground2.png", "extra.png"])] * 2)
+        self.sent.clear()                                                                # as a style guide the fourth picture is words, not an attachment
+        app.generator_run(self.pid, "composed", {"composed": {"prompt": "Custom.", "refs": [{"image": "extra.png", "use": "style guide"}], "count": 1}})
+        self.assertEqual(self.sent, [("composed", "Custom.", ["background1.png", "middle2.png", "foreground2.png"])])
         v = app.generator_save(self.pid, {"composed": {"refs": [{"image": "style.png", "use": "insert"}]}})
         self.assertEqual(v["state"]["composed"]["refs"][0]["use"], "keep exactly")       # the fourth reference cannot be inserted: images 1 to 3 are fixed
         self.assertEqual(app.generator_view(self.pid)["state"]["composed"]["applied"]["middle"], "middle2.png")       # saving the prompt kept the choices
 
-    def test_each_reference_says_how_it_is_used_and_adds_one_sentence_the_page_can_show(self):
+    def test_only_a_followed_picture_is_sent_to_the_image_model(self):
         v = app.generator_view(self.pid)
-        self.assertEqual([(u["id"], u["name"]) for u in v["uses"]], [("insert", "Insert as it is"), ("keep exactly", "Follow closely (redrawn)"),
-                                                                     ("style guide", "Style guide"), ("inspiration", "Inspiration")])      # the same four, same words, as Identity Studio
+        self.assertEqual([(u["id"], u["name"], u["described"]) for u in v["uses"]], [("insert", "Insert as it is", False), ("keep exactly", "Follow closely (redrawn)", False),
+                                                                                    ("style guide", "Style guide", True), ("inspiration", "Inspiration", True)])
         refs = [{"image": "ship.png", "use": "keep exactly"}, {"image": "look.png", "use": "style guide"}, {"image": "mood.png", "use": "inspiration"}, {"image": "old.png", "use": "nonsense"}]
         app.generator_run(self.pid, "background", {"background": {"prompt": "A hangar.", "refs": refs}})
         slot, prompt, sent = self.sent[0]
-        self.assertEqual(sent, ["ship.png", "look.png", "mood.png", "old.png"])
+        # A style guide or inspiration picture is never attached: attached, the image model copies it whatever the words say.
+        self.assertEqual(sent, ["ship.png", "old.png"])
         self.assertEqual(prompt, "A hangar. Image 1: reproduce what it shows faithfully, with the same shape, proportions and colours. "
-                                 "Image 2 is a style guide: match its visual style, colour treatment and lighting, not what it shows. "
-                                 "Take loose inspiration from image 3. Image 4: reproduce what it shows faithfully, with the same shape, proportions and colours.")
+                                 "Image 2: reproduce what it shows faithfully, with the same shape, proportions and colours.")
         self.assertEqual(app.load_project(self.pid)["generator"]["background"]["prompt"], "A hangar.")      # what was typed is stored as typed
+
+    def test_each_reference_keeps_its_number_for_as_long_as_it_is_there(self):
+        v = app.generator_save(self.pid, {"image": {"refs": ["a.png", "b.png", "c.png"]}})
+        self.assertEqual([(r["image"], r["slot"]) for r in v["state"]["image"]["refs"]], [("a.png", 1), ("b.png", 2), ("c.png", 3)])
+        kept = [r for r in v["state"]["image"]["refs"] if r["image"] != "a.png"]                       # take the first one out
+        v = app.generator_save(self.pid, {"image": {"refs": kept + [{"image": "d.png", "use": "keep exactly"}, {"image": "e.png", "use": "keep exactly"}]}})
+        self.assertEqual([(r["image"], r["slot"]) for r in v["state"]["image"]["refs"]], [("b.png", 2), ("c.png", 3), ("d.png", 1), ("e.png", 4)])
+        v = app.generator_save(self.pid, {"image": {"refs": [{"image": "x.png", "slot": 3}, {"image": "y.png", "slot": 3}, {"image": "z.png", "slot": 9}]}})
+        self.assertEqual([r["slot"] for r in v["state"]["image"]["refs"]], [3, 1, 2])                    # a repeated or impossible number is replaced
+
+    def test_words_a_reference_added_are_remembered_as_ranges_of_the_prompt(self):
+        text = "Visual style: matte teal panels. A small frigate."
+        v = app.generator_save(self.pid, {"image": {"prompt": text, "marks": [[0, 33, 3]], "refs": [{"image": "look.png", "use": "style guide", "slot": 3, "text": "Visual style: matte teal panels."}]}})
+        self.assertEqual((v["state"]["image"]["marks"], v["state"]["image"]["refs"][0]["text"]), ([[0, 33, 3]], "Visual style: matte teal panels."))
+        self.assertEqual(app.generator_save(self.pid, {"image": {"count": 2}})["state"]["image"]["marks"], [[0, 33, 3]])      # an unrelated save keeps them
+        self.assertEqual(app.generator_save(self.pid, {"image": {"prompt": "Rewritten."}})["state"]["image"]["marks"], [])     # a new prompt without marks has none
+        bad = [[5, 2, 1], [0, 4, 9], [0, 4, 1], [2, 6, 2], [6, 99, 1], "x", [1.5, 3, 1], [8, 10, 2]]
+        self.assertEqual(app.generator_save(self.pid, {"image": {"prompt": "0123456789", "marks": bad}})["state"]["image"]["marks"], [[0, 4, 1], [8, 10, 2]])
+        v = app.generator_save(self.pid, {"image": {"refs": [{"image": "look.png", "use": "keep exactly", "text": "left over"}, {"image": "b.png", "use": "inspiration", "text": "x" * 400}]}})
+        self.assertEqual([len(r["text"]) for r in v["state"]["image"]["refs"]], [0, 300])                # only a described reference has words, and at most 300 characters
+
+    def test_describing_a_reference_asks_the_language_model_and_caps_the_result(self):
+        import assist
+        asked, real_chat, real_bytes = [], assist.chat, app.comfy_bytes
+        answer = {"text": "Matte teal and brushed platinum panels under soft studio light, clean stylized 3D render."}
+        assist.chat = lambda system, user, schema, **k: asked.append((system, k.get("images"))) or {"description": answer["text"]}
+        app.comfy_bytes = lambda path, timeout=60: b"PNGDATA"
+        try:
+            app.generator_save(self.pid, {"image": {"refs": [{"image": "look.png", "use": "style guide"}]}})
+            got = app.generator_describe(self.pid, "look.png", "style guide")
+            self.assertEqual(got["text"], "Visual style: " + answer["text"])
+            self.assertIn("ONLY its visual style", asked[0][0]); self.assertIn("Do not mention the subject", asked[0][0])
+            self.assertEqual(asked[0][1], ["UE5HREFUQQ=="])                               # the picture itself goes to the language model
+            self.assertTrue(app.generator_describe(self.pid, "look.png", "inspiration")["text"].startswith("Loosely inspired by: "))
+            self.assertIn("general terms", asked[1][0])
+            answer["text"] = "First sentence about the palette and the materials used across the whole surface of the thing. " + "word " * 80
+            long = app.generator_describe(self.pid, "look.png", "style guide")["text"]
+            self.assertLessEqual(len(long), 300); self.assertTrue(long.endswith("."))
+            answer["text"] = "nopunctuation " * 40
+            self.assertLessEqual(len(app.generator_describe(self.pid, "look.png", "inspiration")["text"]), 300)
+            for image, use in (("look.png", "keep exactly"), ("look.png", "insert"), ("not-in-this-project.png", "style guide"), (None, "style guide")):
+                with self.assertRaises(ValueError):
+                    app.generator_describe(self.pid, image, use)
+            answer["text"] = "   "
+            with self.assertRaises(ValueError):
+                app.generator_describe(self.pid, "look.png", "style guide")
+        finally:
+            assist.chat, app.comfy_bytes = real_chat, real_bytes
 
     def test_insert_as_it_is_keeps_the_pictures_own_pixels_and_draws_around_it(self):
         import base64, struct, zlib
@@ -116,10 +167,10 @@ class GeneratorTests(test_core.Base if hasattr(test_core, "Base") else unittest.
         uploads, real = [], app.comfy_upload
         app.comfy_upload = lambda name, data: uploads.append(name) or name
         try:
-            refs = [{"image": "logo.png", "use": "insert"}, {"image": "a.png", "use": "style guide"}, {"image": "b.png", "use": "insert"}, {"image": "c.png", "use": "inspiration"}]
+            refs = [{"image": "logo.png", "use": "insert"}, {"image": "a.png", "use": "keep exactly"}, {"image": "b.png", "use": "insert"}, {"image": "c.png", "use": "keep exactly"}]
             state = {"image": {"prompt": "A ship hull.", "refs": refs}}
             v = app.generator_save(self.pid, state)
-            self.assertEqual([r["use"] for r in v["state"]["image"]["refs"]], ["insert", "style guide", "keep exactly", "inspiration"])      # one insert per box
+            self.assertEqual([r["use"] for r in v["state"]["image"]["refs"]], ["insert", "keep exactly", "keep exactly", "keep exactly"])      # one insert per box
             for bad in (None, {"image": "a.png", "canvas": png(1248, 720), "mask": png(1248, 720)}, {"image": "logo.png", "canvas": png(64, 64), "mask": png(1248, 720)},
                         {"image": "logo.png", "canvas": png(1248, 720), "mask": "data:image/png;base64,AAAA"}):
                 with self.assertRaises(ValueError):
@@ -131,7 +182,7 @@ class GeneratorTests(test_core.Base if hasattr(test_core, "Base") else unittest.
         slot, prompt, sent = self.sent[0]
         self.assertEqual(sent, ["a.png", "b.png", "c.png"])                              # the kept picture is not also sent as a reference
         self.assertTrue(prompt.startswith("A ship hull. One element is already in the centre of the picture and must stay exactly as it is."))
-        self.assertIn("Image 1 is a style guide", prompt); self.assertIn("Image 2: reproduce", prompt); self.assertIn("inspiration from image 3", prompt)
+        self.assertIn("Image 1: reproduce", prompt); self.assertIn("Image 2: reproduce", prompt); self.assertIn("Image 3: reproduce", prompt)
         graph = self.graphs[0]
         kinds = [n["class_type"] for n in graph.values()]
         self.assertIn("SetLatentNoiseMask", kinds)                                       # only the area around it is drawn
@@ -206,7 +257,7 @@ class GeneratorTests(test_core.Base if hasattr(test_core, "Base") else unittest.
         app.generator_save(self.pid, {"approved": ["one.png", "bg.png"]})
         v = app.generator_reset(self.pid, "image")
         self.assertEqual(v["moved"], 2)
-        self.assertEqual(v["state"]["image"], {"prompt": "", "refs": [], "at": None, "count": 1})
+        self.assertEqual(v["state"]["image"], {"prompt": "", "refs": [], "at": None, "marks": [], "count": 1})
         c = v["state"]["config"]["image"]
         self.assertEqual((c["name"], c["rating"], c["type"], c["workflow"]["confirm_before_run"]), ("", "PG-13", "scene", False))
         self.assertEqual(v["boxes"]["image"]["results"], [])
