@@ -106,7 +106,11 @@ window.AssetGenerator = (function () {
     refs(q('.ag-refs'), name);
     q('.ag-go').onclick = async ev => {
       const b = ev.currentTarget; b.disabled = true; clearTimeout(saveTimer);
-      try { st.at = null; take(await call('POST', '/run', { project: host.pid, box: name, state: S() })); draw(); } catch (e) { host.toast(e.message); }
+      try {
+        const kept = st.refs.find(r => r.use === 'insert'), placed = kept ? await place(kept.image) : null;
+        if (placed && placed.soft) host.toast('The inserted picture is small, so it was enlarged and will look soft. Use a larger one for a sharp result.');
+        st.at = null; take(await call('POST', '/run', { project: host.pid, box: name, state: S(), placed })); draw();
+      } catch (e) { host.toast(e.message); }
       b.disabled = false;
     };
     const ap = q('.ag-apply');
@@ -115,19 +119,52 @@ window.AssetGenerator = (function () {
     return card;
   }
 
-  /* The reference slots of a box: four, or for the composed output the one free slot that becomes image 4. */
+  /* The reference slots of a box: four, or for the composed output the one free slot that becomes image 4.
+   * Each picture has a "How to use it" choice, the same four as Identity Studio. A picture set to "Insert as it is"
+   * is kept pixel for pixel; the others are numbered in the order the image model sees them. */
+  const useOf = id => data.uses.find(u => u.id === id) || data.uses[1];
+  function numbers(name) {                 // image number per reference, null for the inserted one
+    const st = S()[name], base = name === 'composed' ? 3 : 0, kept = st.refs.some(r => r.use === 'insert'); let n = base;
+    return st.refs.map(r => r.use === 'insert' ? null : (kept && n - base >= 3 ? 0 : ++n));      // 0: beyond what fits beside a kept picture
+  }
   function refs(holder, name) {
-    const st = S()[name], composed = name === 'composed', max = composed ? 1 : data.limits.refs;
+    const st = S()[name], composed = name === 'composed', max = composed ? 1 : data.limits.refs, nums = numbers(name);
     holder.append(el(`<span class="hint">${composed ? 'Image 4 (optional)' : 'Reference pictures (up to ' + max + ')'}</span>`));
-    for (let n = 0; n < max; n++) {
-      const img = st.refs[n], num = composed ? 4 : n + 1;
-      const slot = el(`<div class="ag-ref${img ? '' : ' ag-refempty'}">${img ? `<img alt="Reference ${num}" src="${esc(host.view(img))}"><button class="ag-x" type="button" title="Take this reference out" aria-label="Remove reference ${num}">×</button><span class="ag-num">${num}</span>`
-        : n === st.refs.length ? `<label title="Add a reference picture"><input type="file" accept="image/*" hidden>+</label>` : ''}</div>`);
-      if (img) { slot.querySelector('.ag-x').onclick = () => { st.refs.splice(n, 1); keep(); draw(); }; slot.querySelector('img').onclick = () => host.openViewer(host.view(img), 'Reference ' + num); }
-      const pick = slot.querySelector('input');
-      if (pick) pick.onchange = async () => { const f = pick.files[0]; if (!f) return; slot.classList.add('ag-loading'); try { st.refs.push(await host.upload(f)); keep(); } catch (e) { host.toast(e.message); } draw(); };
+    st.refs.forEach((r, n) => {
+      const num = nums[n], uses = data.uses.filter(u => !composed || u.id !== 'insert');
+      const slot = el(`<div class="ag-refcard"><div class="ag-ref"><img alt="Reference" src="${esc(host.view(r.image))}"><button class="ag-x" type="button" title="Take this reference out" aria-label="Remove reference">×</button><span class="ag-num">${num === null ? 'kept' : num === 0 ? 'not used' : num}</span></div>
+        <label>How to use it<select data-k="u-${name}-${n}" class="ag-use">${uses.map(u => `<option value="${u.id}"${u.id === r.use ? ' selected' : ''}>${esc(u.name)}</option>`).join('')}</select></label>
+        <div class="hint ag-usehelp">${esc(useOf(r.use).help)}</div></div>`);
+      slot.querySelector('.ag-x').onclick = () => { st.refs.splice(n, 1); keep(); draw(); };
+      slot.querySelector('img').onclick = () => host.openViewer(host.view(r.image), 'Reference');
+      slot.querySelector('.ag-use').onchange = ev => {
+        if (ev.target.value === 'insert') st.refs.forEach(o => { if (o !== r && o.use === 'insert') { o.use = 'keep exactly'; host.toast('Only one picture in a box can be inserted as it is. The other one is now followed closely.'); } });
+        r.use = ev.target.value; keep(); draw(); };
       holder.append(slot);
+    });
+    if (st.refs.length < max) {
+      const add = el('<div class="ag-refcard"><div class="ag-ref ag-refempty"><label title="Add a reference picture"><input type="file" accept="image/*" hidden>+</label></div></div>'), pick = add.querySelector('input');
+      pick.onchange = async () => { const f = pick.files[0]; if (!f) return; add.classList.add('ag-loading'); try { st.refs.push({ image: await host.upload(f), use: 'keep exactly' }); keep(); } catch (e) { host.toast(e.message); } draw(); };
+      holder.append(add);
     }
+    const adds = [...(st.refs.some(r => r.use === 'insert') ? [useOf('insert').adds] : []), ...st.refs.map((r, n) => nums[n] ? useOf(r.use).adds.replace('{n}', nums[n]) : null).filter(Boolean)];
+    if (adds.length) holder.append(el(`<div class="hint ag-adds"><b>Added after your prompt:</b> ${esc(adds.join(' '))}</div>`));
+    if (nums.includes(0)) holder.append(el('<div class="hint ag-adds">A kept picture takes one of the four places, so only three others are used with it.</div>'));
+  }
+
+  /* For a reference set to "Insert as it is": put it in the centre of a blank picture of the size pictures are made at, and
+   * make the mask that tells the model to draw everywhere except on it. Same method as Identity Studio. */
+  async function place(image) {
+    const [W, H] = data.size, img = new Image(); img.src = host.view(image); await img.decode();
+    const iw = img.naturalWidth || 512, ih = img.naturalHeight || 512, k = Math.min(W * 0.6 / iw, H * 0.6 / ih);
+    const w = Math.round(iw * k), h = Math.round(ih * k), x = Math.round((W - w) / 2), y = Math.round((H - h) / 2);
+    const sheet = () => { const c = document.createElement('canvas'); c.width = W; c.height = H; return c; };
+    const canvas = sheet(), cx = canvas.getContext('2d'); cx.imageSmoothingQuality = 'high'; cx.fillStyle = '#808080'; cx.fillRect(0, 0, W, H); cx.drawImage(img, x, y, w, h);
+    const shape = sheet(), sx = shape.getContext('2d'); sx.imageSmoothingQuality = 'high';
+    sx.drawImage(img, x, y, w, h); sx.globalCompositeOperation = 'source-in'; sx.fillStyle = '#000'; sx.fillRect(0, 0, W, H);      // its silhouette, in black
+    const mask = sheet(), mx = mask.getContext('2d'); mx.fillStyle = '#fff'; mx.fillRect(0, 0, W, H);
+    for (const [dx, dy] of [[0, 0], [2, 0], [-2, 0], [0, 2], [0, -2]]) mx.drawImage(shape, dx, dy);                                // a 2-pixel guard band so its edge is never repainted
+    return { image, canvas: canvas.toDataURL('image/png'), mask: mask.toDataURL('image/png'), soft: k > 1.5 };
   }
 
   function paint(card, name) {

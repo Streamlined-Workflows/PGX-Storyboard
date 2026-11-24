@@ -237,7 +237,12 @@ See `docs/Task_02_Milestone_2_Audio.md`.
 chosen: each box's prompt, references and count, which picture is showing, and which three pictures are applied to the
 composed output. The pictures are ordinary FLUX.2 stills marked `kind: "gen"` with the box they belong to.
 
-- A prompt is sent exactly as typed; nothing is added to it.
+- Every reference picture has a **How to use it** choice, the same four as Identity Studio: Insert as it is, Follow
+  closely (redrawn), Style guide, Inspiration. The last three each add one sentence after the typed prompt, and the page
+  shows those sentences before anything runs. With no references, the prompt is sent exactly as typed.
+- **Insert as it is** keeps that picture's own pixels: the page places it in the centre of a blank picture with a mask, and
+  the inpainting graph draws everything around it and pastes the original back. One per box. The composed output's fourth
+  reference cannot be inserted, because images 1 to 3 are fixed as the three layers.
 - **Run generations** queues one still per requested generation (1 to 10), each from a different seed.
 - The composed output always sends the applied background, middle ground and foreground as images 1, 2 and 3, in that
   order, and the optional fourth reference as image 4. It will not run until all three layers are applied.

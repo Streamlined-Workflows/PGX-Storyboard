@@ -535,18 +535,55 @@ def generator_save(pid, state):
         return generator.view(project)
 
 
-def generator_run(pid, box, state=None):
-    """Queue a box's pictures: as many as its count says, each from a different seed."""
+def comfy_upload(name, data):
+    """Put a PNG in ComfyUI's input folder. -> the name ComfyUI stored it as."""
+    boundary = "----storyboard" + uuid.uuid4().hex
+    body = (f'--{boundary}\r\nContent-Disposition: form-data; name="overwrite"\r\n\r\ntrue\r\n'
+            f'--{boundary}\r\nContent-Disposition: form-data; name="image"; filename="{name}"\r\n'
+            f'Content-Type: image/png\r\n\r\n').encode() + data + f"\r\n--{boundary}--\r\n".encode()
+    req = urllib.request.Request(COMFY + "/upload/image", data=body, headers={"Content-Type": "multipart/form-data; boundary=" + boundary})
+    with urllib.request.urlopen(req, timeout=60) as r:
+        return json.loads(r.read())["name"]
+
+
+def placed_png(data_url, what):
+    """A PNG the page sent as a data URL, checked to be a PNG of the size pictures are made at."""
+    try:
+        data = base64.b64decode(str(data_url).split(",", 1)[-1], validate=True)
+    except (ValueError, TypeError):
+        data = b""
+    size = (int.from_bytes(data[16:20], "big"), int.from_bytes(data[20:24], "big")) if data[:8] == b"\x89PNG\r\n\x1a\n" and len(data) > 24 else None
+    if size != generator.SIZE or len(data) > 30 * 1024 * 1024:
+        raise ValueError(f"The {what} for the inserted reference did not arrive properly. Reload the page and try again.")
+    return data
+
+
+def generator_run(pid, box, state=None, placed=None):
+    """Queue a box's pictures: as many as its count says, each from a different seed.
+
+    When one reference is set to "Insert as it is", the page sends `placed`: that reference on a blank picture, and a mask
+    that is black over it and white everywhere else. The inpainting graph draws everything except the reference and pastes
+    the original back through the mask, so the reference's own pixels are untouched."""
     with LOCK:
         project = load_project(pid)
         if state is not None:
             project["generator"] = generator.clean(state, project.get("generator"))
-        prompt, refs, count = generator.plan(project, box)
+        todo = generator.plan(project, box)
+        graph = None
+        if todo["insert"]:
+            if not isinstance(placed, dict) or placed.get("image") != todo["insert"]:
+                raise ValueError("A reference is set to be inserted, but the page did not send its picture. Reload the page and try again.")
+            stamp = new_id()
+            canvas_png, mask_png = placed_png(placed.get("canvas"), "picture"), placed_png(placed.get("mask"), "mask")      # both checked before either is stored
+            canvas = comfy_upload(f"gen_{pid}_{box}_{stamp}_canvas.png", canvas_png)
+            mask = comfy_upload(f"gen_{pid}_{box}_{stamp}_around.png", mask_png)
+            graph = lambda seed, prefix: workflows.build_fix(canvas, mask, todo["prompt"], seed, generator.SIZE[0], generator.SIZE[1], prefix,
+                                                             refs=todo["refs"], refs_first=True)
         project["image_jobs"] = [j for j in project["image_jobs"] if not (j.get("kind") == "gen" and j.get("slot") == box and j.get("status") == "error")]
         threading.Thread(target=assist.unload, daemon=True).start()      # the language model gives its memory back to the image model
         label = generator.TITLES[box]
-        for i in range(count):
-            queue_still(project, prompt, refs, "gen_" + box, kind="gen", slot=box, label=f"Asset Generator · {label}")
+        for i in range(todo["count"]):
+            queue_still(project, todo["prompt"], todo["refs"], "gen_" + box, graph=graph, kind="gen", slot=box, label=f"Asset Generator · {label}")
         save_project(project, touch=False)
         return generator.view(project)
 
@@ -1301,7 +1338,7 @@ class Handler(BaseHTTPRequestHandler):
             if path == "/api/generator/save":
                 return self.send_json(generator_save(pid, payload.get("state")))
             if path == "/api/generator/run":
-                return self.send_json(generator_run(pid, payload.get("box"), payload.get("state")))
+                return self.send_json(generator_run(pid, payload.get("box"), payload.get("state"), payload.get("placed")))
             if path == "/api/generator/apply":
                 return self.send_json(generator_apply(pid, payload.get("layer"), payload.get("image")))
             if path == "/api/generator/remove":
