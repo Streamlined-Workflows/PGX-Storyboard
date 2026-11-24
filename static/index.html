@@ -4,10 +4,13 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>SWIFT Director</title>
-<link rel="icon" type="image/svg+xml" href="/static/brand/swift-drop.svg">
+<link rel="icon" type="image/png" sizes="32x32" href="/static/brand/director-icon-32.png?v=1">
+<link rel="icon" type="image/png" sizes="512x512" href="/static/brand/director-icon-512.png?v=1">
+<link rel="apple-touch-icon" href="/static/brand/director-icon-180.png?v=1">
 <link rel="stylesheet" href="/static/swift-tokens.css?v=5">
 <link rel="stylesheet" href="/static/identity/identity-studio.css?v=9">
 <link rel="stylesheet" href="/static/config/config-center.css?v=1">
+<link rel="stylesheet" href="/static/audio/audio-lab.css?v=2">
 <style>
   /* Montserrat (SIL Open Font License 1.1), served from the server so the page needs no outside network. */
   @font-face { font-family:Montserrat; font-weight:400; font-display:swap; src:url('/static/fonts/montserrat-latin-400-normal.woff2') format('woff2'); }
@@ -265,6 +268,7 @@
   <button data-view="projects">Projects</button>
   <button data-view="assets">Assets</button>
   <button data-view="library">Library</button>
+  <button data-view="audio">Audio Lab</button>
   <button data-view="lore">Lore</button>
   <button data-view="identity">Identity Studio</button>
   <button data-view="system">System status</button>
@@ -353,6 +357,9 @@
       <div id="shotsOut" class="hint">Writes the opening frame and the end frame of every segment from its lyrics, beat and story beat. Then generates the images and puts them on the storyboard.</div>
     </section>
   </div>
+
+  <!-- ===== Audio Lab: a separate module, drawn by /static/audio/audio-lab.js ===== -->
+  <div id="v-audio" class="view"></div>
 
   <!-- ===== Lore ===== -->
   <div id="v-lore" class="view">
@@ -653,6 +660,7 @@ function show(name) {
   if (name === 'storyboard') { renderSegments(); }
   if (name === 'identity' && window.IdentityStudio) window.IdentityStudio.show();
   if (name === 'lore') renderLore();
+  if (window.AudioLab) { if (name === 'audio') window.AudioLab.show($('v-audio'), P); else window.AudioLab.hide(); }
   headerTitle();
   releaseFor(name);
 }
@@ -1871,6 +1879,7 @@ async function boot() {
 })();
 </script>
 <script src="/static/config/config-center.js?v=1"></script>
+<script src="/static/audio/audio-lab.js?v=2"></script>
 <script src="/static/identity/vendor/imagetracer_v1.2.6.js"></script>
 <script src="/static/identity/teams-icons.js?v=9"></script>
 <script src="/static/identity/download.js?v=10"></script>

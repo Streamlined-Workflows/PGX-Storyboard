@@ -45,6 +45,7 @@ It runs as a Docker container named `swift-director` that starts on boot (with `
 | Projects | Every saved project. Open, rename, duplicate or delete one; each keeps its own timeline, assets and clips |
 | Assets | The open project's actors, photos and audio. An actor is one character with a name, a description and any number of views (stills); photos are loose reference stills |
 | Library | Every video rendered in the open project, with download links |
+| Audio Lab | A multi-track audio timeline for the open project: import sounds, arrange, trim and split clips, play them back |
 | Lore | Long background text about a setting (world, factions, people, technology, look). Each entry can be tagged to any number of storyboards |
 | Identity Studio | A separate workspace for logos and app identities. See [Identity Studio](#identity-studio) |
 | System status | Ping test, and CPU, GPU, memory and disk meters for the server. Under the meters, a list of what is using memory and the GPU: the models Ollama and ComfyUI have loaded, and the largest programs on the server |
@@ -191,6 +192,22 @@ asset that does not fit, or has no picture yet, is described in words in the pro
 **Fix an area** has a "Use:" list of assets and props that have a picture. Choosing one adds its
 first picture as an extra reference for the repaint, which is how a prop is swapped into a shot
 that is otherwise right.
+
+## Audio Lab
+
+A multi-track timeline for arranging a project's audio. It is a separate module (`audio/` and
+`static/audio/`) with its own storage under `data/audio/` and its own routes under `/api/audio/`.
+
+- **Sounds** are kept once in a shared library and never changed. A clip on the timeline points
+  at a sound and carries instructions: where it sits, where in the sound it starts, how long it plays.
+- **Time is counted in whole samples** at 48 kHz, so clips that should meet exactly do.
+- **Waveforms** are drawn from peak data the server makes once per sound.
+- **Each project's timeline is its own file**, saved atomically with the last 20 versions kept.
+  A save from a second window is detected, not silently overwritten.
+
+Today it imports, arranges, trims, splits and plays. The mixer, clip processing and export are
+the next milestone; see `docs/Task_03_Milestone_B.md`. The application's container includes
+ffmpeg for this (`Dockerfile`).
 
 ## Lore
 

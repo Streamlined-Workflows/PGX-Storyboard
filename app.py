@@ -28,6 +28,7 @@ import lore
 import usage
 import models
 from identity_studio import api as identity_api
+from audio import api as audio_api
 import workflows
 
 ROOT = os.path.dirname(os.path.abspath(__file__))
@@ -387,6 +388,23 @@ def actor_generate(pid, actor_id, refs=None, views=None, extra=""):
             made.append(queue_still(project, assist.view_prompt(description, framing, bool(refs), extra), refs, stem,
                                     kind="actor_view", actor_id=actor_id, label=label))
         return {"jobs": made}
+
+
+def project_audio_files(pid):
+    """The audio a storyboard uploaded before the audio library existed, fetched from ComfyUI's input folder so
+    Audio Lab can take it in. -> [(name, bytes)]. A file that cannot be fetched is skipped."""
+    out = []
+    for entry in load_project(pid).get("audio", []):
+        filename = entry.get("filename")
+        if not filename:
+            continue
+        try:
+            query = urllib.parse.urlencode({"filename": filename, "type": "input"})
+            with urllib.request.urlopen(f"{COMFY}/view?{query}", timeout=120) as r:
+                out.append((entry.get("name") or filename, r.read()))
+        except OSError:
+            continue
+    return out
 
 
 def make_room_for_language_model():
@@ -1034,13 +1052,17 @@ class Handler(BaseHTTPRequestHandler):
 
     def identity(self, method, url, body=None):
         """Hand a /api/identity/ request to the Identity Studio module, which owns everything about it."""
+        return self.module(identity_api, method, url, body)
+
+    def module(self, api, method, url, body=None):
+        """Hand a request to a self-contained module (Identity Studio, Audio Lab) and send back what it returns."""
         try:
             query = {k: v[0] for k, v in urllib.parse.parse_qs(url.query).items()}
-            if method == "POST" and identity_api.wants_raw(url.path):          # an uploaded file, not JSON
-                reply = identity_api.handle(method, url.path, query, raw=body)
+            if method == "POST" and api.wants_raw(url.path):                   # an uploaded file, not JSON
+                reply = api.handle(method, url.path, query, raw=body)
             else:
-                reply = identity_api.handle(method, url.path, query, json.loads(body or b"{}") if body is not None else None)
-            if isinstance(reply, identity_api.File):
+                reply = api.handle(method, url.path, query, json.loads(body or b"{}") if body is not None else None)
+            if isinstance(reply, api.File):
                 with open(reply.path, "rb") as f:
                     data = f.read()
                 self.send_response(200)
@@ -1057,7 +1079,9 @@ class Handler(BaseHTTPRequestHandler):
         except LookupError:
             return self.send_json({"error": "Not found"}, 404)
         except ValueError as e:
-            return self.send_json({"error": str(e)}, 400)
+            return self.send_json({"error": str(e)}, getattr(e, "status", 400))
+        except OSError as e:
+            return self.send_json({"error": f"The server could not read or write a file: {e}"}, 500)
 
     def proxy(self, method, path, body=None):
         """Pass a request through to ComfyUI, including Range so media can seek."""
@@ -1084,8 +1108,10 @@ class Handler(BaseHTTPRequestHandler):
         try:
             if identity_api.handles(url.path):
                 return self.identity("GET", url)
+            if audio_api.handles(url.path):
+                return self.module(audio_api, "GET", url)
             if url.path.startswith("/static/"):            # the SWIFT tokens, logo, fonts and the module scripts
-                kinds = {".css": "text/css", ".svg": "image/svg+xml", ".woff2": "font/woff2", ".js": "text/javascript"}
+                kinds = {".css": "text/css", ".svg": "image/svg+xml", ".woff2": "font/woff2", ".js": "text/javascript", ".png": "image/png"}
                 base = os.path.join(ROOT, "static")
                 path = os.path.realpath(os.path.join(base, urllib.parse.unquote(url.path[len("/static/"):])))
                 kind = kinds.get(os.path.splitext(path)[1].lower())
@@ -1153,6 +1179,8 @@ class Handler(BaseHTTPRequestHandler):
         url = urllib.parse.urlsplit(self.path)
         if identity_api.handles(url.path):
             return self.identity("PUT", url, self.read_body())
+        if audio_api.handles(url.path):
+            return self.module(audio_api, "PUT", url, self.read_body())
         if url.path == "/api/project":
             try:
                 pid = urllib.parse.parse_qs(url.query).get("id", [""])[0]
@@ -1166,6 +1194,8 @@ class Handler(BaseHTTPRequestHandler):
         body = self.read_body()
         if identity_api.handles(path):
             return self.identity("POST", urllib.parse.urlsplit(self.path), body)
+        if audio_api.handles(path):
+            return self.module(audio_api, "POST", urllib.parse.urlsplit(self.path), body)
         if path == "/api/upload":
             return self.proxy("POST", "/upload/image", body)
         try:
@@ -1291,5 +1321,6 @@ if __name__ == "__main__":
     identity_api.configure(build_image=workflows.build_image, build_fix=workflows.build_fix, before=assist.unload)
     identity_api.start()
     assist.before_chat = make_room_for_language_model
+    audio_api.configure(project_audio=project_audio_files)
     print(f"SWIFT Director on http://0.0.0.0:{PORT}  ->  ComfyUI at {COMFY}", flush=True)
     ThreadingHTTPServer(("0.0.0.0", PORT), Handler).serve_forever()

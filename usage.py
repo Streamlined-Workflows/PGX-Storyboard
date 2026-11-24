@@ -42,6 +42,7 @@ NEEDS = {
     "assets": {"comfy", "llm"},          # generating pictures, and describing an actor from them
     "identity": {"comfy"},               # concepts
     "projects": set(), "library": set(), "lore": set(),
+    "audio": set(),                      # Audio Lab plays and edits in the browser; it needs no model
 }
 
 

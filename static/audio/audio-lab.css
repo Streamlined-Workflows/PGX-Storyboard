@@ -1,0 +1,45 @@
+/* Audio Lab. Scoped to .al; interface colours are SWIFT tokens. Track colours are data and come from the timeline. */
+#v-audio { grid-template-columns:minmax(0, 1fr); }      /* the wide timeline scrolls inside its own box, never the page */
+.al { display:flex; flex-direction:column; gap:10px; min-width:0; }
+.al .al-bar { display:flex; gap:6px; align-items:center; flex-wrap:wrap; padding:10px 12px; background:var(--swift-surface); border:1px solid var(--swift-ring); border-radius:var(--swift-radius-xl); }
+.al .al-clock { font-variant-numeric:tabular-nums; font-weight:700; min-width:76px; text-align:right; color:var(--swift-text-strong); }
+.al .al-sep { width:1px; align-self:stretch; background:var(--swift-border); margin:0 4px; }
+.al .al-grow { flex:1; }
+.al .al-inline { display:inline-flex; gap:6px; align-items:center; margin:0; font-size:12px; color:var(--swift-text-muted); }
+.al .al-banner { padding:9px 12px; border:1px solid var(--swift-danger); border-radius:var(--swift-radius-lg); color:var(--swift-text); font-size:13px; }
+.al .al-banner[hidden] { display:none; }
+.al .al-bin { padding:10px 12px; border:1px solid var(--swift-border); border-radius:var(--swift-radius-xl); }
+.al .al-binhead { display:flex; gap:10px; align-items:center; flex-wrap:wrap; margin-bottom:8px; } .al .al-binhead b { color:var(--swift-text-strong); }
+.al .al-sounds { display:flex; gap:8px; flex-wrap:wrap; max-height:132px; overflow:auto; }
+.al .al-sound { display:flex; gap:8px; align-items:center; padding:5px 6px 5px 10px; border:1px solid var(--swift-border); border-radius:var(--swift-radius-lg); cursor:grab; background:var(--swift-base); }
+.al .al-sound b { font-size:13px; color:var(--swift-text-strong); max-width:200px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.al .al-scroll { position:relative; overflow:auto; max-height:calc(100vh - 330px); min-height:200px; border:1px solid var(--swift-ring); border-radius:var(--swift-radius-xl); background:var(--swift-base); }
+.al .al-grid { position:relative; min-width:100%; }
+.al .al-row { display:flex; border-bottom:1px solid var(--swift-border); }
+.al .al-rulerrow { position:sticky; top:0; z-index:4; background:var(--swift-surface); height:28px; }
+.al .al-corner, .al .al-th { position:sticky; left:0; z-index:3; flex:0 0 216px; width:216px; background:var(--swift-surface); border-right:1px solid var(--swift-border); }
+.al .al-corner { display:flex; align-items:center; padding:0 10px; z-index:5; }
+.al .al-ruler { position:relative; height:28px; cursor:text; }
+.al .al-tick { position:absolute; top:0; height:28px; padding:6px 0 0 4px; font-size:10px; color:var(--swift-text-muted); border-left:1px solid var(--swift-ring-strong); pointer-events:none; white-space:nowrap; }
+.al .al-marker { position:absolute; bottom:0; transform:translateX(-1px); padding:0 6px; height:15px; line-height:15px; font-size:10px; border:none; border-radius:0 6px 6px 0; background:var(--swift-green); color:var(--swift-on-primary); cursor:pointer; white-space:nowrap; }
+.al .al-th { padding:6px 8px; display:grid; grid-template-columns:minmax(0, 1fr); gap:4px; height:98px; border-left:4px solid transparent; box-sizing:border-box; overflow:hidden; }
+.al .al-active .al-th { background:var(--swift-highlight); }
+.al .al-thtop { display:flex; gap:4px; } .al .al-name { flex:1; min-width:0; padding:2px 6px; font-size:12px; font-weight:700; } .al .al-kind { width:84px; padding:2px 4px; font-size:11px; }
+.al .al-thmid, .al .al-thbot { display:flex; gap:3px; align-items:center; min-width:0; }
+.al .al-th button.small { padding:1px 6px; font-size:11px; min-width:22px; }
+.al .al-th button.on { background:var(--swift-green); color:var(--swift-on-primary); border-color:var(--swift-green); }
+.al .al-vol { flex:1 1 40px; min-width:0; width:40px; } .al .al-pan { flex:0 0 40px; width:40px; min-width:0; }
+.al .al-lane { position:relative; height:98px; flex:none; }
+.al .al-quiet .al-lane { opacity:.45; }
+.al .al-target .al-lane { outline:2px dashed var(--swift-green); outline-offset:-2px; }
+.al .al-clip { position:absolute; top:5px; height:88px; box-sizing:border-box; border:1px solid; border-radius:8px; background:var(--swift-surface); overflow:hidden; cursor:grab; touch-action:none; user-select:none; }
+.al .al-clip canvas { position:absolute; left:0; bottom:2px; width:100%; height:76px; opacity:.85; pointer-events:none; }
+.al .al-label { position:absolute; left:6px; top:2px; right:6px; font-size:10px; color:var(--swift-text-strong); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; pointer-events:none; }
+.al .al-sel { box-shadow:0 0 0 2px var(--swift-text-strong); z-index:2; }
+.al .al-locked { cursor:default; opacity:.7; }
+.al .al-trim { position:absolute; top:0; bottom:0; width:7px; cursor:ew-resize; } .al .al-tl { left:0; } .al .al-tr { right:0; }
+.al .al-locked .al-trim { display:none; }
+.al .al-head-line { position:absolute; top:0; bottom:0; left:0; width:2px; background:var(--swift-text-strong); pointer-events:none; z-index:6; }
+.al .al-empty { padding:28px 16px; }
+.al .al-foot { display:flex; gap:12px; align-items:center; flex-wrap:wrap; }
+@media (max-width:760px) { .al .al-corner, .al .al-th { flex-basis:216px; } .al .al-scroll { max-height:60vh; } }

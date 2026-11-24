@@ -11,9 +11,12 @@ mkdir -p "$HOME/.cache/huggingface"
 [ -d "$MODELS_DIR" ] || echo "Note: $MODELS_DIR not found, so the AI Models panel will show every file as missing."
 # --gpus all gives the container nvidia-smi, which the System status page reads GPU load from.
 # --pid host lets System status list which programs on this machine are using memory and the GPU.
+# The app's image is plain Python plus ffmpeg (for Audio Lab). It is built once and reused; the code itself is mounted.
+echo "Preparing the SWIFT Director container (the first time takes a minute or two)..."
+docker build -q -t swift-director-app -f Dockerfile . >/dev/null
 docker run -d --name swift-director --restart unless-stopped --network host --gpus all --pid host \
   -v "$PWD":/app -v "$MODELS_DIR":/models -v "$HOME/.cache/huggingface":/hf:ro \
-  -w /app -e PORT=8190 python:3.12-slim python app.py >/dev/null
+  -w /app -e PORT=8190 swift-director-app python app.py >/dev/null
 
 # Song analysis service for Assisted Storyboard (lyrics, beats). The first build takes a few minutes.
 echo "Building the song analysis service (the first time takes a few minutes)..."

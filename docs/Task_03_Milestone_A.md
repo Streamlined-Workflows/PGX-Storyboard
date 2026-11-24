@@ -305,7 +305,7 @@ list of things for you to listen to.
 - [x] Model roles, capabilities and where each runs
 - [x] Tests established
 - [x] Integration and dependency map
-- [ ] Review and the decisions below
+- [x] Reviewed 24 November: Task 03 goes next; separate library, 48 kHz and the runtimes approved; voice cloning is to be built with speech, with a note per voice of whose it is and that they agreed. Milestone B is in `Task_03_Milestone_B.md`
 
 **B. Audio Lab foundation**
 - [ ] `data/audio` storage and `/api/audio/` routes; mount shared with `assist-service`
