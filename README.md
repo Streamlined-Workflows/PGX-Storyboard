@@ -244,6 +244,9 @@ composed output. The pictures are ordinary FLUX.2 stills marked `kind: "gen"` wi
   summary, and an In use or Stored tag on each setting. In use today: the name and type (what **Save to Assets** creates: an
   actor, a scene asset, a prop, or a world asset of a tagged Lore entry), asking before a run, and requiring approval
   before a picture can be saved. The rating and the model choices are stored; one model per role is installed.
+- Each prompt box shows `x / y` at its bottom right: the characters that will be sent (typed text plus the sentences added
+  for references) against about 2,000. FLUX.2 reads up to 512 tokens, which is roughly that many characters of English,
+  so the figure is an estimate and is labelled as one. It warns near and past the limit; it does not block.
 - An empty reference slot asks **Upload** or **Apply from Library**. The library lists every picture the project already
   has (generated pictures newest first, actors' views, assets and props, photos, storyboard shots), each once, with a name
   filter. Choosing one uses the existing file; nothing is copied.

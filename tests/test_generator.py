@@ -37,6 +37,7 @@ class GeneratorTests(test_core.Base if hasattr(test_core, "Base") else unittest.
         self.assertEqual(sorted(v["boxes"]), ["background", "composed", "foreground", "image", "middle"])
         self.assertEqual(v["state"]["image"], {"prompt": "", "refs": [], "at": None, "count": 1})
         self.assertEqual(v["state"]["approved"], [])
+        self.assertEqual(v["prompt_limit"], {"model": "FLUX.2 [dev]", "tokens": 512, "characters": 2000})      # what the count beside each prompt is measured against
         self.assertEqual(v["state"]["composed"]["prompt"], generator.COMPOSE_PROMPT)
         self.assertIn("image 1 as the background", v["state"]["composed"]["prompt"])
         self.assertEqual(v["state"]["composed"]["applied"], {"background": None, "middle": None, "foreground": None})

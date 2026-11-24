@@ -126,7 +126,7 @@ window.AssetGenerator = (function () {
       <div class="ag-under"><span class="hint ag-count">${list.length ? (i + 1) + ' of ' + list.length : ''}</span><span class="ag-status hint"></span><span class="ag-grow"></span>
         ${cur ? `<a class="btn small" href="${esc(host.view(cur.image))}" download="${esc(fileStem(name) + '-' + (i + 1) + '.png')}">Download</a>${needOk ? `<button class="small ag-ok${ok ? ' on' : ''}" type="button" aria-pressed="${ok}" title="${ok ? 'Approved. Click to take the approval back.' : 'Approve this picture so it can be saved to Assets.'}">${ok ? '✓ Approved' : 'Approve'}</button>` : ''}<button class="small ag-asset" type="button"${needOk && !ok ? ' disabled' : ''} title="${needOk && !ok ? 'Approve this picture first. This is set in Asset Configuration.' : 'Add this picture to Assets as ' + esc(typeWord) + (cfg().name ? ' named ' + esc(cfg().name) : '')}">Save to Assets</button><button class="small ghost ag-del" type="button" title="Remove this picture from the list">Remove</button>` : ''}</div>
       ${composed ? '<div class="ag-layers"></div>' : ''}
-      <label class="ag-label">Prompt<textarea data-k="p-${name}" class="ag-prompt" rows="${composed ? 4 : 5}" placeholder="${esc(HINT[name] || '')}">${esc(st.prompt)}</textarea></label>
+      <label class="ag-label">Prompt<span class="ag-promptwrap"><textarea data-k="p-${name}" class="ag-prompt" rows="${composed ? 4 : 5}" placeholder="${esc(HINT[name] || '')}">${esc(st.prompt)}</textarea><span class="ag-chars" aria-live="off"></span></span></label>
       ${composed ? '<p class="hint">Images 1, 2 and 3 are always the background, middle ground and foreground above, in that order. If you add a fourth reference, say what it is, for example: “Use image 4 as the colour and lighting style.” <button class="small ghost ag-reset" type="button">Reset prompt</button></p>' : ''}
       <div class="ag-refs"></div>
       <div class="ag-run"><label>Generations<input data-k="n-${name}" class="ag-n" type="number" min="1" max="${data.limits.count}" step="1" value="${st.count}"></label>
@@ -143,7 +143,7 @@ window.AssetGenerator = (function () {
       if (needOk) q('.ag-ok').onclick = () => { const a = S().approved, n = a.indexOf(cur.id); if (n < 0) a.push(cur.id); else a.splice(n, 1); keep(); draw(); };
       q('.ag-del').onclick = async () => { if (!confirm('Remove this picture from the list?')) return; try { st.at = null; take(await call('POST', '/remove', { project: host.pid, id: cur.id })); draw(); } catch (e) { host.toast(e.message); } };
     }
-    q('.ag-prompt').oninput = ev => { st.prompt = ev.target.value; keep(); };
+    q('.ag-prompt').oninput = ev => { st.prompt = ev.target.value; keep(); counter(card, name); };
     q('.ag-n').onchange = ev => { st.count = Math.max(1, Math.min(data.limits.count, Math.round(+ev.target.value || 1))); ev.target.value = st.count; keep(); };
     if (composed) {
       q('.ag-reset').onclick = () => { st.prompt = data.compose_prompt; keep(); draw(); };
@@ -165,7 +165,7 @@ window.AssetGenerator = (function () {
     };
     const ap = q('.ag-apply');
     if (ap) ap.onclick = async () => { clearTimeout(saveTimer); try { await call('POST', '/save', { project: host.pid, state: S() }); take(await call('POST', '/apply', { project: host.pid, layer: name, image: cur.image })); draw(); } catch (e) { host.toast(e.message); } };
-    paint(card, name);
+    paint(card, name); counter(card, name);
     return card;
   }
 
@@ -176,6 +176,19 @@ window.AssetGenerator = (function () {
   function numbers(name) {                 // image number per reference, null for the inserted one
     const st = S()[name], base = name === 'composed' ? 3 : 0, kept = st.refs.some(r => r.use === 'insert'); let n = base;
     return st.refs.map(r => r.use === 'insert' ? null : (kept && n - base >= 3 ? 0 : ++n));      // 0: beyond what fits beside a kept picture
+  }
+  function added(name) {                   // the sentences the reference pictures add after the typed prompt
+    const st = S()[name], nums = numbers(name);
+    return [...(st.refs.some(r => r.use === 'insert') ? [useOf('insert').adds] : []), ...st.refs.map((r, n) => nums[n] ? useOf(r.use).adds.replace('{n}', nums[n]) : null).filter(Boolean)];
+  }
+  /* The count at the bottom right of a prompt box: characters that will be sent / about how many the image model reads.
+   * It counts what is actually sent, so the sentences added for reference pictures are included. */
+  function counter(card, name) {
+    const out = card.querySelector('.ag-chars'), lim = data.prompt_limit, typed = S()[name].prompt.trim().length, extra = added(name).reduce((n, t) => n + t.length + 1, 0), x = typed + extra;
+    out.textContent = x.toLocaleString() + ' / ' + lim.characters.toLocaleString();
+    out.className = 'ag-chars' + (x > lim.characters ? ' ag-over' : x > lim.characters * 0.85 ? ' ag-near' : '');
+    out.title = `${typed.toLocaleString()} typed${extra ? ' + ' + extra.toLocaleString() + ' added for the reference pictures' : ''}. ${lim.model} reads about ${lim.tokens} word pieces, which is roughly ${lim.characters.toLocaleString()} characters of English. `
+      + (x > lim.characters ? 'This prompt is past that: the end of it may be ignored or weaken the rest. Put what matters most first, or shorten it.' : 'The limit is an estimate, since the model counts word pieces, not characters.');
   }
   function refs(holder, name) {
     const st = S()[name], composed = name === 'composed', max = composed ? 1 : data.limits.refs, nums = numbers(name);
@@ -202,7 +215,7 @@ window.AssetGenerator = (function () {
       pick.onchange = async () => { const f = pick.files[0]; if (!f) return; add.classList.add('ag-loading'); try { st.refs.push({ image: await host.upload(f), use: 'keep exactly' }); keep(); } catch (e) { host.toast(e.message); } draw(); };
       holder.append(add);
     }
-    const adds = [...(st.refs.some(r => r.use === 'insert') ? [useOf('insert').adds] : []), ...st.refs.map((r, n) => nums[n] ? useOf(r.use).adds.replace('{n}', nums[n]) : null).filter(Boolean)];
+    const adds = added(name);
     if (adds.length) holder.append(el(`<div class="hint ag-adds"><b>Added after your prompt:</b> ${esc(adds.join(' '))}</div>`));
     if (nums.includes(0)) holder.append(el('<div class="hint ag-adds">A kept picture takes one of the four places, so only three others are used with it.</div>'));
   }
