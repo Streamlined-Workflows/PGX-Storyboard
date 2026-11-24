@@ -1,19 +1,26 @@
 """Reference Generation: reference sheets for an asset, and the pictures cut out of them.
 
-Design document: docs/Reference_Generation_Design.md. Built so far (its section 16, steps 1 to 3 and the manual half
+Design document: docs/Reference_Generation_Design.md. Built so far (its section 16, steps 1 to 4 and the manual half
 of step 6): the workspace with its two separately started workflows, the classification registry, Simple sheet
-generation with candidates, approval and ten-day retention, and Sheet Extraction by hand-drawn regions.
-Not built yet: Advanced rows and views, specification panels, assembly, validation reporting, the export
-profiles and the hand-over to 3D Generation.
+generation with candidates, approval and ten-day retention, Advanced rows with six directional slots (generate,
+upload, lock, disable, inherit from other rows, row classification), and Sheet Extraction by hand-drawn regions.
+Not built yet: specification panels, assembly, validation reporting, the export profiles and the hand-over to
+3D Generation.
 
 What is kept for a SWIFT Director project (project["reference"]):
   projects   reference projects: [{id, name, parent, type, subtype, custom_subtype, mode, prompt, prompt_edited,
-             sources, count, profile, aspect, at, selected, extraction: {source, regions}}]
+             sources, count, profile, aspect, at, selected, extraction: {source, regions}, rows}]
+             rows (Advanced mode): [{id, section, label, role, type, subtype, prompt, prompt_edited, sources, count,
+             profile, aspect, locked, at, selected, slots: {front|left|right|rear|top|bottom: {enabled, locked, at, selected}}}]
+             A row source is {"image": name} or {"row": id, "direction": d}: the picture another row has chosen for
+             that view, looked up each time it is used, so nothing is copied.
   open       the reference project being worked on
   artifacts  one record per picture made or cut out here:
              {id, project, role: "sheet" | "view", image, state: "pending" | "approved", created, expires,
-              width, height, upscaled, requires: [{id, reason}], and for a sheet {prompt, seed, sources, provider},
-              and for a view {source, region, direction, section, component}}
+              width, height, upscaled, requires: [{id, reason}], origin: "generated" | "extracted" | "uploaded",
+              and for a sheet {prompt, seed, sources, provider}, for an extracted view {source, region, direction,
+              section, component}, for a row's view {row, direction, component, type, subtype, prompt, seed, sources},
+              and role "row" for a complete row picture that was uploaded {row}}
 
 The pictures are ordinary stills: unfinished ones are in project["image_jobs"] and finished ones in
 project["generated"], both marked kind "ref" with slot = the reference project's id, so the Library can offer them
@@ -77,6 +84,24 @@ PROFILES = (512, 1024, 2048, 4096)                       # the longer side, in p
 ASPECTS = (("16:9", 16, 9), ("3:2", 3, 2), ("4:3", 4, 3), ("1:1", 1, 1), ("3:4", 3, 4), ("2:3", 2, 3), ("9:16", 9, 16))
 DIRECTIONS = ("front", "left", "right", "rear", "top", "bottom")
 SECTIONS = ("base", "detail")
+MAX_ROWS, ROW_SOURCES = 24, 6
+ROLES = ("Complete asset", "Base anatomy", "Head", "Hair", "Headwear", "Clothing", "Footwear", "Armor", "Accessory", "Equipment", "Component", "Configuration state")
+# What is added to a row's prompt for each view.
+DIRECTION_WORDS = {"front": "Front view: seen straight on from the front.", "left": "Left side view: the subject's left side faces the camera, in full profile.",
+                   "right": "Right side view: the subject's right side faces the camera, in full profile.", "rear": "Rear view: seen from directly behind.",
+                   "top": "Top view: seen from directly above, looking straight down.", "bottom": "Bottom view: seen from directly below, looking straight up."}
+ROW_SHAPE = {"humanoid": "2:3", "creature": "3:2", "vehicle": "3:2", "vehicle_interior": "3:2", "scenery": "3:2"}       # others start square
+# Which views a new row starts with, by type (design 3.1). Any of the six can be switched on or off afterwards.
+ROW_VIEWS = {"vehicle": ("front", "left", "right", "rear", "top", "bottom"), "vehicle_interior": ("front", "left", "right", "rear", "top", "bottom")}
+
+
+def row_prompt(kind, name, label, role, section):
+    """The recommended prompt for one row. Each view adds its own direction sentence to it when it is generated."""
+    whole = section == "base" and role in ("", "Complete asset")
+    subject = (name.strip() or f"the {NOUN[kind]}") if whole else f"{(label or role or 'the component').strip()} of {name.strip() or 'the ' + NOUN[kind]}, shown on its own with nothing else in the picture"
+    pose = {"humanoid": " standing in a neutral A-pose", "creature": " in a neutral standing pose"}.get(kind, "") if whole or role == "Base anatomy" else ""
+    return (f"{subject}{pose}, the whole subject in frame and centred, on a plain light grey background. "
+            "Flat, even, shadowless studio lighting. Orthographic-style reference view with no perspective distortion. No text, no labels.")
 
 
 def size(profile, aspect):
@@ -123,6 +148,58 @@ def _region(r):
             "component": _text(r.get("component"), 60), "detected": bool(r.get("detected"))}
 
 
+def _row(incoming, current, project_type, name, known):
+    incoming = incoming if isinstance(incoming, dict) else {}
+    get = lambda k, d=None: incoming.get(k, current.get(k, d))
+    given = incoming.get("id")
+    kind = get("type") if get("type") in TYPES else ""               # "" = the project's own classification
+    real = kind or project_type
+    out = {"id": current.get("id") or (given if isinstance(given, str) and re.fullmatch(r"[a-z0-9]{6,16}", given) else None),
+           "section": get("section") if get("section") in SECTIONS else "base", "label": _text(get("label", ""), 60).strip(), "role": _text(get("role", ""), 40).strip(),
+           "type": kind, "subtype": get("subtype") if kind and get("subtype") in TYPES[kind]["subtypes"] else "", "locked": bool(get("locked", False)),
+           "prompt_edited": bool(get("prompt_edited", False))}
+    if not out["id"]:
+        return None
+    out["prompt"] = _text(get("prompt", ""), MAX_PROMPT) if out["prompt_edited"] else row_prompt(real, name, out["label"], out["role"], out["section"])
+    sources = []
+    for src in get("sources", []) if isinstance(get("sources", []), list) else []:
+        if isinstance(src, dict) and isinstance(src.get("image"), str) and src["image"].strip():
+            src = {"image": src["image"][:300]}
+        elif isinstance(src, dict) and src.get("row") in known and src.get("row") != out["id"] and src.get("direction") in DIRECTIONS:
+            src = {"row": src["row"], "direction": src["direction"]}
+        else:
+            continue
+        if src not in sources:
+            sources.append(src)
+    out["sources"] = sources[:ROW_SOURCES]
+    try:
+        out["count"] = max(1, min(MAX_COUNT, int(get("count", 1))))
+    except (TypeError, ValueError):
+        out["count"] = 1
+    out["profile"] = get("profile") if get("profile") in PROFILES else 1024
+    out["aspect"] = get("aspect") if get("aspect") in [a for a, _, _ in ASPECTS] else ROW_SHAPE.get(real, "1:1")
+    out["at"] = get("at") if isinstance(get("at"), str) else None             # the complete-row picture on show
+    out["selected"] = get("selected") if isinstance(get("selected"), str) else None
+    slots, was, starts = get("slots") if isinstance(get("slots"), dict) else {}, current.get("slots") or {}, ROW_VIEWS.get(real, DIRECTIONS[:4])
+    out["slots"] = {}
+    for d in DIRECTIONS:
+        sl = slots.get(d) if isinstance(slots.get(d), dict) else was.get(d) or {}
+        out["slots"][d] = {"enabled": bool(sl.get("enabled", d in starts)), "locked": bool(sl.get("locked", False)),
+                           "at": sl.get("at") if isinstance(sl.get("at"), str) else None, "selected": sl.get("selected") if isinstance(sl.get("selected"), str) else None}
+    return out
+
+
+def _uncycle(rows):
+    """Drop inherited sources that would make rows depend on each other in a circle (design RIN-006)."""
+    def reaches(start, target, seen=()):
+        row = next((r for r in rows if r["id"] == start), None)
+        return bool(row) and any(s.get("row") == target or (s.get("row") and s["row"] not in seen and reaches(s["row"], target, seen + (start,))) for s in row["sources"])
+    for r in rows:
+        for s in list(r["sources"]):
+            if s.get("row") and reaches(s["row"], r["id"]):
+                r["sources"].remove(s)
+
+
 def _project(incoming, current, new_id):
     incoming = incoming if isinstance(incoming, dict) else {}
     get = lambda k, d=None: incoming.get(k, current.get(k, d))
@@ -132,7 +209,7 @@ def _project(incoming, current, new_id):
     out = {"id": current.get("id") or (given if isinstance(given, str) and re.fullmatch(r"[a-z0-9]{6,16}", given) else new_id()), "name": _text(get("name", ""), 80).strip() or "Untitled reference",
            "parent": TYPES[kind]["parent"], "type": kind, "subtype": subtype,
            "custom_subtype": _text(get("custom_subtype", ""), 60) if subtype == CUSTOM else "",
-           "mode": "simple",                                      # "advanced" arrives with rows and views
+           "mode": get("mode") if get("mode") in ("simple", "advanced") else "simple",
            "created": current.get("created") or time.time()}
     words = out["custom_subtype"] if subtype == CUSTOM else subtype
     out["prompt_edited"] = bool(get("prompt_edited", False))
@@ -151,6 +228,13 @@ def _project(incoming, current, new_id):
     ex = get("extraction") if isinstance(get("extraction"), dict) else {}
     regions = [r for r in (_region(r) for r in ex.get("regions", []) if isinstance(r, dict)) if r][:MAX_REGIONS] if isinstance(ex.get("regions"), list) else []
     out["extraction"] = {"source": _text(ex.get("source"), 300), "regions": regions}
+    listed = get("rows") if isinstance(get("rows"), list) else []
+    was = {r["id"]: r for r in current.get("rows", []) if isinstance(r, dict) and r.get("id")}
+    known = {r.get("id") for r in listed if isinstance(r, dict)}
+    plain = out["name"] if out["name"] != "Untitled reference" else ""
+    rows = [r for r in (_row(r, was.get(r.get("id")) or {}, kind, plain, known) for r in listed[:MAX_ROWS] if isinstance(r, dict)) if r]
+    out["rows"] = list({r["id"]: r for r in rows}.values())
+    _uncycle(out["rows"])
     return out
 
 
@@ -181,6 +265,125 @@ def find(state, rid):
     return p
 
 
+def candidates(state, row_id, direction):
+    """A view slot's pictures, oldest first. `direction` None gives the row's complete-row pictures."""
+    role = "view" if direction else "row"
+    return sorted((a for a in state["artifacts"] if a["role"] == role and a.get("row") == row_id and (not direction or a.get("direction") == direction)),
+                  key=lambda a: a["created"])
+
+
+def chosen(state, row, direction):
+    """The picture a slot uses: the one the person selected, otherwise the first one made for it. None if it is empty."""
+    made = candidates(state, row["id"], direction)
+    want = row["slots"][direction]["selected"] if direction else row["selected"]
+    return next((a for a in made if a["id"] == want), made[0] if made else None)
+
+
+def find_row(p, row_id):
+    row = next((r for r in p["rows"] if r["id"] == row_id), None)
+    if not row:
+        raise ValueError("That row is no longer there.")
+    return row
+
+
+def targets(state, row, what):
+    """Which views a request would generate (design 5.3). `what`: "row" = every enabled, unlocked view;
+    "missing" = enabled views that have no picture yet; or one direction. -> {"make": [...], "locked": [...], "disabled": [...]}"""
+    asked = list(DIRECTIONS) if what in ("row", "missing") else [what] if what in DIRECTIONS else []
+    out = {"make": [], "locked": [], "disabled": []}
+    for d in asked:
+        sl = row["slots"][d]
+        if not sl["enabled"]:
+            out["disabled"].append(d)
+        elif row["locked"] or (sl["locked"] and chosen(state, row, d)):
+            out["locked"].append(d)
+        elif what != "missing" or not chosen(state, row, d):
+            out["make"].append(d)
+    return out
+
+
+def conditioning(state, p, row, direction):
+    """The pictures sent to the image model for one view, in order, and the ones left out because it takes only so many
+    (design 10: say which are used). First the row's own sources, then this row's locked views, then its other chosen
+    views, so a new view is drawn to match the ones already there.
+    -> {"used": [{"image", "what"}], "unused": [...], "unavailable": [what...]}"""
+    listed, missing = [], []
+    for n, src in enumerate(row["sources"], 1):
+        if "image" in src:
+            listed.append({"image": src["image"], "what": f"source {n}"})
+            continue
+        other = next((r for r in p["rows"] if r["id"] == src["row"]), None)
+        got = chosen(state, other, src["direction"]) if other else None
+        name = f"source {n} (the {src['direction']} view of {(other['label'] or other['role'] or 'another row') if other else 'a row that was removed'})"
+        (listed.append({"image": got["image"], "what": name}) if got else missing.append(name))
+    mine = [(d, chosen(state, row, d)) for d in DIRECTIONS if d != direction and row["slots"][d]["enabled"]]
+    for locked in (True, False):
+        for d, a in mine:
+            if a and bool(row["slots"][d]["locked"] or row["locked"]) == locked:
+                listed.append({"image": a["image"], "what": f"this row's {'locked ' if locked else ''}{d} view"})
+    seen, unique = set(), []
+    for x in listed:
+        if x["image"] not in seen:
+            seen.add(x["image"])
+            unique.append(x)
+    return {"used": unique[:PROVIDER["inputs"]], "unused": unique[PROVIDER["inputs"]:], "unavailable": missing}
+
+
+def plan_views(project, rid, row_id, what):
+    """What to queue for a row's views. Raises ValueError with the reason if it cannot run.
+    -> [{"direction", "prompt", "sources", "used", "unused", "width", "height", "count"}]"""
+    state = project["reference"]
+    p = find(state, rid)
+    row = find_row(p, row_id)
+    aim = targets(state, row, what)
+    if not aim["make"]:
+        raise ValueError("The row is locked." if row["locked"] else "There is nothing to generate: " + (
+            "every enabled view already has a picture." if what == "missing" and not aim["locked"] else "the views asked for are locked or switched off."))
+    if not row["prompt"].strip():
+        raise ValueError("Write a prompt for the row first.")
+    why = supported(row["profile"], row["aspect"])
+    if why:
+        raise ValueError(why)
+    w, h = size(row["profile"], row["aspect"])
+    out = []
+    for d in aim["make"]:
+        c = conditioning(state, p, row, d)
+        prompt = row["prompt"].strip() + " " + DIRECTION_WORDS[d]
+        if c["used"]:
+            prompt += " The subject is the one shown in the reference image" + ("s" if len(c["used"]) > 1 else "") + ": keep its identity, proportions, colours and materials exactly."
+        out.append({"direction": d, "prompt": prompt, "sources": [x["image"] for x in c["used"]], "used": c["used"], "unused": c["unused"], "unavailable": c["unavailable"],
+                    "width": w, "height": h, "count": row["count"]})
+    return out
+
+
+def place(project, rid, row_id, direction, image, new_id, now=None):
+    """Put an existing picture (an upload, or one from the Library) into a view slot, or into the row as its complete-row
+    picture when `direction` is None. No file is copied: the new record points at the same picture. A picture that is
+    still pending elsewhere stays pending here with the same expiry; anything else the person supplied is kept.
+    -> the new artifact"""
+    now = now or time.time()
+    state = project["reference"]
+    p = find(state, rid)
+    row = find_row(p, row_id)
+    if not isinstance(image, str) or not image.strip():
+        raise ValueError("Choose a picture first.")
+    if direction is not None and direction not in DIRECTIONS:
+        raise ValueError("Unknown view.")
+    if row["locked"] or (direction and row["slots"][direction]["locked"] and chosen(state, row, direction)):
+        raise ValueError("That view is locked. Unlock it to replace its picture.")
+    same = next((a for a in state["artifacts"] if a["image"] == image), None)
+    art = {"id": new_id(), "project": rid, "role": "view" if direction else "row", "image": image[:300], "row": row_id, "direction": direction or "",
+           "state": same["state"] if same else "approved", "created": now, "expires": same["expires"] if same else now + RETENTION,
+           "width": same.get("width") if same else None, "height": same.get("height") if same else None, "upscaled": False, "requires": [], "origin": "uploaded",
+           "component": row["role"], "type": row["type"] or p["type"], "subtype": row["subtype"] if row["type"] else p["subtype"]}
+    state["artifacts"].append(art)
+    if direction:
+        row["slots"][direction].update(selected=art["id"], at=art["id"])        # an upload is put there to be used
+    else:
+        row.update(selected=art["id"], at=art["id"])
+    return art
+
+
 def sync(project, now=None):
     """Bring the artifact list in step with the pictures: record newly finished sheets as pending, and delete the ones
     whose ten days have run out. -> (state, the picture names whose records were deleted). Changes `project` in place."""
@@ -193,10 +396,13 @@ def sync(project, now=None):
             continue
         j = jobs.get(g["id"], {})
         made = g.get("created") or now
-        state["artifacts"].append({"id": g["id"], "project": g["slot"], "role": "sheet", "image": g["image"], "state": "pending",
-                                   "created": made, "expires": made + RETENTION, "width": j.get("width"), "height": j.get("height"), "upscaled": False,
-                                   "requires": [], "prompt": j.get("ref_prompt", ""), "seed": g.get("seed"), "sources": list(j.get("ref_sources") or []),
-                                   "provider": j.get("provider", PROVIDER["name"])})
+        art = {"id": g["id"], "project": g["slot"], "role": "sheet", "image": g["image"], "state": "pending",
+               "created": made, "expires": made + RETENTION, "width": j.get("width"), "height": j.get("height"), "upscaled": False, "origin": "generated",
+               "requires": [], "prompt": j.get("ref_prompt", ""), "seed": g.get("seed"), "sources": list(j.get("ref_sources") or []),
+               "provider": j.get("provider", PROVIDER["name"])}
+        if j.get("row"):                                         # one view of an Advanced row
+            art.update(role="view", row=j["row"], direction=j.get("direction", ""), component=j.get("component", ""), type=j.get("type", ""), subtype=j.get("subtype", ""))
+        state["artifacts"].append(art)
     project["reference"] = state
     expired = [a["id"] for a in state["artifacts"] if a["state"] == "pending" and a["expires"] <= now and not in_use(project, a)]
     return state, delete(project, expired)
@@ -232,10 +438,16 @@ def delete(project, ids):
     project["generated"] = [g for g in project.get("generated", []) if not (g.get("kind") == "ref" and g.get("id") in ids)]
     project["image_jobs"] = [j for j in project.get("image_jobs", []) if not (j.get("kind") == "ref" and j.get("id") in ids)]
     for p in state["projects"]:
-        for key in ("at", "selected"):
-            if p[key] in ids:
-                p[key] = None
-    return [a["image"] for a in gone]
+        for holder in [p] + p["rows"] + [sl for r in p["rows"] for sl in r["slots"].values()]:
+            for key in ("at", "selected"):
+                if holder[key] in ids:
+                    holder[key] = None
+    for r in (r for p in state["projects"] for r in p["rows"]):
+        for d in DIRECTIONS:                                     # an emptied slot is no longer locked: there is nothing left to protect
+            if r["slots"][d]["locked"] and not candidates(state, r["id"], d):
+                r["slots"][d]["locked"] = False
+    kept = {a["image"] for a in state["artifacts"]}              # a file another record still points at is not given up
+    return list(dict.fromkeys(a["image"] for a in gone if a["image"] not in kept))
 
 
 def approve(project, ids, confirmed=False):
@@ -290,7 +502,7 @@ def view(project, now=None):
     jobs = {}
     for j in project.get("image_jobs", []):
         if j.get("kind") == "ref" and j.get("status") != "done":
-            jobs.setdefault(j.get("slot"), []).append({"id": j["id"], "status": j.get("status"), "error": j.get("error", "")})
+            jobs.setdefault(j.get("slot"), []).append({"id": j["id"], "status": j.get("status"), "error": j.get("error", ""), "row": j.get("row"), "direction": j.get("direction")})
     # Days are rounded up, so a picture made a moment ago reads "10 days", and the last day reads in hours.
     arts = [dict(a, days_left=max(0, -int(-(a["expires"] - now) // 86400)) if a["state"] == "pending" else None,
                  hours_left=max(0, int((a["expires"] - now) // 3600)) if a["state"] == "pending" else None)
@@ -299,5 +511,6 @@ def view(project, now=None):
             "registry": [{"key": p, "label": pl, "types": [{"key": t, "label": tl, "subtypes": list(s) + [CUSTOM]} for t, tl, s in kinds]} for p, pl, kinds in REGISTRY],
             "profiles": [{"profile": pr, "sizes": {a: {"size": list(size(pr, a)), "blocked": supported(pr, a)} for a, _, _ in ASPECTS}} for pr in PROFILES],
             "aspects": [a for a, _, _ in ASPECTS], "directions": list(DIRECTIONS), "sections": list(SECTIONS),
-            "limits": {"sources": MAX_SOURCES, "count": MAX_COUNT, "regions": MAX_REGIONS, "retention_days": RETENTION // 86400},
+            "limits": {"sources": MAX_SOURCES, "count": MAX_COUNT, "regions": MAX_REGIONS, "retention_days": RETENTION // 86400, "rows": MAX_ROWS, "row_sources": ROW_SOURCES},
+            "roles": list(ROLES), "direction_words": dict(DIRECTION_WORDS),
             "prompt_limit": dict(PROMPT_LIMIT), "provider": dict(PROVIDER)}

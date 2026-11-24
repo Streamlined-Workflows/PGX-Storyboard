@@ -3,6 +3,8 @@
  *
  * Two workflows, each started by the person and never by the other:
  *   Sheet Generation   Simple mode: a classification, up to four source pictures, a prompt, and 1 to 10 complete sheets.
+ *                      Advanced mode: rows (a complete asset, base anatomy, one component...), each with up to six source
+ *                      pictures and six view slots that are generated, uploaded, locked or switched off one by one.
  *   Sheet Extraction   choose a sheet, mark regions on it (by hand, or with Detect regions), and cut them out as pictures.
  * Every picture made here is pending until approved or denied, and a pending one is deleted ten days after it was made.
  *
@@ -129,7 +131,7 @@ window.ReferenceGeneration = (function () {
     box.querySelector('.rg-open').onchange = ev => { S().open = ev.target.value; chosen = null; keep(); draw(); };
     box.querySelector('.rg-new').onclick = () => {
       const id = 'rp' + Math.random().toString(16).slice(2, 12).padEnd(10, '0');
-      S().projects.push({ id, name: 'New reference', type: 'humanoid' }); S().open = id; flush();
+      S().projects.push({ id, name: 'New reference', type: 'humanoid', rows: [] }); S().open = id; flush();
       call('POST', '/save', { project: host.pid, state: S() }).then(out => take(out, true)).catch(e => host.toast(e.message));
     };
     if (!p) return box;
@@ -162,14 +164,163 @@ window.ReferenceGeneration = (function () {
     return add;
   }
 
-  /* ---------- Sheet Generation (Simple mode) ---------- */
-  function generation() {
+  /* ---------- Sheet Generation ---------- */
+  const newId = lead => lead + Math.random().toString(16).slice(2, 12).padEnd(10, '0');
+  const saveNow = () => { flush(); return call('POST', '/save', { project: host.pid, state: S() }).then(out => take(out, true)).catch(e => host.toast(e.message)); };
+  /* Simple or Advanced. Both keep what they hold, so switching back and forth loses nothing. The first switch to Advanced is the
+   * conversion: a first row is made from what Simple mode has (its sources and its selected sheet), and nothing is extracted. */
+  function modeBar() {
+    const p = P(), bar = el(`<div class="rg-modes"><span class="ag-label">Mode</span><button class="small" data-mode="simple" type="button">Simple</button><button class="small" data-mode="advanced" type="button">Advanced</button>
+      <span class="hint">${p.mode === 'advanced' ? 'Advanced builds the reference one row and one view at a time.' : `Simple makes a complete sheet in one go from up to ${data.limits.sources} source pictures.`}</span></div>`);
+    bar.querySelectorAll('[data-mode]').forEach(b => { b.classList.toggle('on', b.dataset.mode === p.mode); b.setAttribute('aria-pressed', b.dataset.mode === p.mode);
+      b.onclick = () => {
+        if (p.mode === b.dataset.mode) return; p.mode = b.dataset.mode;
+        if (p.mode === 'advanced' && !p.rows.length) { const sheet = data.artifacts.find(a => a.id === p.selected);
+          p.rows.push({ id: newId('rw'), section: 'base', label: 'Complete ' + (typeOf(p.type).label.toLowerCase()), role: 'Complete asset', sources: [...p.sources, ...(sheet ? [sheet.image] : [])].slice(0, data.limits.row_sources).map(image => ({ image })) }); }
+        saveNow();
+      }; });
+    return bar;
+  }
+  const generation = () => P().mode === 'advanced' ? advanced() : simple();
+
+  /* ----- Advanced mode: rows and views ----- */
+  const cands = (row, d) => data.artifacts.filter(a => a.row === row.id && a.role === (d ? 'view' : 'row') && (!d || a.direction === d));
+  const chosenOf = (row, d) => { const made = cands(row, d), want = d ? row.slots[d].selected : row.selected; return made.find(a => a.id === want) || made[0] || null; };
+  const slotBusy = (row, d) => (data.jobs[P().id] || []).filter(j => j.row === row.id && (!d || j.direction === d) && (j.status === 'queued' || j.status === 'running')).length;
+  const listed = a => a.length > 1 ? a.slice(0, -1).join(', ') + ' and ' + a[a.length - 1] : a[0] || '';
+  /* Ask the server what a request would do, show it, and queue it only on yes (design 5.3: say which views are targeted first). */
+  async function runViews(row, what, button) {
+    const p = P(); if (button) button.disabled = true; flush();
+    try {
+      const pre = await call('POST', '/views', { project: host.pid, reference: p.id, row: row.id, what, state: S(), preview: true });
+      const plan = pre.plan, sk = pre.skipped, total = plan.reduce((n, v) => n + v.count, 0), unused = plan.some(v => v.unused.length || v.unavailable.length);
+      if (what === 'row' || what === 'missing' || unused) {
+        const sent = v => v.used.length ? 'sent ' + listed(v.used.map(x => x.what)) : 'no reference pictures sent';
+        const same = plan.every(v => JSON.stringify([v.used, v.unused, v.unavailable]) === JSON.stringify([plan[0].used, plan[0].unused, plan[0].unavailable]));
+        const refs = (same ? [plan[0]] : plan).map(v => `<li>${same ? '' : '<b>' + cap(v.direction) + ':</b> '}${esc(cap(sent(v)))}.${v.unused.length ? ` <span class="rg-warn">Not sent, because the image model takes ${data.provider.inputs} pictures: ${esc(listed(v.unused.map(x => x.what)))}.</span>` : ''}${v.unavailable.length ? ` <span class="rg-warn">Not available: ${esc(listed(v.unavailable))}.</span>` : ''}</li>`).join('');
+        const go = await dialog(what === 'missing' ? 'Generate Missing Views' : what === 'row' ? 'Generate Row' : 'Generate ' + cap(what) + ' View',
+          `<p>This makes <b>${plan[0].count}</b> candidate${plan[0].count > 1 ? 's' : ''} for ${plan.length > 1 ? 'each of ' : ''}<b>${esc(listed(plan.map(v => cap(v.direction))))}</b>: ${total} picture${total > 1 ? 's' : ''} at ${plan[0].width} × ${plan[0].height}. Pictures already there are kept, and the ones in use stay in use.</p>
+           ${sk.locked.length || sk.disabled.length ? `<p class="hint">Left alone: ${[sk.locked.length ? esc(listed(sk.locked.map(cap))) + ' (locked)' : '', sk.disabled.length ? esc(listed(sk.disabled.map(cap))) + ' (switched off)' : ''].filter(Boolean).join('; ')}.</p>` : ''}<ul class="rg-plan">${refs}</ul>`,
+          [['Cancel', null], ['Generate', 'yes', true]]);
+        if (!go) { take(pre, true); return; }
+      }
+      plan.forEach(v => { batch[row.id + v.direction] = { asked: v.count, had: cands(row, v.direction).length }; });
+      take(await call('POST', '/views', { project: host.pid, reference: p.id, row: row.id, what }), true);
+    } catch (e) { host.toast(e.message); draw(); }
+  }
+  async function placeIn(row, d, image) {
+    try { flush(); take(await call('POST', '/place', { project: host.pid, reference: P().id, row: row.id, direction: d, image, state: S() }), true); } catch (e) { host.toast(e.message); draw(); }
+  }
+  function slotCard(row, d) {
+    const sl = row.slots[d], list = cands(row, d), use = chosenOf(row, d), shown = list.find(a => a.id === sl.at) || use, n = shown ? list.indexOf(shown) : -1;
+    const locked = row.locked || (sl.locked && !!use), working = slotBusy(row, d), b = batch[row.id + d], done = b ? Math.min(b.asked, list.length - b.had) : 0;
+    if (!working) delete batch[row.id + d];
+    const failed = (data.jobs[P().id] || []).find(j => j.row === row.id && j.direction === d && j.status === 'error');
+    const card = el(`<div class="rg-slot${sl.enabled ? '' : ' rg-off'}${locked ? ' rg-locked' : ''}" data-dir="${d}">
+      <div class="rg-slothead"><b>${cap(d)}</b><label title="Switched-off views are left out of generation and assembly"><input type="checkbox" data-k="en-${row.id}-${d}" class="rg-enable"${sl.enabled ? ' checked' : ''}${row.locked ? ' disabled' : ''}> Use</label>
+        <span class="ag-grow"></span><button class="small rg-lock${sl.locked && use ? ' on' : ''}" type="button" aria-pressed="${!!(sl.locked && use)}"${use && !row.locked ? '' : ' disabled'} title="${use ? 'A locked view keeps its picture: generating and uploading leave it alone.' : 'Only a view with a picture can be locked.'}">${sl.locked && use ? 'Locked' : 'Lock'}</button></div>
+      <div class="rg-slotpic">${shown ? `<img alt="${cap(d)} view" loading="lazy" src="${esc(host.view(shown.image))}">` : `<span class="hint">${working ? (b ? `Generating ${done}/${b.asked}` : 'Generating…') : sl.enabled ? 'Empty' : 'Switched off'}</span>`}</div>
+      ${shown ? `<div class="rg-slotnav"><button class="small rg-sprev" type="button" aria-label="Previous candidate"${n > 0 ? '' : ' disabled'}>‹</button><span class="hint">${n + 1} of ${list.length}</span><button class="small rg-snext" type="button" aria-label="Next candidate"${n < list.length - 1 ? '' : ' disabled'}>›</button>
+        ${shown === use ? '<span class="pill rg-selected">In use</span>' : `<button class="small rg-use" type="button"${locked ? ' disabled title="Unlock the view to change its picture"' : ''}>Use this one</button>`}</div><div>${pill(shown)}</div>` : ''}
+      ${working && shown ? `<div class="hint">${b ? `Generating an additional ${b.asked - done}` : 'Generating…'}</div>` : ''}${failed ? `<div class="rg-warn">${esc(failed.error || 'A picture failed.')}</div>` : ''}
+      <div class="rg-slotbtns"></div></div>`);
+    card.querySelector('.rg-enable').onchange = ev => { sl.enabled = ev.target.checked; keep(); draw(); };
+    card.querySelector('.rg-lock').onclick = () => { sl.locked = !(sl.locked && use); if (sl.locked) sl.selected = use.id; keep(); draw(); };
+    const btns = card.querySelector('.rg-slotbtns');
+    if (shown) {
+      card.querySelector('img').onclick = () => host.openViewer(host.view(shown.image));
+      card.querySelector('.rg-sprev').onclick = () => { sl.at = list[n - 1].id; keep(); draw(); }; card.querySelector('.rg-snext').onclick = () => { sl.at = list[n + 1].id; keep(); draw(); };
+      const pick = card.querySelector('.rg-use'); if (pick) pick.onclick = () => { sl.selected = shown.id; keep(); draw(); };
+    }
+    if (sl.enabled && !locked) {
+      const gen = el(`<button class="small rg-genview" type="button">${use ? 'Regenerate' : 'Generate'}</button>`); gen.onclick = () => runViews(row, d, gen);
+      btns.append(gen, source('Upload', image => placeIn(row, d, image), []));
+    }
+    if (shown) btns.append(actions(shown, `${stem()}-${(row.label || row.role || 'row').toLowerCase().replace(/[^a-z0-9]+/g, '-')}-${d}-${n + 1}.png`));
+    return card;
+  }
+  function rowCard(row, index) {
+    const p = P(), real = row.type || p.type, dims = data.profiles.find(x => x.profile === row.profile).sizes[row.aspect], whole = cands(row, null), wholeUse = chosenOf(row, null);
+    const any = data.directions.some(d => chosenOf(row, d)), working = slotBusy(row, null);
+    const reaches = (from, to, seen = []) => { const r = p.rows.find(x => x.id === from); return !!r && r.sources.some(s => s.row === to || (s.row && !seen.includes(s.row) && reaches(s.row, to, [...seen, from]))); };
+    const others = p.rows.filter(o => o.id !== row.id && !reaches(o.id, row.id)).flatMap(o => data.directions.filter(d => chosenOf(o, d)).map(d => ({ row: o.id, direction: d, text: `${o.label || o.role || 'Row'} · ${cap(d)}` })));
+    const card = el(`<section class="rg-rowcard${row.locked ? ' rg-rowlocked' : ''}" data-row="${row.id}">
+      <div class="rg-fields rg-rowhead"><span class="rg-move"><button class="small ghost rg-up" type="button" aria-label="Move the row up"${index ? '' : ' disabled'}>▲</button><button class="small ghost rg-down" type="button" aria-label="Move the row down"${index < p.rows.length - 1 ? '' : ' disabled'}>▼</button></span>
+        <label class="ag-label">Section<select data-k="rs-${row.id}" class="rg-rsection">${data.sections.map(x => `<option value="${x}"${x === row.section ? ' selected' : ''}>${cap(x)}</option>`).join('')}</select></label>
+        <label class="ag-label">Row name<input data-k="rl-${row.id}" class="rg-rlabel" type="text" maxlength="60" value="${esc(row.label)}" placeholder="for example: Pirate hat"></label>
+        <label class="ag-label">Component role<input data-k="rr-${row.id}" class="rg-rrole" type="text" maxlength="40" list="rg-roles" value="${esc(row.role)}" placeholder="for example: Headwear"></label>
+        <label class="ag-label">Classification<select data-k="rt-${row.id}" class="rg-rtype"><option value="">Same as the project (${esc(typeOf(p.type).label)})</option>${data.registry.flatMap(g => g.types).map(t => `<option value="${t.key}"${t.key === row.type ? ' selected' : ''}>${esc(t.label)}</option>`).join('')}</select></label>
+        ${row.type ? `<label class="ag-label">Subtype<select data-k="rb-${row.id}" class="rg-rsub"><option value="">None</option>${typeOf(row.type).subtypes.filter(x => x !== 'Custom').map(x => `<option${x === row.subtype ? ' selected' : ''}>${esc(x)}</option>`).join('')}</select></label>` : ''}
+        <span class="ag-grow"></span><button class="small rg-rowlock${row.locked ? ' on' : ''}" type="button" aria-pressed="${row.locked}" title="A locked row and all its views are left alone by generation and uploads.">${row.locked ? 'Row locked' : 'Lock row'}</button><button class="small ghost rg-rowdel" type="button">Remove row</button></div>
+      <div class="ag-label">Source pictures (up to ${data.limits.row_sources}) <span class="hint">The image model takes ${data.provider.inputs} pictures at a time; before each run you are told which are sent.</span></div><div class="rg-sources"></div>
+      <label class="ag-label">Row prompt<span class="ag-promptwrap"><textarea data-k="rp-${row.id}" class="rg-prompt rg-rprompt" rows="3"${row.locked ? ' readonly' : ''}>${esc(row.prompt)}</textarea><span class="ag-chars"></span></span></label>
+      <div class="hint">${row.prompt_edited ? 'This is your own prompt. <button class="small ghost rg-recommend" type="button">Use the recommended prompt</button>' : `Recommended for this ${esc(typeOf(real).label.toLowerCase())} row.`} Each view adds its own sentence, for example “${esc(data.direction_words.left)}”</div>
+      <div class="ag-run"><label>Resolution<select data-k="rf-${row.id}" class="rg-rprofile">${data.profiles.map(x => `<option value="${x.profile}"${x.profile === row.profile ? ' selected' : ''}>${x.profile}</option>`).join('')}</select></label>
+        <label>Shape<select data-k="ra-${row.id}" class="rg-raspect">${data.aspects.map(a => `<option${a === row.aspect ? ' selected' : ''}>${a}</option>`).join('')}</select></label>
+        <label>Candidates<input data-k="rc-${row.id}" class="ag-n rg-rcount" type="number" min="1" max="${data.limits.count}" step="1" value="${row.count}"></label>
+        <button class="primary rg-genrow" type="button"${dims.blocked || row.locked ? ' disabled' : ''}>${any ? 'Regenerate Row' : 'Generate Row'}</button>
+        <button class="rg-genmissing" type="button"${dims.blocked || row.locked ? ' disabled' : ''}>Generate Missing Views</button><span class="rg-wholeadd"></span>
+        <span class="hint">Each view is ${dims.size[0]} × ${dims.size[1]} pixels.${working ? ` ${working} picture${working > 1 ? 's' : ''} in progress.` : ''}</span></div>
+      ${dims.blocked ? `<div class="rg-blocked">${esc(dims.blocked)}</div>` : ''}
+      <div class="rg-slots"></div>
+      ${whole.length ? `<div class="ag-label">Complete row picture <span class="hint">Kept whole for assembly. It is not split into views; use Sheet Extraction for that.</span></div><div class="rg-wholes"></div>` : ''}</section>`);
+    const set = (sel, key, after) => { const f = card.querySelector(sel); if (!f) return; f[f.tagName === 'SELECT' ? 'onchange' : 'oninput'] = () => { row[key] = f.type === 'number' ? +f.value : f.value; keep(); if (f.tagName === 'SELECT') (after || draw)(); }; if (f.tagName !== 'SELECT') f.onchange = after || draw; };
+    set('.rg-rsection', 'section', saveNow); set('.rg-rlabel', 'label', saveNow); set('.rg-rrole', 'role', saveNow); set('.rg-rsub', 'subtype');
+    card.querySelector('.rg-rtype').onchange = ev => { row.type = ev.target.value; row.subtype = ''; saveNow(); };
+    card.querySelector('.rg-rprofile').onchange = ev => { row.profile = +ev.target.value; keep(); draw(); }; card.querySelector('.rg-raspect').onchange = ev => { row.aspect = ev.target.value; keep(); draw(); };
+    card.querySelector('.rg-rcount').onchange = ev => { row.count = Math.max(1, Math.min(data.limits.count, Math.round(+ev.target.value) || 1)); keep(); draw(); };
+    card.querySelector('.rg-up').onclick = () => { p.rows.splice(index - 1, 0, p.rows.splice(index, 1)[0]); keep(); draw(); };
+    card.querySelector('.rg-down').onclick = () => { p.rows.splice(index + 1, 0, p.rows.splice(index, 1)[0]); keep(); draw(); };
+    card.querySelector('.rg-rowlock').onclick = () => { row.locked = !row.locked; if (row.locked) data.directions.forEach(d => { const a = chosenOf(row, d); if (a) row.slots[d].selected = a.id; }); keep(); draw(); };
+    card.querySelector('.rg-rowdel').onclick = async () => {
+      const mine = data.artifacts.filter(a => a.row === row.id);
+      if (!await dialog('Remove this row?', `<p><b>${esc(row.label || row.role || 'This row')}</b> is removed${mine.length ? `, together with its ${mine.length} picture${mine.length > 1 ? 's' : ''}, approved ones included` : ''}. Other rows are not touched. This cannot be undone.</p>`, [['Cancel', null], ['Remove', 'yes', true]])) return;
+      try { flush(); if (mine.length) await call('POST', '/decide', { project: host.pid, ids: mine.map(a => a.id), action: 'deny' }); p.rows = p.rows.filter(x => x.id !== row.id); await saveNow(); } catch (e) { host.toast(e.message); }
+    };
+    const src = card.querySelector('.rg-sources');
+    row.sources.forEach((s0, k) => {
+      const other = s0.row && p.rows.find(x => x.id === s0.row), got = s0.image ? { image: s0.image } : other && chosenOf(other, s0.direction);
+      const c = el(`<div class="ag-ref${got ? '' : ' rg-missing'}" title="${s0.row ? esc(`The ${s0.direction} view in use in “${other ? other.label || other.role || 'another row' : 'a removed row'}”. It follows that row: nothing is copied.`) : ''}">${got ? `<img alt="Source ${k + 1}" src="${esc(host.view(got.image))}">` : '<span class="hint">Not available</span>'}${row.locked ? '' : `<button class="ag-x" type="button" aria-label="Remove source ${k + 1}">×</button>`}<span class="ag-num">${k + 1}${s0.row ? ' ↗' : ''}</span></div>`);
+      if (got) c.querySelector('img').onclick = () => host.openViewer(host.view(got.image));
+      const x = c.querySelector('.ag-x'); if (x) x.onclick = () => { row.sources.splice(k, 1); keep(); draw(); }; src.append(c);
+    });
+    if (row.sources.length < data.limits.row_sources && !row.locked) {
+      src.append(source('+ Add a source picture', image => { if (!row.sources.some(x => x.image === image)) row.sources.push({ image }); keep(); draw(); }, row.sources.map(x => x.image).filter(Boolean)));
+      if (others.length) { const from = el(`<select class="rg-inherit" aria-label="Use a view from another row"><option value="">From another row…</option>${others.map((o, k) => `<option value="${k}">${esc(o.text)}</option>`).join('')}</select>`);
+        from.onchange = () => { const o = others[+from.value]; if (o && !row.sources.some(x => x.row === o.row && x.direction === o.direction)) row.sources.push({ row: o.row, direction: o.direction }); keep(); draw(); }; src.append(from); }
+    }
+    const area = card.querySelector('.rg-rprompt'), count = card.querySelector('.ag-chars');
+    const show = () => { const len = area.value.length, lim = data.prompt_limit.characters; count.textContent = len.toLocaleString() + ' / ' + lim.toLocaleString(); count.className = 'ag-chars' + (len > lim ? ' ag-over' : len > lim * 0.9 ? ' ag-near' : ''); fit(area); };
+    area.oninput = () => { row.prompt = area.value; row.prompt_edited = true; keep(); show(); }; area.onchange = () => draw(); show(); requestAnimationFrame(show);
+    const rec = card.querySelector('.rg-recommend'); if (rec) rec.onclick = () => { row.prompt_edited = false; saveNow(); };
+    card.querySelector('.rg-genrow').onclick = ev => runViews(row, 'row', ev.target); card.querySelector('.rg-genmissing').onclick = ev => runViews(row, 'missing', ev.target);
+    if (!row.locked) card.querySelector('.rg-wholeadd').append(source('Upload complete row', image => placeIn(row, '', image), []));
+    const slots = card.querySelector('.rg-slots'); data.directions.forEach(d => slots.append(slotCard(row, d)));
+    const wholes = card.querySelector('.rg-wholes');
+    if (wholes) whole.forEach((a, k) => { const c = el(`<div class="rg-view"><img alt="Complete row picture ${k + 1}" loading="lazy" src="${esc(host.view(a.image))}">${pill(a)}${a === wholeUse ? '<span class="pill rg-selected">In use</span>' : '<button class="small rg-usewhole" type="button">Use this one</button>'}</div>`);
+      c.querySelector('img').onclick = () => host.openViewer(host.view(a.image)); const u = c.querySelector('.rg-usewhole'); if (u) u.onclick = () => { row.selected = a.id; keep(); draw(); };
+      c.append(actions(a, `${stem()}-row-${index + 1}-${k + 1}.png`)); wholes.append(c); });
+    return card;
+  }
+  function advanced() {
+    const p = P(), box = el(`<section class="panel rg-gen rg-adv"><datalist id="rg-roles">${data.roles.map(r => `<option value="${esc(r)}">`).join('')}</datalist>
+      <p class="hint">A row is one thing to document: the complete asset, its base anatomy, or one component such as a hat or a coat. Each row has its own sources, prompt and up to six views. Generating or changing one row or view never touches another. Assembling the rows into one sheet, and specification panels, are the next step to be built.</p>
+      <div class="rg-rows"></div><div class="rg-fields"><button class="rg-addbase" type="button">Add a Base row</button><button class="rg-adddetail" type="button">Add a Detail row</button><span class="hint">${p.rows.length} of ${data.limits.rows} rows</span></div></section>`);
+    box.prepend(modeBar());
+    const rows = box.querySelector('.rg-rows');
+    ['base', 'detail'].forEach(section => { const mine = p.rows.filter(r => r.section === section); if (mine.length) rows.append(el(`<h2>${cap(section)} <span class="hint">${mine.length}</span></h2>`)); mine.forEach(r => rows.append(rowCard(r, p.rows.indexOf(r)))); });
+    if (!p.rows.length) rows.append(el('<p class="hint">No rows yet.</p>'));
+    const add = section => () => { if (p.rows.length >= data.limits.rows) return; p.rows.push({ id: newId('rw'), section, label: '', role: section === 'base' ? 'Complete asset' : 'Component' }); saveNow(); };
+    box.querySelector('.rg-addbase').onclick = add('base'); box.querySelector('.rg-adddetail').onclick = add('detail');
+    return box;
+  }
+
+  /* ----- Simple mode ----- */
+  function simple() {
     const p = P(), list = arts('sheet'), i = Math.max(0, list.findIndex(a => a.id === p.at)), cur = list.length ? (list.some(a => a.id === p.at) ? list[i] : list[list.length - 1]) : null, n = cur ? list.indexOf(cur) : -1;
     const dims = data.profiles.find(x => x.profile === p.profile).sizes[p.aspect], working = busy(p.id), failed = (data.jobs[p.id] || []).filter(j => j.status === 'error');
     const b = batch[p.id], doneNow = b ? Math.min(b.asked, list.length - b.had) : 0;
     const box = el(`<section class="panel rg-gen">
-      <div class="rg-modes"><span class="ag-label">Mode</span><button class="small on" type="button" aria-pressed="true">Simple</button><button class="small" type="button" disabled title="Rows, individual views, locks and assembly. Not built yet.">Advanced <span class="pill">later</span></button>
-        <span class="hint">Simple makes a complete sheet in one go from up to ${data.limits.sources} source pictures.</span></div>
       <div class="ag-label">Source pictures (up to ${data.limits.sources}) <span class="hint">All of them are sent to the image model as the subject to keep.</span></div>
       <div class="rg-sources"></div>
       <label class="ag-label">Prompt<span class="ag-promptwrap"><textarea data-k="rg-prompt" class="rg-prompt" rows="5">${esc(p.prompt)}</textarea><span class="ag-chars"></span></span></label>
@@ -187,6 +338,7 @@ window.ReferenceGeneration = (function () {
       <div class="ag-under rg-under"><span class="hint">${cur ? (n + 1) + ' of ' + list.length : ''}</span>${cur ? pill(cur) : ''}${cur && p.selected === cur.id ? '<span class="pill rg-selected">Selected sheet</span>' : ''}
         <span class="hint rg-status">${working ? (cur && b ? `Generating an additional ${b.asked - doneNow} sheet${b.asked - doneNow === 1 ? '' : 's'}` : cur ? 'Generating…' : '') : ''}${failed.length ? ' ' + esc(failed[0].error || 'A sheet failed.') : ''}</span><span class="ag-grow"></span></div>
       ${cur ? `<div class="hint rg-meta">${cur.width && cur.height ? `${cur.width} × ${cur.height} pixels, not upscaled. ` : ''}${cur.sources ? `Made from ${cur.sources.length} source picture${cur.sources.length === 1 ? '' : 's'}${cur.sources.length ? ', all of them used' : ''}. ` : ''}Selecting, downloading or extracting from a pending sheet does not approve it or give it more time.</div>` : ''}</section>`);
+    box.prepend(modeBar());
     const src = box.querySelector('.rg-sources');
     p.sources.forEach((image, k) => { const c = el(`<div class="ag-ref"><img alt="Source ${k + 1}" src="${esc(host.view(image))}"><button class="ag-x" type="button" aria-label="Remove source ${k + 1}">×</button><span class="ag-num">${k + 1}</span></div>`);
       c.querySelector('img').onclick = () => host.openViewer(host.view(image)); c.querySelector('.ag-x').onclick = () => { p.sources.splice(k, 1); keep(); draw(); }; src.append(c); });
@@ -242,7 +394,7 @@ window.ReferenceGeneration = (function () {
     return found.sort((a, b) => Math.abs(a.y - b.y) > img.naturalHeight * 0.08 ? a.y - b.y : a.x - b.x).slice(0, 24);
   }
   function extraction() {
-    const p = P(), ex = p.extraction, sheets = arts('sheet'), views = arts('view');
+    const p = P(), ex = p.extraction, sheets = arts('sheet'), views = arts('view').filter(a => a.region);      // only the ones cut out of a sheet
     const box = el(`<section class="panel rg-ext">
       <div class="rg-fields"><span class="ag-label">Sheet to extract from</span>${sheets.length ? `<select data-k="rg-from" class="rg-from"><option value="">Choose one of this project's sheets…</option>${sheets.map((a, k) => `<option value="${esc(a.image)}"${a.image === ex.source ? ' selected' : ''}>Sheet ${k + 1}${p.selected === a.id ? ' (selected)' : ''}</option>`).join('')}</select>` : ''}<span class="rg-pick"></span>
         ${ex.source ? '<button class="small ghost rg-clear" type="button">Clear</button>' : ''}</div>

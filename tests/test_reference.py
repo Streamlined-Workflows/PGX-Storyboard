@@ -160,6 +160,115 @@ class Regions(unittest.TestCase):
         self.assertEqual([(x["x"], x["w"], x["h"], x["direction"], x["section"]) for x in r], [(10, 200, 301, "front", "base"), (1, 50, 50, "", "base")])
 
 
+def advanced(**row):
+    r = dict({"id": "rowaaaa001", "label": "Complete character", "role": "Complete asset"}, **row)
+    p = project(mode="advanced", rows=[r, {"id": "rowaaaa002", "section": "detail", "label": "Pirate hat", "role": "Headwear"}])
+    return p, p["reference"]["projects"][0]
+
+
+def view(p, gid, direction, created, row="rowaaaa001"):
+    finish(p, gid, created, row=row, direction=direction, component="Complete asset", type="humanoid")
+
+
+class Rows(unittest.TestCase):
+    def test_a_row_starts_with_four_views_and_a_prompt_that_fits_what_it_is(self):
+        p, ref = advanced()
+        whole, hat = ref["rows"]
+        self.assertEqual([d for d in reference.DIRECTIONS if whole["slots"][d]["enabled"]], ["front", "left", "right", "rear"])
+        self.assertIn("neutral A-pose", whole["prompt"]); self.assertIn("Misty", whole["prompt"])
+        self.assertIn("Pirate hat of Misty, shown on its own", hat["prompt"]); self.assertNotIn("A-pose", hat["prompt"])
+        self.assertEqual((whole["aspect"], hat["section"], hat["type"]), ("2:3", "detail", ""))            # a row inherits the project's classification
+
+    def test_a_row_can_have_its_own_classification(self):
+        p, ref = advanced(type="creature", subtype="Quadruped", label="Rue", role="Complete asset")
+        self.assertEqual((ref["rows"][0]["type"], ref["rows"][0]["subtype"], ref["rows"][0]["aspect"]), ("creature", "Quadruped", "3:2"))
+        view(p, "g1", "front", 1000.0); p["image_jobs"][-1].update(type="creature", subtype="Quadruped"); reference.sync(p, now=1001.0)
+        a = p["reference"]["artifacts"][0]
+        self.assertEqual((a["role"], a["row"], a["direction"], a["type"], a["subtype"], a["component"]), ("view", "rowaaaa001", "front", "creature", "Quadruped", "Complete asset"))
+
+    def test_generate_row_targets_enabled_unlocked_views_only(self):
+        p, ref = advanced(count=2)
+        row = ref["rows"][0]
+        view(p, "g1", "front", 1000.0); view(p, "g2", "left", 1000.0); reference.sync(p, now=1001.0)
+        ref = p["reference"]["projects"][0]; row = ref["rows"][0]
+        row["slots"]["front"]["locked"] = True
+        t = reference.targets(p["reference"], row, "row")
+        self.assertEqual(t, {"make": ["left", "right", "rear"], "locked": ["front"], "disabled": ["top", "bottom"]})
+        self.assertEqual(reference.targets(p["reference"], row, "missing")["make"], ["right", "rear"])     # populated views are left alone
+        self.assertEqual(reference.targets(p["reference"], row, "front")["make"], [])
+        todo = reference.plan_views(p, "rpaaaaaa01", "rowaaaa001", "missing")
+        self.assertEqual([(v["direction"], v["count"], v["width"], v["height"]) for v in todo], [("right", 2, 688, 1024), ("rear", 2, 688, 1024)])
+        self.assertIn("Right side view", todo[0]["prompt"])
+        self.assertEqual(todo[0]["sources"], ["g1.png", "g2.png"])                                         # the locked view first, then the row's other chosen view
+        row["locked"] = True
+        with self.assertRaises(ValueError):
+            reference.plan_views(p, "rpaaaaaa01", "rowaaaa001", "row")
+
+    def test_new_candidates_do_not_replace_the_chosen_picture(self):
+        p, ref = advanced()
+        view(p, "g1", "front", 1000.0); reference.sync(p, now=1001.0)
+        row = p["reference"]["projects"][0]["rows"][0]
+        self.assertEqual(reference.chosen(p["reference"], row, "front")["id"], "g1")
+        view(p, "g2", "front", 2000.0); reference.sync(p, now=2001.0)
+        row = p["reference"]["projects"][0]["rows"][0]
+        self.assertEqual(reference.chosen(p["reference"], row, "front")["id"], "g1")
+        row["slots"]["front"]["selected"] = "g2"
+        self.assertEqual(reference.chosen(p["reference"], row, "front")["id"], "g2")
+        self.assertIsNone(reference.chosen(p["reference"], row, "rear"))
+
+    def test_only_as_many_pictures_as_the_model_takes_are_sent_and_the_rest_are_named(self):
+        p, ref = advanced(sources=[{"image": f"s{n}.png"} for n in range(1, 7)])
+        self.assertEqual(len(ref["rows"][0]["sources"]), 6)
+        c = reference.conditioning(p["reference"], ref, ref["rows"][0], "front")
+        self.assertEqual([x["image"] for x in c["used"]], ["s1.png", "s2.png", "s3.png", "s4.png"])
+        self.assertEqual([x["what"] for x in c["unused"]], ["source 5", "source 6"])
+
+    def test_a_row_can_use_another_rows_chosen_view_without_copying_it(self):
+        p, ref = advanced()
+        view(p, "g1", "front", 1000.0); reference.sync(p, now=1001.0)
+        state = reference.clean({"projects": [dict(p["reference"]["projects"][0], rows=[p["reference"]["projects"][0]["rows"][0],
+                                 dict(p["reference"]["projects"][0]["rows"][1], sources=[{"row": "rowaaaa001", "direction": "front"}, {"row": "rowaaaa001", "direction": "rear"}, {"row": "nowhere", "direction": "front"}])])]}, p["reference"])
+        p["reference"] = state; ref = state["projects"][0]; hat = ref["rows"][1]
+        self.assertEqual(hat["sources"], [{"row": "rowaaaa001", "direction": "front"}, {"row": "rowaaaa001", "direction": "rear"}])
+        c = reference.conditioning(state, ref, hat, "front")
+        self.assertEqual([x["image"] for x in c["used"]], ["g1.png"])                                      # looked up, not stored
+        self.assertEqual(len(c["unavailable"]), 1); self.assertIn("rear view of Complete character", c["unavailable"][0])
+        self.assertEqual(len([a for a in state["artifacts"]]), 1)
+
+    def test_rows_cannot_inherit_from_each_other_in_a_circle(self):
+        p, ref = advanced()
+        rows = [dict(ref["rows"][0], sources=[{"row": "rowaaaa002", "direction": "front"}]), dict(ref["rows"][1], sources=[{"row": "rowaaaa001", "direction": "front"}])]
+        out = reference.clean({"projects": [dict(ref, rows=rows)]}, p["reference"])["projects"][0]["rows"]
+        self.assertEqual(sum(len(r["sources"]) for r in out), 1)
+
+    def test_an_uploaded_view_fills_the_slot_and_a_locked_one_refuses(self):
+        p, ref = advanced()
+        ids = iter(["u1", "u2", "u3"])
+        a = reference.place(p, "rpaaaaaa01", "rowaaaa001", "rear", "mine.png", lambda: next(ids), now=500.0)
+        row = p["reference"]["projects"][0]["rows"][0]
+        self.assertEqual((a["role"], a["state"], a["origin"], row["slots"]["rear"]["selected"]), ("view", "approved", "uploaded", "u1"))
+        row["slots"]["rear"]["locked"] = True
+        with self.assertRaises(ValueError):
+            reference.place(p, "rpaaaaaa01", "rowaaaa001", "rear", "other.png", lambda: next(ids))
+        whole = reference.place(p, "rpaaaaaa01", "rowaaaa001", None, "strip.png", lambda: next(ids), now=600.0)
+        self.assertEqual((whole["role"], row["selected"], len(reference.candidates(p["reference"], "rowaaaa001", "rear"))), ("row", "u2", 1))   # a complete row is kept whole, not split
+
+    def test_placing_a_pending_picture_keeps_it_pending_and_shares_the_file(self):
+        p, ref = advanced()
+        view(p, "g1", "front", 1000.0); reference.sync(p, now=1001.0)
+        a = reference.place(p, "rpaaaaaa01", "rowaaaa002", "front", "g1.png", lambda: "u1", now=5000.0)
+        self.assertEqual((a["state"], a["expires"]), ("pending", 1000.0 + 10 * DAY))                       # no approval, no extra time
+        self.assertEqual(reference.delete(p, ["g1"]), [])                                                  # the other record still needs the file
+        self.assertEqual(reference.delete(p, ["u1"]), ["g1.png"])
+
+    def test_denying_a_locked_views_only_picture_unlocks_the_empty_slot(self):
+        p, ref = advanced()
+        view(p, "g1", "front", 1000.0); reference.sync(p, now=1001.0)
+        row = p["reference"]["projects"][0]["rows"][0]; row["slots"]["front"].update(locked=True, selected="g1")
+        reference.delete(p, ["g1"])
+        self.assertEqual((row["slots"]["front"]["locked"], row["slots"]["front"]["selected"]), (False, None))
+
+
 class Files(unittest.TestCase):
     def test_a_deleted_pictures_file_is_removed_only_when_the_folder_is_known_and_nothing_else_uses_it(self):
         import os, tempfile

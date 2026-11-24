@@ -116,3 +116,20 @@
 .rg .rg-view img { width:100%; height:150px; object-fit:contain; background:var(--swift-base); border-radius:6px; cursor:zoom-in; }
 .ag .rg-dialog { width:min(620px, 100%); } .ag .rg-needs { list-style:none; margin:0; padding:0; display:grid; gap:8px; } .ag .rg-needs li { display:flex; gap:10px; align-items:center; } .ag .rg-needs img { width:72px; height:48px; object-fit:contain; background:var(--swift-base); border-radius:6px; }
 @media (max-width: 1000px) { .rg .rg-work { grid-template-columns:minmax(0, 1fr); } }
+/* Reference Generation, Advanced mode: rows and view slots. */
+.rg .rg-rows { display:grid; gap:14px; } .rg .rg-rows h2 { margin:6px 0 0; }
+.rg .rg-rowcard { display:grid; gap:10px; padding:14px; border:1px solid var(--swift-border); border-radius:var(--swift-radius-lg); background:var(--swift-elevated); }
+.rg .rg-rowcard.rg-rowlocked { border-color:var(--swift-ring-strong); }
+.rg .rg-rowhead .ag-label { min-width:150px; } .rg .rg-move { display:inline-flex; gap:2px; align-self:center; }
+.rg .rg-rowlock.on, .rg .rg-lock.on { background:var(--swift-green); color:var(--swift-on-primary); border-color:var(--swift-green); }
+.rg .rg-inherit { max-width:240px; } .rg .rg-missing { border-color:var(--swift-warn); display:grid; place-items:center; text-align:center; font-size:11px; }
+.rg .rg-slots { display:grid; grid-template-columns:repeat(6, minmax(0, 1fr)); gap:10px; }
+.rg .rg-slot { display:grid; gap:6px; align-content:start; padding:8px; border:1px solid var(--swift-border); border-radius:var(--swift-radius-lg); background:var(--swift-surface); min-width:0; }
+.rg .rg-slot.rg-off { opacity:.55; } .rg .rg-slot.rg-locked { border-color:var(--swift-green); }
+.rg .rg-slothead { display:flex; gap:8px; align-items:center; flex-wrap:wrap; } .rg .rg-slothead label { display:inline-flex; gap:4px; align-items:center; margin:0; font-size:12px; color:var(--swift-text-muted); }
+.rg .rg-slotpic { aspect-ratio:3/4; display:grid; place-items:center; background:var(--swift-base); border-radius:6px; overflow:hidden; } .rg .rg-slotpic img { width:100%; height:100%; object-fit:contain; cursor:zoom-in; }
+.rg .rg-slotnav, .rg .rg-slotbtns { display:flex; gap:6px; align-items:center; flex-wrap:wrap; }
+.rg .rg-warn { color:var(--swift-warn); font-size:12px; } .rg .rg-wholes { display:grid; grid-template-columns:repeat(auto-fill, minmax(220px, 1fr)); gap:12px; }
+.ag .rg-plan { margin:0; padding-left:18px; display:grid; gap:6px; } .ag .rg-dialog .rg-warn { color:var(--swift-warn); }
+@media (max-width: 1500px) { .rg .rg-slots { grid-template-columns:repeat(3, minmax(0, 1fr)); } }
+@media (max-width: 700px) { .rg .rg-slots { grid-template-columns:repeat(2, minmax(0, 1fr)); } }

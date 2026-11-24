@@ -315,7 +315,7 @@ asset and cutting pictures out of them. The design is `docs/Reference_Generation
 it prepares for is in `3d_Generation_Plan/`. Code: `reference.py`, the `/api/reference` routes in `app.py`,
 `static/generator/reference-generation.js`, tests in `tests/test_reference.py`.
 
-**Built so far** (the design's section 16, steps 1 to 3 and part of 6):
+**Built so far** (the design's section 16, steps 1 to 4 and part of 6):
 
 - **Reference projects.** One per asset, several per SWIFT Director project, each with a name and a classification:
   four parents, eight asset types, optional subtype including Custom (the registry of `3d_Phase_3.md`).
@@ -324,6 +324,27 @@ it prepares for is in `3d_Generation_Plan/`. Code: `reference.py`, the `/api/ref
   the longer side) and a shape. The pixel size is shown. A size the image model cannot make is refused before anything
   is queued: today that is 4096, which needs an upscale model. The limit used for FLUX.2 (2048 pixels, about four
   megapixels) is its makers' figure and has not been measured on this machine.
+- **Sheet Generation, Advanced mode.** The reference is built one row at a time. A row is one thing to document (the
+  complete asset, base anatomy, a hat, a coat) in the Base or Detail section, with a name, a component role, and
+  optionally its own classification. Each row has up to six source pictures, its own prompt, resolution, shape and
+  candidate count, and six view slots: Front, Left, Right, Rear, Top, Bottom.
+  - **Generate Row / Regenerate Row** makes candidates for every view that is switched on and not locked. **Generate
+    Missing Views** fills only the empty ones. Each slot also has its own Generate / Regenerate and Upload. Before a row
+    run, a box lists the views it will make, the ones left alone and why, and which pictures are sent.
+  - New candidates never replace the picture in use: each slot has previous / next and **Use this one**. **Lock** keeps
+    a view's picture through any run or upload; **Lock row** does the same for the whole row. A switched-off view is
+    left out.
+  - **Which pictures are sent.** The image model takes four. They are, in order: the row's sources, the row's locked
+    views, then its other views in use, so a new view is drawn to match the ones already there. Anything beyond four
+    is named as not sent.
+  - **From another row** adds another row's view in use as a source. It is looked up each time, so nothing is copied,
+    changing the other row regenerates nothing, and a view that has gone shows as not available. Rows cannot inherit
+    from each other in a circle.
+  - **Upload complete row** keeps one picture of the whole row for assembly. It is never split automatically.
+  - An uploaded picture is kept (approved) because you supplied it. A picture placed from the Library that is still
+    pending stays pending with the same expiry, and shares the file with the original.
+  - Switching between Simple and Advanced loses nothing. The first switch to Advanced makes a first row from Simple's
+    sources and selected sheet; nothing is extracted.
 - **Sheet Extraction.** A separate workflow that only starts when you open it. Choose a sheet made here, upload one
   (PNG, JPEG, WebP) or take one from the Library; mark regions by dragging, or use **Detect regions**; say what each
   shows (a direction or a detail, Base or Detail, a component name) and adjust its edges by number; then extract. The
@@ -340,8 +361,7 @@ it prepares for is in `3d_Generation_Plan/`. Code: `reference.py`, the `/api/ref
   deleted and the file stays in ComfyUI's input folder. Start with `COMFY_INPUT=/path/to/ComfyUI/input ./run.sh` and
   the file is deleted too, unless something else in the project still uses it.
 
-**Not built yet:** Advanced mode (rows, six directional slots, locks, inheritance, row classification), specification
-panels, deterministic assembly, Simple to Advanced conversion, validation reporting, the four export profiles, the
+**Not built yet:** specification panels, deterministic assembly of rows into a sheet, validation reporting, the four export profiles, the
 hand-over to 3D Generation, and choosing between providers (there is one). Automatic detection does not suggest
 directions or tell text from pictures beyond the size rule above.
 

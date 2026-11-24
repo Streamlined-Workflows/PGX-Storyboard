@@ -742,6 +742,46 @@ def reference_run(pid, rid, state=None):
         return reference_out(project, queued=todo["count"])
 
 
+def reference_views(pid, rid, row_id, what, state=None, preview=False):
+    """Advanced mode: queue pictures for a row's views. `what` is "row" (every enabled, unlocked view), "missing" (enabled
+    views with no picture) or one direction. Locked and switched-off views are never touched."""
+    with LOCK:
+        project = load_project(pid)
+        reference.sync(project)
+        if state is not None:
+            project["reference"] = reference.clean(state, project["reference"], new_id)
+        todo = reference.plan_views(project, rid, row_id, what)
+        ref = reference.find(project["reference"], rid)
+        row = reference.find_row(ref, row_id)
+        if preview:                                              # what would happen, for the page to show before anything is queued
+            save_project(project, touch=False)
+            return reference_out(project, plan=[{k: v[k] for k in ("direction", "count", "width", "height", "used", "unused", "unavailable")} for v in todo],
+                                 skipped=reference.targets(project["reference"], row, what))
+        project["image_jobs"] = [j for j in project["image_jobs"] if not (j.get("kind") == "ref" and j.get("row") == row_id and j.get("status") == "error")]
+        threading.Thread(target=assist.unload, daemon=True).start()
+        for view in todo:
+            graph = lambda seed, prefix, v=view: workflows.build_image(v["prompt"], v["sources"], seed, width=v["width"], height=v["height"], prefix=prefix)
+            for _ in range(view["count"]):
+                queue_still(project, view["prompt"], view["sources"], f"ref_{rid}_{view['direction']}", graph=graph, kind="ref", slot=rid,
+                            label=f"Reference view · {ref['name']} · {row['label'] or row['role'] or 'row'} · {view['direction'].capitalize()}",
+                            ref_prompt=view["prompt"], ref_sources=view["sources"], width=view["width"], height=view["height"], provider=reference.PROVIDER["name"],
+                            row=row_id, direction=view["direction"], component=row["role"], type=row["type"] or ref["type"], subtype=row["subtype"] if row["type"] else ref["subtype"])
+        save_project(project, touch=False)
+        return reference_out(project, queued=[v["direction"] for v in todo])
+
+
+def reference_place(pid, rid, row_id, direction, image, state=None):
+    """Advanced mode: put an uploaded or Library picture into a view slot, or into the row as its complete-row picture."""
+    with LOCK:
+        project = load_project(pid)
+        reference.sync(project)
+        if state is not None:
+            project["reference"] = reference.clean(state, project["reference"], new_id)
+        art = reference.place(project, rid, row_id, direction or None, image, new_id)
+        save_project(project, touch=False)
+        return reference_out(project, placed=art["id"])
+
+
 def reference_decide(pid, ids, action, confirmed=False):
     """Approve or deny pictures. Approving one that needs other pending pictures changes nothing and returns `needs`
     until the page sends it again with confirmed set."""
@@ -796,7 +836,7 @@ def reference_extract(pid, rid, source, cuts):
             what = region["direction"].capitalize() or region["component"] or "Detail"
             project["reference"]["artifacts"].append({
                 "id": aid, "project": rid, "role": "view", "image": image, "state": "pending", "created": now, "expires": now + reference.RETENTION,
-                "width": region["w"], "height": region["h"], "upscaled": False, "requires": [], "source": source[:300],
+                "width": region["w"], "height": region["h"], "upscaled": False, "requires": [], "origin": "extracted", "source": source[:300],
                 "region": {k: region[k] for k in ("x", "y", "w", "h")}, "direction": region["direction"], "section": region["section"], "component": region["component"]})
             project["generated"].append({"id": aid, "image": image, "kind": "ref", "created": now, "slot": rid, "label": f"Reference view · {ref['name']} · {what}"})
             made.append(aid)
@@ -1593,6 +1633,10 @@ class Handler(BaseHTTPRequestHandler):
                 return self.send_json(reference_save(pid, payload.get("state")))
             if path == "/api/reference/run":
                 return self.send_json(reference_run(pid, payload.get("reference"), payload.get("state")))
+            if path == "/api/reference/views":
+                return self.send_json(reference_views(pid, payload.get("reference"), payload.get("row"), payload.get("what"), payload.get("state"), bool(payload.get("preview"))))
+            if path == "/api/reference/place":
+                return self.send_json(reference_place(pid, payload.get("reference"), payload.get("row"), payload.get("direction"), payload.get("image"), payload.get("state")))
             if path == "/api/reference/decide":
                 return self.send_json(reference_decide(pid, payload.get("ids"), payload.get("action"), payload.get("confirmed")))
             if path == "/api/reference/extract":
