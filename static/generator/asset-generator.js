@@ -249,7 +249,7 @@ window.AssetGenerator = (function () {
   /* Take a reference's remaining words out of the prompt (what the person typed or changed stays). */
   function unwrite(st, slot) {
     let removed = 0;
-    [...st.marks].reverse().forEach(([a, b, c]) => { if (c !== slot) return; const end = st.prompt[b] === ' ' ? b + 1 : b; edited(st, st.prompt.slice(0, a) + st.prompt.slice(end)); removed += end - a; });
+    [...st.marks].reverse().forEach(([a, b, c]) => { if (c !== slot) return; const end = st.prompt[b] === '\n' || st.prompt[b] === ' ' ? b + 1 : b; edited(st, st.prompt.slice(0, a) + st.prompt.slice(end)); removed += end - a; });
     st.marks = st.marks.filter(m => m[2] !== slot);
     return removed;
   }
@@ -292,11 +292,11 @@ window.AssetGenerator = (function () {
       if (!S()[name].refs.includes(r) || r.use !== got.use) return;                    // it was removed or changed while the model worked
       if (!keepEdits) editsInside(st, r.slot).reverse().forEach(([a, b]) => edited(st, st.prompt.slice(0, a) + st.prompt.slice(b)));
       unwrite(st, r.slot);
-      const lead = got.text + (st.prompt ? ' ' : '');
+      const lead = got.text + '\n';      // each insert ends its own line
       st.marks = [[0, got.text.length, r.slot], ...st.marks.map(([a, b, c]) => [a + lead.length, b + lead.length, c])];
       st.prompt = lead + st.prompt;
       /* The Reference Prompt box gathers the descriptions: a new one replaces this reference's earlier one if it is still there word for word, and is added at the end otherwise. */
-      st.ref_prompt = r.text && st.ref_prompt.includes(r.text) ? st.ref_prompt.replace(r.text, got.text) : (st.ref_prompt.trim() ? st.ref_prompt.trim() + ' ' : '') + got.text;
+      st.ref_prompt = r.text && st.ref_prompt.includes(r.text) ? st.ref_prompt.replace(r.text, got.text) : (st.ref_prompt.trim() ? st.ref_prompt.trim() + '\n' : '') + got.text;
       r.text = got.text; keep();
     } catch (e) { host.toast(e.message); }
     draw();
@@ -313,7 +313,7 @@ window.AssetGenerator = (function () {
         <label title="${esc(use.help)}">How to use it<select data-k="u-${name}-${r.slot}" class="ag-use">${uses.map(u => `<option value="${u.id}"${u.id === r.use ? ' selected' : ''}>${esc(u.name)}</option>`).join('')}</select></label>
         ${use.described ? `<button data-k="ap-${name}-${r.slot}" class="small ag-apply-ref" type="button" title="${esc(use.help)}">${r.text ? 'Apply again' : 'Apply'}</button>` : ''}
         <div class="ag-reftext ${use.described && r.text ? 'ag-ai' : 'hint'}">${esc(says)}</div></div>`);
-      const forget = () => { if (r.text && st.ref_prompt.includes(r.text)) st.ref_prompt = st.ref_prompt.replace(r.text, '').replace(/\s{2,}/g, ' ').trim(); };      // its description leaves the Reference Prompt box too
+      const forget = () => { if (r.text && st.ref_prompt.includes(r.text)) st.ref_prompt = st.ref_prompt.replace(r.text, '').replace(/\n{2,}/g, '\n').replace(/ {2,}/g, ' ').trim(); };      // its description leaves the Reference Prompt box too
       slot.querySelector('.ag-x').onclick = () => { const gone = unwrite(st, r.slot); forget(); st.refs.splice(n, 1); keep(); draw(); if (gone) host.toast('The reference was taken out, and so was its description in the prompt.'); };
       slot.querySelector('img').onclick = () => host.openViewer(host.view(r.image), 'Reference ' + r.slot);
       slot.querySelector('.ag-use').onchange = ev => {
@@ -369,7 +369,7 @@ window.AssetGenerator = (function () {
       }
       if (!keepEdits) [0, 1, 2, 3, 4].flatMap(slot => editsInside(st, slot)).sort((x, y) => y[0] - x[0]).forEach(([a, b]) => edited(st, st.prompt.slice(0, a) + st.prompt.slice(b)));
       [0, 1, 2, 3, 4].forEach(slot => unwrite(st, slot));
-      const lead = text + (st.prompt ? ' ' : '');
+      const lead = text + '\n';
       st.marks = [[0, text.length, 0], ...st.marks.map(([a, b, c]) => [a + lead.length, b + lead.length, c])];
       st.prompt = lead + st.prompt; keep(); draw();
       host.toast(inserts ? 'The reference text in your prompt was replaced with the Reference Prompt.' : 'The Reference Prompt was put at the start of your prompt.');

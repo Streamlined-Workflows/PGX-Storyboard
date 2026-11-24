@@ -292,6 +292,8 @@ composed output. The pictures are ordinary FLUX.2 stills marked `kind: "gen"` wi
   each applied style guide or inspiration reference. **Replace Prompt Inserts** removes the reference descriptions
   already in the prompt and puts the Reference Prompt text at the start in their place (asking the same Yes / No
   question if the person typed inside them).
+- Every piece of text put at the start of the prompt ends with a line break, so each reference's description sits on
+  its own line above what the person wrote. The Reference Prompt box keeps one description per line too.
 - **Insert as it is** keeps that picture's own pixels: the page places it in the centre of a blank picture with a mask, and
   the inpainting graph draws everything around it and pastes the original back. One per box. The composed output's fourth
   reference cannot be inserted, because images 1 to 3 are fixed as the three layers.
