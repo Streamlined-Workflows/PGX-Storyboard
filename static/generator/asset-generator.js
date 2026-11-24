@@ -21,7 +21,7 @@ window.AssetGenerator = (function () {
     middle: 'Describe the main subject. Ask for a plain, empty background so only the subject carries over.',
     foreground: 'Describe what sits closest to the camera. Ask for a plain, empty background so only these things carry over.',
   };
-  let root = null, host = null, data = null, mode = 'image', timer = null, saveTimer = null, showing = false, cfgOpen = true;
+  let root = null, host = null, data = null, mode = 'image', timer = null, saveTimer = null, showing = false;
   const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
   const el = html => { const t = document.createElement('template'); t.innerHTML = html.trim(); return t.content.firstElementChild; };
   async function call(method, path, body) {
@@ -73,33 +73,36 @@ window.AssetGenerator = (function () {
   /* ---------- Asset Configuration: the box at the top of every mode ---------- */
   const cfg = () => S().config[mode];
   const NAME = { image: 'Image Generation', character: 'Character Generation', depth: 'Depth Generation', '3d': '3D Generation' };
+  /* Built with the same markup and styles (.cc) as the Project Configuration box in Assisted Storyboard, so the two read alike:
+   * a header, then sections that open and close, each with a one-line summary, and an "In use" or "Stored" tag on every setting. */
+  const opened = () => { try { return JSON.parse(localStorage.getItem('sd.asset-config.open') || '[]'); } catch (e) { return []; } };
+  const remember = list => { try { localStorage.setItem('sd.asset-config.open', JSON.stringify(list)); } catch (e) { /* private mode */ } };
   function configBox() {
-    const c = cfg(), o = data.options, used = k => o.used.includes(k);
-    const tag = k => used(k) ? '<span class="ag-tag ag-used" title="This setting changes what the Asset Generator does today">In use</span>' : '<span class="ag-tag" title="Saved with the project. A later update will act on it">Stored</span>';
-    const role = r => { const u = o.in_use[r.key] || {}, now = u.name ? 'Automatic: ' + u.name : 'None installed';
-      return `<label><span>${esc(r.label)} ${u.name && (r.key === 'image' || r.key === 'image_lora') ? '<span class="ag-tag ag-used" title="This is the model that makes the pictures today">In use</span>' : tag('models.' + r.key)}</span>
-        <select data-k="cfg-m-${r.key}" data-role="${r.key}"${u.name ? '' : ' disabled'}><option value="auto">${esc(now)}</option></select>${u.note ? `<span class="hint">${esc(u.note)}</span>` : ''}</label>`; };
-    const box = el(`<details class="panel ag-config"${cfgOpen ? ' open' : ''}><summary><h2>Asset Configuration</h2><span class="hint">${esc(NAME[mode])}${c.name ? ' · ' + esc(c.name) : ''} · ${esc(c.rating)} · ${esc((o.types.find(t => t.key === c.type) || {}).label || '')}</span></summary>
-      <div class="ag-cfggrid">
-        <fieldset><legend>Project Identity</legend>
-          <label><span>Asset name ${tag('name')}</span><input data-k="cfg-name" class="ag-cfg-name" type="text" maxlength="80" value="${esc(c.name)}" placeholder="For example: Misty's ship"></label>
-          <label><span>Rating ${tag('rating')}</span><select data-k="cfg-rating" class="ag-cfg-rating">${o.ratings.map(r => `<option${r === c.rating ? ' selected' : ''}>${esc(r)}</option>`).join('')}</select></label>
-          <label><span>Asset type ${tag('type')}</span><select data-k="cfg-type" class="ag-cfg-type">${o.types.map(t => `<option value="${t.key}"${t.key === c.type ? ' selected' : ''}>${esc(t.label)}</option>`).join('')}</select></label>
-          <span class="hint">The name and type decide what <b>Save to Assets</b> creates. The rating is a label for filtering later; it does not change what is generated.</span>
-        </fieldset>
-        <fieldset><legend>AI Model Configuration</legend>${o.roles.map(role).join('')}
-          <span class="hint">At most one model is installed for each role today, so there is nothing to choose between yet. Roles marked Stored are not used by the Asset Generator yet.</span></fieldset>
-        <fieldset><legend>Workflow and Approval Controls</legend>
-          ${o.workflow.map(w => `<label class="ag-check"><input data-k="cfg-w-${w.key}" data-flow="${w.key}" type="checkbox"${c.workflow[w.key] ? ' checked' : ''}> <span>${esc(w.label)} ${tag('workflow.' + w.key)}</span></label>`).join('')}
-        </fieldset>
-      </div></details>`);
-    box.addEventListener('toggle', () => { cfgOpen = box.open; });
-    const q = x => box.querySelector(x);
-    q('.ag-cfg-name').oninput = ev => { c.name = ev.target.value.slice(0, 80); keep(); };
-    q('.ag-cfg-name').onchange = () => draw();
-    q('.ag-cfg-rating').onchange = ev => { c.rating = ev.target.value; keep(); draw(); };
-    q('.ag-cfg-type').onchange = ev => { c.type = ev.target.value; keep(); draw(); };
-    box.querySelectorAll('[data-role]').forEach(i => i.onchange = () => { c.models[i.dataset.role] = i.value; keep(); });
+    const c = cfg(), o = data.options, open = opened(), label = (list, key) => (list.find(x => x.key === key) || {}).label || key;
+    const tag = k => o.used.includes(k) ? '<span class="cc-tag cc-used" title="This setting changes what the Asset Generator does today">In use</span>'
+                                        : '<span class="cc-tag" title="Saved with the project. A later update will act on it">Stored</span>';
+    const select = (key, list, text) => `<label class="cc-field"><span>${esc(text)} ${tag(key)}</span><select data-k="cfg-${key}" data-path="${key}">${list.map(x => `<option value="${esc(x.key)}"${x.key === c[key] ? ' selected' : ''}>${esc(x.label)}</option>`).join('')}</select></label>`;
+    const role = r => { const u = o.in_use[r.key] || {}; return `<div class="cc-role"><b>${esc(r.label)}</b><span>${u.name ? esc(u.name) + (u.runtime ? ` <span class="hint">· ${esc(u.runtime)}</span>` : '') : '<span class="hint">Not available</span>'}</span><span class="cc-tag${u.ready ? ' cc-used' : ''}">${u.ready ? 'Auto' : u.name ? 'Not confirmed' : 'Not installed'}</span>${u.note ? `<div class="hint">${esc(u.note)}</div>` : ''}</div>`; };
+    const check = w => `<label class="cc-check"><input type="checkbox" data-k="cfg-w-${w.key}" data-flow="${w.key}"${c.workflow[w.key] ? ' checked' : ''}> <span>${esc(w.label)}</span> ${tag('workflow.' + w.key)}</label>`;
+    const sections = [
+      { key: 'identity', title: 'Project Identity', summary: `${c.name || 'No name yet'} · ${c.rating} · ${label(o.types, c.type)}`, body:
+        `<div class="cc-grid"><label class="cc-field"><span>Asset Name ${tag('name')}</span><input data-k="cfg-name" data-path="name" type="text" maxlength="80" value="${esc(c.name)}" placeholder="For example: Misty's ship"></label>
+           ${select('rating', o.ratings.map(r => ({ key: r, label: r })), 'Asset Rating')}${select('type', o.types, 'Asset Type')}</div>
+         <div class="hint">The name and type decide what Save to Assets creates. The rating is SWIFT Director's own classification, saved so filtering rules can be applied against it later; it does not change what is generated yet.</div>` },
+      { key: 'models', title: 'AI Model Configuration', summary: 'Auto for every role', body:
+        `<div class="hint">What performs each job today. Every role is on Auto, which means the one model SWIFT Director has a working setup for. The Asset Generator sends your prompt as typed, so the Prompting Model is not called here yet. Choosing between models arrives with the model registry.</div>
+         <div class="cc-roles">${o.roles.map(role).join('')}</div>` },
+      { key: 'workflow', title: 'Workflow and Approval Controls', summary: `${o.workflow.filter(w => c.workflow[w.key]).length} of ${o.workflow.length} on`, body:
+        `<div class="hint">These record how you want to work in this generator. The two marked In use act now; the others start to act as their steps are built.</div>
+         <div class="cc-checks">${o.workflow.map(check).join('')}</div>` },
+    ];
+    const box = el(`<div class="cc ag-config"><div class="cc-head"><h2>Asset Configuration</h2><span class="hint">${esc(NAME[mode])}. Saved with this project.</span></div>` +
+      sections.map(x => `<details class="cc-section" data-key="${x.key}"${open.includes(x.key) ? ' open' : ''}><summary><b>${esc(x.title)}</b><span class="hint">${esc(x.summary)}</span></summary><div class="cc-body">${x.body}</div></details>`).join('') + '</div>');
+    box.querySelectorAll('details').forEach(d => d.addEventListener('toggle', () => remember([...box.querySelectorAll('details[open]')].map(x => x.dataset.key))));
+    box.querySelectorAll('[data-path]').forEach(f => {
+      if (f.tagName === 'INPUT') { f.oninput = () => { c.name = f.value.slice(0, 80); keep(); }; f.onchange = () => draw(); }
+      else f.onchange = () => { c[f.dataset.path] = f.value; keep(); draw(); };
+    });
     box.querySelectorAll('[data-flow]').forEach(i => i.onchange = () => { c.workflow[i.dataset.flow] = i.checked; keep(); draw(); });
     return box;
   }

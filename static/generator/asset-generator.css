@@ -39,14 +39,5 @@
 .ag .ag-refcard { display:grid; gap:4px; width:200px; align-content:start; } .ag .ag-refcard.ag-loading { opacity:.5; }
 .ag .ag-refcard label { display:grid; gap:3px; margin:0; font-size:12px; color:var(--swift-text-muted); } .ag .ag-refcard .ag-use { width:100%; }
 .ag .ag-usehelp { font-size:11px; line-height:1.35; } .ag .ag-adds { flex-basis:100%; }
-.ag .ag-config > summary { display:flex; gap:12px; align-items:baseline; flex-wrap:wrap; cursor:pointer; list-style:none; } .ag .ag-config > summary::-webkit-details-marker { display:none; }
-.ag .ag-config > summary h2 { margin:0; } .ag .ag-config > summary::after { content:'▾'; margin-left:auto; color:var(--swift-text-muted); } .ag .ag-config:not([open]) > summary::after { content:'▸'; }
-.ag .ag-cfggrid { display:grid; grid-template-columns:repeat(3, minmax(0, 1fr)); gap:14px; margin-top:12px; }
-.ag .ag-cfggrid fieldset { display:grid; gap:9px; align-content:start; margin:0; padding:12px; min-width:0; border:1px solid var(--swift-border); border-radius:var(--swift-radius-lg); }
-.ag .ag-cfggrid legend { padding:0 6px; font-size:12px; letter-spacing:.06em; text-transform:uppercase; color:var(--swift-text-strong); }
-.ag .ag-cfggrid label { display:grid; gap:3px; margin:0; font-size:12px; color:var(--swift-text-muted); } .ag .ag-cfggrid input[type=text], .ag .ag-cfggrid select { width:100%; }
-.ag .ag-cfggrid .ag-check { display:flex; gap:8px; align-items:flex-start; font-size:13px; color:var(--swift-text); }
-.ag .ag-tag { display:inline-block; margin-left:4px; padding:0 7px; font-size:10px; line-height:16px; letter-spacing:.04em; text-transform:uppercase; border-radius:999px; border:1px solid var(--swift-border); color:var(--swift-text-muted); vertical-align:1px; }
-.ag .ag-tag.ag-used { border-color:var(--swift-green); color:var(--swift-green-400); }
+.ag .ag-config { margin-bottom:0; }      /* the box itself is styled by config-center.css (.cc), shared with Assisted Storyboard */
 .ag .ag-ok.on { background:var(--swift-green); color:var(--swift-on-primary); border-color:var(--swift-green); }
-@media (max-width: 1000px) { .ag .ag-cfggrid { grid-template-columns:minmax(0, 1fr); } }

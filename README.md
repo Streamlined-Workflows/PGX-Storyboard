@@ -239,8 +239,9 @@ composed output. The pictures are ordinary FLUX.2 stills marked `kind: "gen"` wi
 
 - Each mode (Image, Character, Depth, 3D) opens with an **Asset Configuration** box, stored per mode in
   `project["generator"]["config"]`: Project Identity (asset name, rating, asset type), AI Model Configuration (prompting,
-  image, image LoRA, background removal, upscale) and Workflow and Approval Controls. Each setting is tagged In use or
-  Stored, as in the Project Configuration Center. In use today: the name and type (what **Save to Assets** creates: an
+  image, image LoRA, background removal, upscale) and Workflow and Approval Controls. It is drawn with the Project Configuration
+  Center's own markup and styles (`.cc`), so both boxes look and behave alike: sections that open and close with a one-line
+  summary, and an In use or Stored tag on each setting. In use today: the name and type (what **Save to Assets** creates: an
   actor, a scene asset, a prop, or a world asset of a tagged Lore entry), asking before a run, and requiring approval
   before a picture can be saved. The rating and the model choices are stored; one model per role is installed.
 - Every reference picture has a **How to use it** choice, the same four as Identity Studio: Insert as it is, Follow
