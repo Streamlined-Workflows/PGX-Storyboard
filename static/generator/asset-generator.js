@@ -3,7 +3,7 @@
  * A tab for making pictures outside the storyboard. Two modes work today:
  *   Image Generation   one prompt, up to four reference pictures
  *   Depth Generation   background, middle ground and foreground made separately, then redrawn as one picture
- * Character Generation has its Asset Configuration box; its generator arrives later. 3D Generation has that box and a 3D
+ * Reference Generation (reference sheets and cutting pictures out of them) is drawn by reference-generation.js. 3D Generation has that box and a 3D
  * view (viewport-3d.js, three.js) with a grid for each axis; making 3D models arrives later.
  *
  * Every mode starts with an Asset Configuration box: what the asset is (name, rating, type), which models are used, and
@@ -55,13 +55,14 @@ window.AssetGenerator = (function () {
     const focus = document.activeElement && root.contains(document.activeElement) ? document.activeElement.dataset.k : null;
     root.innerHTML = '';
     const page = el(`<div class="ag"><div class="panel ag-modes" role="tablist" aria-label="Asset Generator mode">
-      <button data-m="image" role="tab">Image Generation</button><button data-m="character" role="tab">Character Generation <span class="pill">later</span></button>
+      <button data-m="image" role="tab">Image Generation</button><button data-m="reference" role="tab">Reference Generation</button>
       <button data-m="depth" role="tab">Depth Generation</button><button data-m="3d" role="tab">3D Generation</button></div><div class="ag-body"></div></div>`);
     page.querySelectorAll('.ag-modes button').forEach(b => { b.classList.toggle('on', b.dataset.m === mode); b.setAttribute('aria-selected', b.dataset.m === mode); b.onclick = () => { mode = b.dataset.m; draw(); }; });
     const body = page.querySelector('.ag-body');
     body.append(configBox());
-    if (mode === 'character') {
-      body.append(el('<div class="panel hint">Character Generation is not built yet. The configuration above is saved with the project and will be used when it is.</div>'));
+    if (window.ReferenceGeneration && mode !== 'reference') window.ReferenceGeneration.hide();
+    if (mode === 'reference') {
+      body.append(window.ReferenceGeneration ? window.ReferenceGeneration.panel(host, { library, layer: () => root.querySelector('.ag') }) : el('<div class="panel hint">Reference Generation did not load. Reload the page.</div>'));
     } else if (mode === '3d') {
       body.append(view3d());
     } else if (mode === 'image') {
@@ -106,7 +107,7 @@ window.AssetGenerator = (function () {
 
   /* ---------- Asset Configuration: the box at the top of every mode ---------- */
   const cfg = () => S().config[mode];
-  const NAME = { image: 'Image Generation', character: 'Character Generation', depth: 'Depth Generation', '3d': '3D Generation' };
+  const NAME = { image: 'Image Generation', reference: 'Reference Generation', depth: 'Depth Generation', '3d': '3D Generation' };
   /* Built with the same markup and styles (.cc) as the Project Configuration box in Assisted Storyboard, so the two read alike:
    * a header, then sections that open and close, each with a one-line summary, and an "In use" or "Stored" tag on every setting. */
   const opened = () => { try { return JSON.parse(localStorage.getItem('sd.asset-config.open') || '[]'); } catch (e) { return []; } };
@@ -494,7 +495,7 @@ window.AssetGenerator = (function () {
       if (changed) { data = null; root.innerHTML = '<div class="panel hint">Loading…</div>'; }
       load();
     },
-    hide() { showing = false; clearTimeout(timer); closeLibrary(); },
+    hide() { showing = false; clearTimeout(timer); closeLibrary(); if (window.ReferenceGeneration) window.ReferenceGeneration.hide(); },
     _state: () => data, _view3d: () => three,
   };
 })();

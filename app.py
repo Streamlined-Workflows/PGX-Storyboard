@@ -25,6 +25,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import assist
 import config
 import generator
+import reference
 import lore
 import usage
 import models
@@ -328,7 +329,7 @@ def refresh_statuses(pid):
                     project["generated"].append({
                         "id": res["id"], "image": res["image"], "kind": res.get("kind"), "created": res["finished"], "seed": res.get("seed"),
                         "actor_id": res.get("actor_id"), "segment_id": res.get("segment_id"), "source": res.get("source"), "fix": res.get("fix"),
-                        "slot": res.get("slot") if res.get("kind") == "gen" else None,
+                        "slot": res.get("slot") if res.get("kind") in ("gen", "ref") else None,
                         "label": f"{actor.get('name') or 'Actor'} · {res.get('label')}" if actor
                                  else f"{res['owner']} · {res.get('label')}" if res.get("owner") else res.get("label") or "Picture"})
                 except (OSError, ValueError, KeyError) as e:
@@ -670,6 +671,156 @@ def generator_remove(pid, gid):
         project["generated"] = [g for g in project.get("generated", []) if not (g.get("id") == gid and g.get("kind") == "gen")]
         save_project(project, touch=False)
         return generator.view(project, generator_models())
+
+
+# ---------- Reference Generation (docs/Reference_Generation_Design.md) ----------
+
+# ComfyUI offers no way to delete a file, so a denied or expired picture's file can only be removed when this app can
+# reach ComfyUI's input folder itself. Set COMFY_INPUT_DIR to that folder to turn it on; without it the record,
+# prompt and settings are deleted and the file stays where ComfyUI keeps it.
+COMFY_INPUT_DIR = os.environ.get("COMFY_INPUT_DIR", "")
+
+
+def reference_forget(project, images):
+    """Delete the files of pictures whose records were just removed, unless something else in the project still names
+    them. -> how many files were deleted."""
+    if not images or not COMFY_INPUT_DIR:
+        return 0
+    rest, base, count = json.dumps(project), os.path.realpath(COMFY_INPUT_DIR), 0
+    for image in images:
+        path = os.path.realpath(os.path.join(base, image))
+        if json.dumps(image)[1:-1] in rest or not path.startswith(base + os.sep) or not os.path.isfile(path):
+            continue
+        try:
+            os.remove(path)
+            count += 1
+        except OSError:
+            pass
+    return count
+
+
+def reference_out(project, **more):
+    return dict(reference.view(project), files_deletable=bool(COMFY_INPUT_DIR), **more)
+
+
+def reference_view(pid):
+    with LOCK:
+        project = refresh_statuses(pid)
+        before = json.dumps(project.get("reference"), sort_keys=True)
+        _, gone = reference.sync(project)
+        reference_forget(project, gone)
+        if json.dumps(project["reference"], sort_keys=True) != before:
+            save_project(project, touch=False)
+        return reference_out(project, expired=len(gone))
+
+
+def reference_save(pid, state):
+    with LOCK:
+        project = load_project(pid)
+        reference.sync(project)
+        project["reference"] = reference.clean(state, project["reference"], new_id)
+        save_project(project, touch=False)
+        return reference_out(project)
+
+
+def reference_run(pid, rid, state=None):
+    """Queue a Simple sheet run: as many complete sheets as the count says, each from a different seed."""
+    with LOCK:
+        project = load_project(pid)
+        reference.sync(project)
+        if state is not None:
+            project["reference"] = reference.clean(state, project["reference"], new_id)
+        todo = reference.plan(project, rid)
+        name = reference.find(project["reference"], rid)["name"]
+        project["image_jobs"] = [j for j in project["image_jobs"] if not (j.get("kind") == "ref" and j.get("slot") == rid and j.get("status") == "error")]
+        threading.Thread(target=assist.unload, daemon=True).start()
+        graph = lambda seed, prefix: workflows.build_image(todo["prompt"], todo["sources"], seed, width=todo["width"], height=todo["height"], prefix=prefix)
+        for _ in range(todo["count"]):
+            queue_still(project, todo["prompt"], todo["sources"], "ref_" + rid, graph=graph, kind="ref", slot=rid, label=f"Reference sheet · {name}",
+                        ref_prompt=todo["prompt"], ref_sources=todo["sources"], width=todo["width"], height=todo["height"], provider=reference.PROVIDER["name"])
+        save_project(project, touch=False)
+        return reference_out(project, queued=todo["count"])
+
+
+def reference_decide(pid, ids, action, confirmed=False):
+    """Approve or deny pictures. Approving one that needs other pending pictures changes nothing and returns `needs`
+    until the page sends it again with confirmed set."""
+    with LOCK:
+        project = load_project(pid)
+        reference.sync(project)
+        ids = [i for i in ids if isinstance(i, str)] if isinstance(ids, list) else []
+        if action == "approve":
+            result = reference.approve(project, ids, bool(confirmed))
+            if "needs" in result:
+                return reference_out(project, needs=result["needs"])
+            save_project(project, touch=False)
+            return reference_out(project, approved=result["approved"])
+        if action != "deny":
+            raise ValueError("Unknown action.")
+        held = reference.protected(project["reference"], ids)
+        busy = [a["id"] for a in project["reference"]["artifacts"] if a["id"] in ids and reference.in_use(project, a)]
+        if busy:
+            raise ValueError("A generation that is still running is using this picture. Deny it when that has finished.")
+        gone = reference.delete(project, ids)
+        files = reference_forget(project, gone)
+        save_project(project, touch=False)
+        return reference_out(project, denied=len(gone), files_deleted=files, held=held)
+
+
+def reference_extract(pid, rid, source, cuts):
+    """Sheet Extraction: store the pictures the page cut out of a sheet. The page does the cutting, at the sheet's own
+    pixels with no resizing, and sends each piece as a PNG; this checks each one and records it as a pending picture."""
+    with LOCK:
+        project = load_project(pid)
+        reference.sync(project)
+        ref = reference.find(project["reference"], rid)
+        if not isinstance(source, str) or not source.strip():
+            raise ValueError("Choose the sheet to extract from first.")
+        if not isinstance(cuts, list) or not cuts:
+            raise ValueError("Draw at least one region on the sheet first.")
+        ready = []
+        for cut in cuts[:reference.MAX_REGIONS]:                 # every piece is checked before any is stored
+            region = reference._region(cut if isinstance(cut, dict) else {})
+            try:
+                data = base64.b64decode(str((cut or {}).get("png", "")).split(",", 1)[-1], validate=True)
+            except (ValueError, TypeError, AttributeError):
+                data = b""
+            dims = (int.from_bytes(data[16:20], "big"), int.from_bytes(data[20:24], "big")) if data[:8] == b"\x89PNG\r\n\x1a\n" and len(data) > 24 else None
+            if not region or dims != (region["w"], region["h"]) or len(data) > 40 * 1024 * 1024:
+                raise ValueError("A cut-out did not arrive properly, so nothing was extracted. Reload the page and try again.")
+            ready.append((region, data))
+        now, made = time.time(), []
+        for region, data in ready:
+            aid = new_id()
+            image = comfy_upload(f"ref_{pid}_{rid}_{aid}.png", data)
+            what = region["direction"].capitalize() or region["component"] or "Detail"
+            project["reference"]["artifacts"].append({
+                "id": aid, "project": rid, "role": "view", "image": image, "state": "pending", "created": now, "expires": now + reference.RETENTION,
+                "width": region["w"], "height": region["h"], "upscaled": False, "requires": [], "source": source[:300],
+                "region": {k: region[k] for k in ("x", "y", "w", "h")}, "direction": region["direction"], "section": region["section"], "component": region["component"]})
+            project["generated"].append({"id": aid, "image": image, "kind": "ref", "created": now, "slot": rid, "label": f"Reference view · {ref['name']} · {what}"})
+            made.append(aid)
+        save_project(project, touch=False)
+        return reference_out(project, extracted=made)
+
+
+def reference_sweep():
+    """Once an hour, delete pending reference pictures whose ten days have run out, in every project, so they go even if
+    nobody opens the page."""
+    while True:
+        for listed in list_projects():
+            try:
+                with LOCK:
+                    project = load_project(listed["id"])
+                    if not (project.get("reference") or {}).get("artifacts"):
+                        continue
+                    _, gone = reference.sync(project)
+                    if gone:
+                        reference_forget(project, gone)
+                        save_project(project, touch=False)
+            except (ValueError, OSError, KeyError):
+                pass
+        time.sleep(3600)
 
 
 def generated_remove(pid, gid):
@@ -1374,6 +1525,8 @@ class Handler(BaseHTTPRequestHandler):
                 return self.send_json(assist_shot_lengths(urllib.parse.parse_qs(url.query).get("project", [""])[0]))
             if url.path == "/api/generator/library":
                 return self.send_json(generator_library(urllib.parse.parse_qs(url.query).get("project", [""])[0]))
+            if url.path == "/api/reference":
+                return self.send_json(reference_view(query.get("project", [""])[0]))
             if url.path == "/api/generator":
                 return self.send_json(generator_view(urllib.parse.parse_qs(url.query).get("project", [""])[0]))
             if url.path == "/api/system/usage":
@@ -1436,6 +1589,14 @@ class Handler(BaseHTTPRequestHandler):
                 return self.send_json(models.forget_token())
             if path == "/api/models/update":
                 return self.send_json(models.start_update(payload.get("id")))
+            if path == "/api/reference/save":
+                return self.send_json(reference_save(pid, payload.get("state")))
+            if path == "/api/reference/run":
+                return self.send_json(reference_run(pid, payload.get("reference"), payload.get("state")))
+            if path == "/api/reference/decide":
+                return self.send_json(reference_decide(pid, payload.get("ids"), payload.get("action"), payload.get("confirmed")))
+            if path == "/api/reference/extract":
+                return self.send_json(reference_extract(pid, payload.get("reference"), payload.get("source"), payload.get("cuts")))
             if path == "/api/generator/save":
                 return self.send_json(generator_save(pid, payload.get("state")))
             if path == "/api/generator/run":
@@ -1560,6 +1721,7 @@ class Handler(BaseHTTPRequestHandler):
 
 if __name__ == "__main__":
     migrate_legacy()
+    threading.Thread(target=reference_sweep, daemon=True).start()
     # Identity Studio draws with the same FLUX.2 graphs as the storyboard, so there is one configuration to keep.
     identity_api.configure(build_image=workflows.build_image, build_fix=workflows.build_fix, before=assist.unload)
     identity_api.start()

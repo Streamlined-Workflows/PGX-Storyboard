@@ -224,11 +224,15 @@ class GeneratorTests(test_core.Base if hasattr(test_core, "Base") else unittest.
             chain.append(source(graph[node]["inputs"]["latent"][0])); node = graph[node]["inputs"]["conditioning"][0]
         self.assertEqual(chain[::-1], ["a.png", "b.png", "c.png", uploads[0]])
 
+    def test_a_project_saved_before_character_became_reference_keeps_its_configuration(self):
+        state = generator.clean({"config": {"character": {"name": "Misty", "rating": "R"}}})
+        self.assertEqual((state["config"]["reference"]["name"], state["config"]["reference"]["rating"]), ("Misty", "R"))
+
     def test_every_mode_has_its_own_asset_configuration(self):
         v = app.generator_view(self.pid)
-        self.assertEqual(sorted(v["state"]["config"]), ["3d", "character", "depth", "image"])
-        self.assertEqual([(m, v["state"]["config"][m]["type"]) for m in ("image", "character", "depth", "3d")],
-                         [("image", "scene"), ("character", "actor"), ("depth", "scene"), ("3d", "prop")])
+        self.assertEqual(sorted(v["state"]["config"]), ["3d", "depth", "image", "reference"])
+        self.assertEqual([(m, v["state"]["config"][m]["type"]) for m in ("image", "reference", "depth", "3d")],
+                         [("image", "scene"), ("reference", "actor"), ("depth", "scene"), ("3d", "prop")])
         c = v["state"]["config"]["image"]
         self.assertEqual((c["name"], c["rating"]), ("", "PG-13"))                        # the rating starts as the project's own
         self.assertEqual(c["models"], {"prompting": "auto", "image": "auto", "image_lora": "auto", "background_removal": "auto", "upscale": "auto"})
@@ -252,7 +256,7 @@ class GeneratorTests(test_core.Base if hasattr(test_core, "Base") else unittest.
     def test_a_new_asset_configuration_starts_at_the_projects_rating(self):
         with app.LOCK:
             p = app.load_project(self.pid); p["config"]["identity"]["rating"] = "R"; p.pop("generator"); app.save_project(p, touch=False)
-        self.assertEqual(app.generator_view(self.pid)["state"]["config"]["character"]["rating"], "R")
+        self.assertEqual(app.generator_view(self.pid)["state"]["config"]["reference"]["rating"], "R")
 
     def test_approvals_are_kept_per_picture_and_dropped_with_the_picture(self):
         self.finish("image", "one.png", "two.png")

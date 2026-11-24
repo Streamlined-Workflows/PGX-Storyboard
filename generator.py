@@ -50,10 +50,10 @@ USE_TEXT = {"keep exactly": "Image {n}: reproduce what it shows faithfully, with
                       "so it belongs in the scene. Do not draw over it and do not repeat it."}
 
 # ---- Asset Configuration: one per generator mode, shown in the box at the top of that mode ----
-MODES = ("image", "character", "depth", "3d")
+MODES = ("image", "reference", "depth", "3d")          # "reference" was "character" before Reference Generation replaced it
 RATINGS = ("E", "PG-13", "R", "M", "X")          # the same list as the project's own rating, so one filtering rule can cover both later
 TYPES = (("actor", "Actor"), ("scene", "Scene"), ("prop", "Prop"), ("world", "World"))
-MODE_TYPE = {"image": "scene", "character": "actor", "depth": "scene", "3d": "prop"}       # what each mode starts as
+MODE_TYPE = {"image": "scene", "reference": "actor", "depth": "scene", "3d": "prop"}       # what each mode starts as
 MODEL_ROLES = (("prompting", "Prompting Model"), ("image", "Image Model"), ("image_lora", "Image Model LoRA"),
                ("background_removal", "Background Removal Model"), ("upscale", "Upscale Model"))
 WORKFLOW = (("confirm_before_run", "Ask me before running generations", False),
@@ -162,7 +162,8 @@ def clean(incoming, current=None, rating="PG-13"):
     composed["applied"] = {layer: applied.get(layer) if isinstance(applied.get(layer), str) and applied.get(layer) else None for layer in LAYERS}
     out["composed"] = composed
     given, kept = incoming.get("config") if isinstance(incoming.get("config"), dict) else {}, current.get("config") if isinstance(current.get("config"), dict) else {}
-    out["config"] = {mode: _config(given.get(mode), kept.get(mode) or {}, mode, rating) for mode in MODES}
+    old = {"reference": "character"}                         # a project saved before the rename keeps what it had
+    out["config"] = {mode: _config(given.get(mode, given.get(old.get(mode))), kept.get(mode) or kept.get(old.get(mode)) or {}, mode, rating) for mode in MODES}
     approved = incoming.get("approved") if isinstance(incoming.get("approved"), list) else current.get("approved") or []
     out["approved"] = list(dict.fromkeys(a for a in approved if isinstance(a, str) and a))[-MAX_APPROVED:]
     return out
@@ -221,7 +222,7 @@ def plan(project, box):
     return {"prompt": " ".join([typed.rstrip()] + added), "refs": fixed + [r["image"] for r in drawn], "insert": insert, "count": b["count"]}
 
 
-MODE_BOXES = {"image": ("image",), "depth": LAYERS + ("composed",), "character": (), "3d": ()}
+MODE_BOXES = {"image": ("image",), "depth": LAYERS + ("composed",), "reference": (), "3d": ()}
 
 
 def reset(project, mode, rating="PG-13"):

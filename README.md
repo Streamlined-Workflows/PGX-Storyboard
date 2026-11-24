@@ -308,6 +308,43 @@ composed output. The pictures are ordinary FLUX.2 stills marked `kind: "gen"` wi
   order, and the optional fourth reference as image 4. It will not run until all three layers are applied.
 - Composing is a redraw by the image model from three references, not a pixel-exact layering.
 
+## Reference Generation
+
+A mode of the Asset Generator (it replaced the Character Generation placeholder) for making reference sheets of an
+asset and cutting pictures out of them. The design is `docs/Reference_Generation_Design.md`; the 3D Generation design
+it prepares for is in `3d_Generation_Plan/`. Code: `reference.py`, the `/api/reference` routes in `app.py`,
+`static/generator/reference-generation.js`, tests in `tests/test_reference.py`.
+
+**Built so far** (the design's section 16, steps 1 to 3 and part of 6):
+
+- **Reference projects.** One per asset, several per SWIFT Director project, each with a name and a classification:
+  four parents, eight asset types, optional subtype including Custom (the registry of `3d_Phase_3.md`).
+- **Sheet Generation, Simple mode.** Up to four source pictures (Upload or Apply from Library), a prompt that follows
+  the classification until you write your own, 1 to 10 complete sheets per run, a resolution (512, 1024, 2048, 4096 on
+  the longer side) and a shape. The pixel size is shown. A size the image model cannot make is refused before anything
+  is queued: today that is 4096, which needs an upscale model. The limit used for FLUX.2 (2048 pixels, about four
+  megapixels) is its makers' figure and has not been measured on this machine.
+- **Sheet Extraction.** A separate workflow that only starts when you open it. Choose a sheet made here, upload one
+  (PNG, JPEG, WebP) or take one from the Library; mark regions by dragging, or use **Detect regions**; say what each
+  shows (a direction or a detail, Base or Detail, a component name) and adjust its edges by number; then extract. The
+  browser cuts each region at the sheet's own pixels with no resizing, so the server needs no image library and
+  nothing is invented. Detect regions finds separate shapes against a plain background and skips small or thin ones
+  (usually text). It does not know what a shape is or which way it faces, so those are always yours to set.
+- **Approval and retention.** Every sheet and extracted view starts as pending and is deleted ten days after it was
+  made unless approved. Deny deletes it at once. Deleting removes the picture's record, prompt, settings and Library
+  entry. Selecting, downloading or extracting from a pending picture does not approve it or move its expiry;
+  downloading one asks first (the design's "Export Unapproved Asset" notice). Approval checks for other pending
+  pictures the picture needs and asks before approving them together; nothing made so far has such needs, so that
+  question first appears with Advanced assembly. A sweep runs hourly so pictures expire even if the page is closed.
+- **Deleting the image file.** ComfyUI has no way to delete a file, so by default only SWIFT Director's records are
+  deleted and the file stays in ComfyUI's input folder. Start with `COMFY_INPUT=/path/to/ComfyUI/input ./run.sh` and
+  the file is deleted too, unless something else in the project still uses it.
+
+**Not built yet:** Advanced mode (rows, six directional slots, locks, inheritance, row classification), specification
+panels, deterministic assembly, Simple to Advanced conversion, validation reporting, the four export profiles, the
+hand-over to 3D Generation, and choosing between providers (there is one). Automatic detection does not suggest
+directions or tell text from pictures beyond the size rule above.
+
 ## Lore
 
 Lore entries are stored on their own in `data/lore/<id>.json` and belong to no single project; a

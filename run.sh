@@ -14,8 +14,12 @@ mkdir -p "$HOME/.cache/huggingface"
 # The app's image is plain Python plus ffmpeg (for Audio Lab). It is built once and reused; the code itself is mounted.
 echo "Preparing the SWIFT Director container (the first time takes a minute or two)..."
 docker build -q -t swift-director-app -f Dockerfile . >/dev/null
+# Optional: COMFY_INPUT is ComfyUI's input folder on this machine. When it is given, Reference Generation can delete the
+# image file of a picture you deny or that expires; without it only SWIFT Director's own record of the picture is deleted.
+INPUT_MOUNT=()
+if [ -n "$COMFY_INPUT" ] && [ -d "$COMFY_INPUT" ]; then INPUT_MOUNT=(-v "$COMFY_INPUT":/comfy-input -e COMFY_INPUT_DIR=/comfy-input); fi
 docker run -d --name swift-director --restart unless-stopped --network host --gpus all --pid host \
-  -v "$PWD":/app -v "$MODELS_DIR":/models -v "$HOME/.cache/huggingface":/hf:ro \
+  -v "$PWD":/app -v "$MODELS_DIR":/models -v "$HOME/.cache/huggingface":/hf:ro "${INPUT_MOUNT[@]}" \
   -w /app -e PORT=8190 swift-director-app python app.py >/dev/null
 
 # Song analysis service for Assisted Storyboard (lyrics, beats). The first build takes a few minutes.
