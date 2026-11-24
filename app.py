@@ -536,6 +536,32 @@ def generator_view(pid):
     return generator.view(refresh_statuses(pid), generator_models())
 
 
+def generator_library(pid):
+    """Every picture this project already has, for choosing a reference without uploading: newest generated pictures first,
+    then the cast's views, assets and props (the tagged worlds' included), uploaded photos, and the storyboard's own shots."""
+    project = refresh_statuses(pid)
+    out, seen = [], set()
+
+    def add(image, label, group):
+        if isinstance(image, str) and image and image not in seen:
+            seen.add(image)
+            out.append({"image": image, "label": str(label or "Picture")[:120], "group": group})
+    for g in sorted(project.get("generated", []), key=lambda g: -(g.get("created") or 0)):
+        add(g.get("image"), g.get("label"), "Generated pictures")
+    for a in project.get("actors", []):
+        for v in a.get("views", []):
+            add(v.get("image"), f"{a.get('name') or 'Actor'} · {v.get('label') or 'view'}", "Actors")
+    for t in stage_items(project):
+        for v in t.get("views", []):
+            add(v.get("image"), f"{t['name']} · {v.get('label') or 'picture'}" + (f" ({t['world']})" if t.get("world") else ""), "Assets and props")
+    for ph in project.get("photos", []):
+        add(ph.get("image"), ph.get("name"), "Photos")
+    for i, seg in enumerate(project.get("segments", []), 1):
+        add(seg.get("begin_image"), f"{i}. {seg.get('name') or 'Segment'} · begin shot", "Storyboard shots")
+        add(seg.get("end_image"), f"{i}. {seg.get('name') or 'Segment'} · end shot", "Storyboard shots")
+    return {"pictures": out}
+
+
 def generator_save(pid, state):
     with LOCK:
         project = load_project(pid)
@@ -1282,6 +1308,8 @@ class Handler(BaseHTTPRequestHandler):
                 return self.send_json(dict(config.options(), in_use=models_in_use()))
             if url.path == "/api/lore":
                 return self.send_json(lore_listing())
+            if url.path == "/api/generator/library":
+                return self.send_json(generator_library(urllib.parse.parse_qs(url.query).get("project", [""])[0]))
             if url.path == "/api/generator":
                 return self.send_json(generator_view(urllib.parse.parse_qs(url.query).get("project", [""])[0]))
             if url.path == "/api/system/usage":

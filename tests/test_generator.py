@@ -181,6 +181,21 @@ class GeneratorTests(test_core.Base if hasattr(test_core, "Base") else unittest.
         self.assertEqual(v["state"]["approved"], ["one.png"])
         self.assertEqual(app.generator_remove(self.pid, "one.png")["state"]["approved"], [])
 
+    def test_apply_from_library_lists_every_picture_the_project_has_once_each(self):
+        with app.LOCK:
+            p = app.load_project(self.pid)
+            p["actors"] = [{"id": "m", "name": "Misty", "description": "", "views": [{"id": "v", "image": "misty.png", "label": "waist-up"}]}]
+            p["things"] = [{"id": "s", "name": "Ship", "kind": "scene", "context": "", "description": "", "views": [{"id": "w", "image": "ship.png", "label": "side"}]}]
+            p["photos"] = [{"id": "p", "name": "Set photo", "image": "photo.png"}, {"id": "q", "name": "Same as the ship", "image": "ship.png"}]
+            p["generated"] = [{"id": "g1", "image": "old.png", "kind": "shot", "label": "Opening frame", "created": 5},
+                              {"id": "g2", "image": "new.png", "kind": "gen", "slot": "image", "label": "Asset Generator · Image", "created": 9}]
+            p["segments"] = [dict(test_core.SEG if hasattr(test_core, "SEG") else {"name": "Intro", "start": 0, "end": 6, "type": "story", "runs": 1}, id="a", name="Intro", begin_image="old.png", end_image="end.png")]
+            app.save_project(p, touch=False)
+        got = [(x["group"], x["image"], x["label"]) for x in app.generator_library(self.pid)["pictures"]]
+        self.assertEqual(got, [("Generated pictures", "new.png", "Asset Generator · Image"), ("Generated pictures", "old.png", "Opening frame"),
+                               ("Actors", "misty.png", "Misty · waist-up"), ("Assets and props", "ship.png", "Ship · side"),
+                               ("Photos", "photo.png", "Set photo"), ("Storyboard shots", "end.png", "1. Intro · end shot")])
+
     def test_only_a_layers_own_pictures_can_be_applied_and_a_removed_one_is_no_longer_applied(self):
         self.finish("background", "bg.png"); self.finish("middle", "mid.png"); self.finish("foreground", "fg.png")
         for layer, image in (("background", "mid.png"), ("composed", "bg.png"), ("image", "bg.png"), ("middle", "never-made.png")):

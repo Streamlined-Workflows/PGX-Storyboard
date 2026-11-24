@@ -193,13 +193,52 @@ window.AssetGenerator = (function () {
       holder.append(slot);
     });
     if (st.refs.length < max) {
-      const add = el('<div class="ag-refcard"><div class="ag-ref ag-refempty"><label title="Add a reference picture"><input type="file" accept="image/*" hidden>+</label></div></div>'), pick = add.querySelector('input');
+      /* The empty slot asks where the picture comes from: this computer, or one the project already has. */
+      const add = el(`<div class="ag-refcard"><div class="ag-ref ag-refempty"><button class="ag-addref" type="button" title="Add a reference picture" aria-label="Add a reference picture" aria-haspopup="true" aria-expanded="false">+</button><input type="file" accept="image/*" hidden></div>
+        <div class="ag-source" hidden><button class="small ag-up" type="button">Upload</button><button class="small ag-lib" type="button">Apply from Library</button></div></div>`), pick = add.querySelector('input'), menu = add.querySelector('.ag-source'), plus = add.querySelector('.ag-addref');
+      plus.onclick = () => { menu.hidden = !menu.hidden; plus.setAttribute('aria-expanded', !menu.hidden); if (!menu.hidden) add.querySelector('.ag-up').focus(); };
+      add.querySelector('.ag-up').onclick = () => pick.click();
+      add.querySelector('.ag-lib').onclick = () => library(image => { st.refs.push({ image, use: 'keep exactly' }); keep(); draw(); }, st.refs.map(r => r.image));
       pick.onchange = async () => { const f = pick.files[0]; if (!f) return; add.classList.add('ag-loading'); try { st.refs.push({ image: await host.upload(f), use: 'keep exactly' }); keep(); } catch (e) { host.toast(e.message); } draw(); };
       holder.append(add);
     }
     const adds = [...(st.refs.some(r => r.use === 'insert') ? [useOf('insert').adds] : []), ...st.refs.map((r, n) => nums[n] ? useOf(r.use).adds.replace('{n}', nums[n]) : null).filter(Boolean)];
     if (adds.length) holder.append(el(`<div class="hint ag-adds"><b>Added after your prompt:</b> ${esc(adds.join(' '))}</div>`));
     if (nums.includes(0)) holder.append(el('<div class="hint ag-adds">A kept picture takes one of the four places, so only three others are used with it.</div>'));
+  }
+
+  /* Apply from Library: every picture the project already has, grouped, to pick one as a reference. */
+  let picker = null;
+  function closeLibrary() { if (picker) picker.remove(); picker = null; }
+  document.addEventListener('keydown', ev => { if (picker && ev.key === 'Escape') closeLibrary(); });
+  async function library(choose, already) {
+    closeLibrary();
+    picker = el(`<div class="ag-modal" role="dialog" aria-modal="true" aria-label="Apply from Library"><div class="ag-modalbox">
+      <div class="ag-modalhead"><h2>Apply from Library</h2><input class="ag-find" type="search" placeholder="Filter by name" aria-label="Filter by name"><span class="ag-grow"></span><button class="small ghost ag-close" type="button" title="Close">✕</button></div>
+      <p class="hint">Pictures this project already has. Click one to use it as the reference. Nothing is copied or changed.</p><div class="ag-libbody"><p class="hint">Loading…</p></div></div></div>`);
+    picker.onpointerdown = ev => { if (ev.target === picker) closeLibrary(); };
+    picker.querySelector('.ag-close').onclick = closeLibrary;
+    root.querySelector('.ag').append(picker);
+    const body = picker.querySelector('.ag-libbody'), find = picker.querySelector('.ag-find');
+    let all = [];
+    try { all = (await call('GET', '/library?project=' + encodeURIComponent(host.pid))).pictures; } catch (e) { body.innerHTML = '<p class="hint">' + esc(e.message) + '</p>'; return; }
+    if (!picker) return;
+    const show = () => {
+      const want = find.value.trim().toLowerCase(), list = all.filter(p => !want || p.label.toLowerCase().includes(want) || p.group.toLowerCase().includes(want));
+      body.innerHTML = '';
+      if (!all.length) { body.append(el('<p class="hint">This project has no pictures yet. Generate one, or use Upload.</p>')); return; }
+      if (!list.length) { body.append(el('<p class="hint">Nothing matches that.</p>')); return; }
+      [...new Set(list.map(p => p.group))].forEach(group => {
+        const grid = el('<div class="ag-libgrid"></div>');
+        list.filter(p => p.group === group).forEach(p => {
+          const used = already.includes(p.image), b = el(`<button class="ag-libitem${used ? ' ag-libused' : ''}" type="button" title="${esc(p.label)}"${used ? ' disabled' : ''}><img loading="lazy" alt="" src="${esc(host.view(p.image))}"><span>${esc(p.label)}</span>${used ? '<i>already a reference here</i>' : ''}</button>`);
+          b.onclick = () => { closeLibrary(); choose(p.image); };
+          grid.append(b);
+        });
+        body.append(el(`<h3>${esc(group)} <span class="hint">${list.filter(p => p.group === group).length}</span></h3>`), grid);
+      });
+    };
+    find.oninput = show; show(); find.focus();
   }
 
   /* For a reference set to "Insert as it is": put it in the centre of a blank picture of the size pictures are made at, and
@@ -231,7 +270,7 @@ window.AssetGenerator = (function () {
       if (changed) { data = null; root.innerHTML = '<div class="panel hint">Loading…</div>'; }
       load();
     },
-    hide() { showing = false; clearTimeout(timer); },
+    hide() { showing = false; clearTimeout(timer); closeLibrary(); },
     _state: () => data,
   };
 })();

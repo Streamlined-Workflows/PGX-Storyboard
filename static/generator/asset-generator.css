@@ -22,7 +22,7 @@
 .ag .ag-ref { position:relative; width:72px; height:72px; border:1px solid var(--swift-border); border-radius:var(--swift-radius-lg); background:var(--swift-base); overflow:hidden; }
 .ag .ag-refempty { border-style:dashed; }
 .ag .ag-ref img { width:100%; height:100%; object-fit:cover; cursor:zoom-in; display:block; }
-.ag .ag-ref label { position:absolute; inset:0; display:grid; place-items:center; margin:0; font-size:24px; color:var(--swift-green); cursor:pointer; }
+.ag .ag-addref { position:absolute; inset:0; width:100%; height:100%; padding:0; border:none; background:none; font-size:24px; color:var(--swift-green); cursor:pointer; }
 .ag .ag-ref.ag-loading { opacity:.5; }
 .ag .ag-x { position:absolute; top:2px; right:2px; width:20px; height:20px; padding:0; border-radius:50%; font-size:14px; line-height:1; background:var(--swift-surface); }
 .ag .ag-num { position:absolute; left:3px; bottom:2px; font-size:11px; padding:0 5px; border-radius:8px; background:var(--swift-surface); color:var(--swift-text-strong); }
@@ -41,3 +41,14 @@
 .ag .ag-usehelp { font-size:11px; line-height:1.35; } .ag .ag-adds { flex-basis:100%; }
 .ag .ag-config { margin-bottom:0; }      /* the box itself is styled by config-center.css (.cc), shared with Assisted Storyboard */
 .ag .ag-ok.on { background:var(--swift-green); color:var(--swift-on-primary); border-color:var(--swift-green); }
+.ag .ag-source { display:grid; gap:4px; } .ag .ag-source[hidden] { display:none; } .ag .ag-source button { width:100%; }
+.ag .ag-modal { position:fixed; inset:0; z-index:70; display:grid; place-items:center; padding:16px; background:rgba(0,0,0,.8); }
+.ag .ag-modalbox { width:min(1040px, 100%); max-height:90vh; overflow:auto; padding:20px; background:var(--swift-surface); border:1px solid var(--swift-ring-strong); border-radius:var(--swift-radius-2xl, 16px); }
+.ag .ag-modalhead { display:flex; gap:12px; align-items:center; flex-wrap:wrap; } .ag .ag-modalhead h2 { margin:0; } .ag .ag-find { width:220px; }
+.ag .ag-libbody h3 { margin:16px 0 8px; font-size:14px; color:var(--swift-text-strong); }
+.ag .ag-libgrid { display:grid; grid-template-columns:repeat(auto-fill, minmax(150px, 1fr)); gap:10px; }
+.ag .ag-libitem { display:grid; gap:4px; padding:6px; text-align:left; border:1px solid var(--swift-border); border-radius:var(--swift-radius-lg); background:var(--swift-base); cursor:pointer; }
+.ag .ag-libitem:hover:not(:disabled), .ag .ag-libitem:focus-visible { border-color:var(--swift-green); }
+.ag .ag-libitem img { width:100%; aspect-ratio:16/9; object-fit:cover; border-radius:var(--swift-radius-md, 8px); display:block; background:var(--swift-elevated); }
+.ag .ag-libitem span { font-size:12px; color:var(--swift-text); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.ag .ag-libitem i { font-size:11px; color:var(--swift-text-muted); } .ag .ag-libused { opacity:.5; cursor:default; }

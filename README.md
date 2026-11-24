@@ -244,6 +244,9 @@ composed output. The pictures are ordinary FLUX.2 stills marked `kind: "gen"` wi
   summary, and an In use or Stored tag on each setting. In use today: the name and type (what **Save to Assets** creates: an
   actor, a scene asset, a prop, or a world asset of a tagged Lore entry), asking before a run, and requiring approval
   before a picture can be saved. The rating and the model choices are stored; one model per role is installed.
+- An empty reference slot asks **Upload** or **Apply from Library**. The library lists every picture the project already
+  has (generated pictures newest first, actors' views, assets and props, photos, storyboard shots), each once, with a name
+  filter. Choosing one uses the existing file; nothing is copied.
 - Every reference picture has a **How to use it** choice, the same four as Identity Studio: Insert as it is, Follow
   closely (redrawn), Style guide, Inspiration. The last three each add one sentence after the typed prompt, and the page
   shows those sentences before anything runs. With no references, the prompt is sent exactly as typed.
