@@ -239,6 +239,12 @@ instruction to stay consistent with them and not to try to show all of it. Up to
 characters per storyboard are sent, in the order tagged, so the most important text should come
 first. Deleting an entry moves it to `data/trash/`.
 
+In the Shots step every picture has an **In this picture** row of tick boxes, one per chosen actor and
+per asset or prop. A ticked name has its reference picture sent with the description, and the image model
+is told to keep it exactly; an unticked one is left out entirely. The language model's plan sets the boxes
+at first, editing a description does not change them, and they are yours to set. With nothing ticked the
+picture is made from the description and style alone, which is what an exterior shot with no cast wants.
+
 In the story concept (step 3) every line of "What we see" can be edited, and locked. A locked line
 cannot be edited, and **Write another** keeps locked lines word for word and writes the rest of
 the story around them. Editing a line of an approved story also updates the approved copy, and

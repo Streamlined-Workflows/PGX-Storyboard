@@ -161,6 +161,8 @@
   .keyframe { display:grid; grid-template-columns:150px 1fr 200px; gap:12px; padding:10px 0; border-top:1px solid var(--line); align-items:start; }
   button.locked { border-color:var(--ok); color:var(--ok); }
   .keyframe textarea { width:100%; min-height:84px; }
+  .inpic { display:flex; flex-wrap:wrap; gap:4px 14px; align-items:center; margin-top:6px; font-size:13px; }
+  .inpic-tick { display:inline-flex; align-items:center; gap:4px; margin:0; color:var(--swift-text); cursor:pointer; } .inpic-note { flex-basis:100%; }
   .keyframe img, .keyframe .noimg { width:200px; aspect-ratio:16/9; object-fit:cover; border-radius:6px; background:var(--bg); border:1px solid var(--line); display:block; }
   .step h2::before { content:counter(step) ". "; }
   #v-assist { counter-reset:step; }
@@ -1508,6 +1510,29 @@ function shotRows() {
     title: `${i + 1}. ${P.segments[i].name}`, off: P.segments[i].type === 'singing', sub: P.segments[i].type === 'singing' ? 'Singing: no end shot. The next segment continues from the last frame of the clip you pick here.' : 'End shot' + (i + 1 < P.segments.length ? `, and where segment ${i + 2} begins if it continues` : '') }); });
   return rows;
 }
+/* Which actors and assets one picture uses. A ticked name has its reference picture sent with the description and the
+   image model is told to keep it exactly, so untick anyone or anything that should not be in this picture. */
+function inPicture(shot) {
+  const box = node('div', 'inpic'), actors = Object.fromEntries((P.actors || []).map(a => [a.id, a]));
+  const cast = (A().cast || []).map(c => actors[c.actor_id]).filter(Boolean).map(a => ({ name: a.name || 'Actor', pic: (a.views || []).length > 0, kind: 'actor' }));
+  const seen = new Set(), things = allThings().map(x => x.t).filter(t => (t.name || '').trim() && !seen.has(t.name.toLowerCase()) && seen.add(t.name.toLowerCase()))
+    .map(t => ({ name: t.name, pic: (t.views || []).length > 0, kind: t.kind === 'prop' ? 'prop' : 'asset' }));
+  shot.who ||= []; shot.what ||= [];
+  box.append(node('span', 'hint', 'In this picture:'));
+  if (!cast.length && !things.length) { box.append(node('span', 'hint', 'no actors or assets chosen yet. The picture is made from the description alone.')); return box; }
+  const note = node('div', 'hint inpic-note');
+  const count = () => { const pics = [...cast.filter(c => shot.who.includes(c.name) && c.pic), ...things.filter(t => shot.what.includes(t.name) && t.pic)].length;
+    note.textContent = !shot.who.length && !shot.what.length ? 'Nothing ticked: the picture is made from the description alone.' : pics > 4 ? 'Only four reference pictures fit in one image. Actors come first; anything left over is described in words.' : ''; };
+  const tick = (item, list) => {
+    const l = node('label', 'inpic-tick'), c = node('input'); c.type = 'checkbox'; c.checked = list.includes(item.name); c.disabled = !!shot.locked;
+    l.title = item.pic ? `Ticked: this ${item.kind}'s reference picture is used for this image.` : `This ${item.kind} has no picture yet, so ticking it only adds its description in words.`;
+    c.onchange = () => { const at = list.indexOf(item.name); if (c.checked && at < 0) list.push(item.name); if (!c.checked && at >= 0) list.splice(at, 1); count(); saveShots(); };
+    l.append(c, document.createTextNode(' ' + item.name + (item.pic ? '' : ' (no picture)'))); box.append(l);
+  };
+  cast.forEach(c => tick(c, shot.who)); things.forEach(t => tick(t, shot.what));
+  count(); box.append(note);
+  return box;
+}
 function renderShots() {
   const out = $('shotsOut'), ready = !!A().story, rows = shotRows();
   if (out.contains(document.activeElement) && document.activeElement.tagName === 'TEXTAREA') return;      // do not redraw under someone typing
@@ -1529,10 +1554,8 @@ function renderShots() {
       if (r.entry.reason) left.append(node('div', 'hint', r.entry.reason));
       if (r.cont) { row.append(left, node('div', 'hint', 'Starts on the exact frame the segment before it ends on: its end shot, or the last frame of the clip you pick there.'), right); out.append(row); return; }
     }
-    if (r.shot.who && r.shot.who.length) left.append(node('div', 'hint', 'In frame: ' + r.shot.who.join(', ')));
-    if (r.shot.what && r.shot.what.length) left.append(node('div', 'hint', 'Assets and props: ' + r.shot.what.join(', ')));
     const text = node('textarea'); text.value = r.shot.text || ''; text.oninput = () => { r.shot.text = text.value; saveShots(); };
-    mid.append(text);
+    mid.append(text, inPicture(r.shot));
     const job = (P.image_jobs || []).filter(j => j.kind === 'shot' && j.segment_id === r.seg.id && j.slot === r.slot).pop();
     const pic = r.seg[r.slot] ? node('img') : node('div', 'noimg'); if (r.seg[r.slot]) pic.src = view(r.seg[r.slot]);
     right.append(pic);

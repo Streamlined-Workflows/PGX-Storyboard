@@ -895,6 +895,17 @@ def assist_shots_save(pid, shots):
         current = (project.get("assist") or {}).get("shots")
         if not current or not isinstance(shots, dict):
             raise ValueError("Write the shots first.")
+        cast_names = [c["name"] for c in cast_members(project)]
+        item_names = [t["name"] for t in stage_items(project)]
+
+        def in_frame(frame, edit):
+            """Which actors and assets a picture uses is the person's to set: the ticked names are kept, in the cast's and
+            the assets' own order. Names that are no longer cast or no longer exist are dropped."""
+            if isinstance(edit.get("who"), list):
+                frame["who"] = [n for n in cast_names if n in edit["who"]]
+            if isinstance(edit.get("what"), list):
+                frame["what"] = [n for n in item_names if n in edit["what"]]
+        in_frame(current["first"], shots.get("first") or {})
         current["first"]["text"] = str((shots.get("first") or {}).get("text", current["first"]["text"]))[:1500]
         current["first"]["locked"] = bool((shots.get("first") or {}).get("locked", current["first"].get("locked")))
         edits = {e.get("segment_id"): e for e in shots.get("ends", []) if isinstance(e, dict)}
@@ -906,6 +917,8 @@ def assist_shots_save(pid, shots):
                     end["start"] = edit["start"]
                 end.setdefault("begin", {"text": "", "who": []})
                 end["begin"]["text"] = str((edit.get("begin") or {}).get("text", end["begin"].get("text", "")))[:1500]
+                in_frame(end, edit)
+                in_frame(end["begin"], edit.get("begin") or {})
                 end["locked"] = bool(edit.get("locked", end.get("locked")))
                 end["begin"]["locked"] = bool((edit.get("begin") or {}).get("locked", end["begin"].get("locked")))
         return update_assist(pid, shots=current)

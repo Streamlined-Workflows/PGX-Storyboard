@@ -153,6 +153,39 @@ class KeyFrameTests(Base):
         self.assertNotIn(("a", "begin_image"), self.queued)                                      # the locked opening frame is left alone
 
 
+    def test_a_picture_uses_only_the_actors_and_assets_ticked_for_it(self):
+        segs = [dict(SEG, id="a")]
+        frame = lambda text, **k: dict({"text": text, "who": [], "what": []}, **k)
+        shots = {"first": frame("The ship drifts dark in a debris field.", who=["Misty"]),
+                 "ends": [dict(frame("The ship, lights out.", who=["Misty"]), segment_id="a", start="new", begin=frame("The ship drifts dark in a debris field."))]}
+        story = {"title": "T", "logline": "L", "style": "S", "beats": [""], "segment_ids": ["a"]}
+        p = self.project(segs, actors=[{"id": "m", "name": "Misty", "description": "teal suit", "views": [{"image": "misty.png", "label": "waist-up"}]}],
+                         things=[{"id": "s", "name": "Ship", "kind": "scene", "context": "", "description": "", "views": [{"image": "ship.png"}]}],
+                         assist={"analysis": {"tempo": 120}, "story": story, "story_draft": story, "cast": [{"actor_id": "m", "role": "pilot"}], "shots": shots})
+        sent = []
+        app.queue_still = lambda project, prompt, refs, stem, graph=None, **f: sent.append((f.get("slot"), prompt, refs)) or {"id": "j"}
+        app.assist_shot_images(p["id"], ["first"])
+        self.assertEqual(sent[0][2], ["misty.png"])                          # as the language model planned it: the actor is in the exterior
+        self.assertIn("Misty is the character in reference image 1", sent[0][1])
+        # Untick the actor and tick the ship on the opening frame; leave the end frame as it was.
+        edited = {"first": {"text": shots["first"]["text"], "who": [], "what": ["Ship", "Someone deleted"]}, "ends": [{"segment_id": "a", "text": "The ship, lights out."}]}
+        saved = app.assist_shots_save(p["id"], edited)["assist"]["shots"]
+        self.assertEqual((saved["first"]["who"], saved["first"]["what"]), ([], ["Ship"]))          # a name that is not an asset is dropped
+        self.assertEqual(saved["ends"][0]["who"], ["Misty"])                                       # not sent, so not changed
+        sent.clear()
+        app.assist_shot_images(p["id"], ["first", "a"])
+        opening, end = sent
+        self.assertEqual(opening[2], ["ship.png"])
+        self.assertNotIn("Misty", opening[1])
+        self.assertIn("Ship is the subject shown in reference image 1", opening[1])
+        self.assertEqual(end[2], ["misty.png"])
+        # Nothing ticked: the picture comes from the description and style alone.
+        app.assist_shots_save(p["id"], {"first": {"who": [], "what": []}, "ends": []})
+        sent.clear(); app.assist_shot_images(p["id"], ["first"])
+        self.assertEqual(sent[0][2], [])
+        self.assertTrue(sent[0][1].startswith("The ship drifts dark in a debris field. Visual style: S."))
+
+
 class HttpTests(Base):
     """A few requests through the real request handler, for the rules that live in it."""
 
