@@ -1063,16 +1063,15 @@ class Handler(BaseHTTPRequestHandler):
             else:
                 reply = api.handle(method, url.path, query, json.loads(body or b"{}") if body is not None else None)
             if isinstance(reply, api.File):
-                with open(reply.path, "rb") as f:
-                    data = f.read()
-                self.send_response(200)
-                self.send_header("Content-Type", reply.content_type)
-                self.send_header("Content-Length", str(len(data)))
-                self.send_header("X-Content-Type-Options", "nosniff")
-                self.send_header("Content-Security-Policy", "default-src 'none'; style-src 'unsafe-inline'; sandbox")
-                self.send_header("Cache-Control", "private, max-age=3600")
-                self.end_headers()
-                return self.wfile.write(data)
+                with open(reply.path, "rb") as f:                              # sent in pieces: an exported mix can be very large
+                    self.send_response(200)
+                    self.send_header("Content-Type", reply.content_type)
+                    self.send_header("Content-Length", str(os.fstat(f.fileno()).st_size))
+                    self.send_header("X-Content-Type-Options", "nosniff")
+                    self.send_header("Content-Security-Policy", "default-src 'none'; style-src 'unsafe-inline'; sandbox")
+                    self.send_header("Cache-Control", "private, max-age=3600")
+                    self.end_headers()
+                    return shutil.copyfileobj(f, self.wfile, 1024 * 1024)
             return self.send_json(reply)
         except json.JSONDecodeError:
             return self.send_json({"error": "The request was not valid JSON."}, 400)

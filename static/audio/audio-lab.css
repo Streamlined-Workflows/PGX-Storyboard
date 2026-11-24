@@ -43,3 +43,46 @@
 .al .al-empty { padding:28px 16px; }
 .al .al-foot { display:flex; gap:12px; align-items:center; flex-wrap:wrap; }
 @media (max-width:760px) { .al .al-corner, .al .al-th { flex-basis:216px; } .al .al-scroll { max-height:60vh; } }
+
+/* ----- mixing and export (audio-mix.js) ----- */
+.al .al-bar button.on, .al .al-card button.on { background:var(--swift-green); color:var(--swift-on-primary); border-color:var(--swift-green); }
+.al .al-panels { display:flex; flex-direction:column; gap:10px; min-width:0; }
+.al .al-card { padding:10px 12px; border:1px solid var(--swift-border); border-radius:var(--swift-radius-xl); background:var(--swift-surface); min-width:0; }
+.al .al-cardhead { display:flex; gap:10px; align-items:baseline; flex-wrap:wrap; margin-bottom:8px; } .al .al-cardhead b { color:var(--swift-text-strong); } .al .al-cardhead h2 { margin:0; }
+.al .al-fields { display:flex; gap:10px 14px; flex-wrap:wrap; align-items:flex-end; }
+.al .al-fields label { display:grid; gap:3px; margin:0; font-size:12px; color:var(--swift-text-muted); }
+.al .al-fields label[hidden] { display:none; }
+.al .al-fields input[type=number] { width:96px; } .al .al-fields input[type=text] { width:180px; } .al .al-fields input[type=range] { width:150px; }
+.al .al-fields output, .al .al-fxparams output { color:var(--swift-text-strong); font-variant-numeric:tabular-nums; }
+.al .al-tick2 { display:inline-flex !important; gap:6px; align-items:center; margin:0; color:var(--swift-text); font-size:13px; }
+.al .al-note { margin:8px 0 0; }
+.al .al-fxlist { display:grid; gap:8px; }
+.al .al-fx { padding:8px 10px; border:1px solid var(--swift-border); border-radius:var(--swift-radius-lg); background:var(--swift-base); }
+.al .al-fxoff .al-fxparams { opacity:.45; }
+.al .al-fxhead { display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
+.al .al-fxparams { display:flex; gap:8px 16px; flex-wrap:wrap; margin-top:6px; }
+.al .al-fxparams label { display:grid; gap:2px; margin:0; font-size:12px; color:var(--swift-text-muted); } .al .al-fxparams input { width:150px; }
+.al .al-strips { display:flex; gap:8px; overflow-x:auto; padding-bottom:4px; }
+.al .al-strip { flex:0 0 92px; display:grid; gap:5px; justify-items:center; padding:8px 6px; border:1px solid var(--swift-border); border-top:4px solid var(--swift-ring-strong); border-radius:var(--swift-radius-lg); background:var(--swift-base); }
+.al .al-master { flex-basis:112px; border-top-color:var(--swift-text-strong); margin-left:auto; position:sticky; right:0; }
+.al .al-stripquiet { opacity:.55; }
+.al .al-stripname { max-width:100%; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-size:12px; color:var(--swift-text-strong); }
+.al .al-faderrow { display:flex; gap:5px; align-items:stretch; height:120px; }
+.al .al-meter { position:relative; width:8px; border-radius:4px; background:var(--swift-elevated); border:1px solid var(--swift-border); overflow:hidden; }
+.al .al-meter i { position:absolute; left:0; right:0; bottom:0; height:0; background:var(--swift-green); }
+.al .al-meter i.al-warm { background:var(--swift-warn, var(--swift-amber-400)); } .al .al-meter i.al-hot { background:var(--swift-danger); }
+.al .al-fader { writing-mode:vertical-lr; direction:rtl; width:22px; height:120px; margin:0; padding:0; }
+.al .al-dbout { font-size:11px; font-variant-numeric:tabular-nums; color:var(--swift-text-strong); }
+.al .al-mpan { width:72px; margin:0; }
+.al .al-stripbtns { display:flex; gap:4px; } .al .al-strip button.small { padding:1px 7px; font-size:11px; }
+.al .al-over.on { background:var(--swift-danger) !important; border-color:var(--swift-danger) !important; color:var(--swift-on-primary); }
+.al .al-peak { font-size:10px; white-space:nowrap; }
+.al .al-modal { position:fixed; inset:0; z-index:70; display:grid; place-items:center; padding:16px; background:rgba(0,0,0,.8); }
+.al .al-modalbox { width:min(760px, 100%); max-height:90vh; overflow:auto; padding:20px; background:var(--swift-surface); border:1px solid var(--swift-ring-strong); border-radius:var(--swift-radius-2xl, 16px); }
+.al .al-modalbox h3 { margin:18px 0 8px; font-size:14px; }
+.al .al-exgo { display:flex; gap:12px; align-items:center; margin-top:14px; }
+.al .al-exlist { display:grid; gap:8px; }
+.al .al-ex { display:flex; gap:10px; align-items:center; justify-content:space-between; padding:8px 10px; border:1px solid var(--swift-border); border-radius:var(--swift-radius-lg); }
+.al .al-exmain { display:flex; gap:4px 10px; flex-wrap:wrap; align-items:center; min-width:0; } .al .al-exmain b { color:var(--swift-text-strong); } .al .al-exmain progress { width:140px; }
+.al .al-exnote { flex-basis:100%; font-size:12px; color:var(--swift-danger); }
+.al .al-exbtns { display:flex; gap:6px; flex:none; } .al .al-dl { text-decoration:none; padding:3px 10px; font-size:12px; }

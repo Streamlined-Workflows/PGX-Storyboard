@@ -45,7 +45,7 @@ It runs as a Docker container named `swift-director` that starts on boot (with `
 | Projects | Every saved project. Open, rename, duplicate or delete one; each keeps its own timeline, assets and clips |
 | Assets | The open project's actors, photos and audio. An actor is one character with a name, a description and any number of views (stills); photos are loose reference stills |
 | Library | Every video rendered in the open project, with download links |
-| Audio Lab | A multi-track audio timeline for the open project: import sounds, arrange, trim and split clips, play them back |
+| Audio Lab | A multi-track audio timeline for the open project: import sounds, arrange, trim and split clips, mix with effects, and export a finished file |
 | Lore | Long background text about a setting (world, factions, people, technology, look). Each entry can be tagged to any number of storyboards |
 | Identity Studio | A separate workspace for logos and app identities. See [Identity Studio](#identity-studio) |
 | System status | Ping test, and CPU, GPU, memory and disk meters for the server. Under the meters, a list of what is using memory and the GPU: the models Ollama and ComfyUI have loaded, and the largest programs on the server |
@@ -205,9 +205,18 @@ A multi-track timeline for arranging a project's audio. It is a separate module 
 - **Each project's timeline is its own file**, saved atomically with the last 20 versions kept.
   A save from a second window is detected, not silently overwritten.
 
-Today it imports, arranges, trims, splits and plays. The mixer, clip processing and export are
-the next milestone; see `docs/Task_03_Milestone_B.md`. The application's container includes
-ffmpeg for this (`Dockerfile`).
+- **Clips** carry a level, fades, speed, pitch, reverse and a chain of effects. **Tracks** and the
+  **master** carry volume and effects; tracks also balance, mute and solo. The effects are EQ,
+  compressor and reverb.
+- **The mixer** shows a meter per track and for the mix, and marks when the mix goes over full level.
+- **Export** writes a new file with ffmpeg from the saved timeline: the full mix, each track as its
+  own file (a zip), or part of the timeline; WAV, FLAC or MP3; 48 or 44.1 kHz. Nothing is
+  normalised or limited: the loudest point is measured and reported. Exports run in the background
+  on the processor and are kept under `data/audio/exports/`.
+- **Playback in the browser is a preview.** The export is the finished result.
+
+See `docs/Task_03_Milestone_C.md` for how the export is checked. The application's container
+includes ffmpeg for this (`Dockerfile`).
 
 ## Lore
 

@@ -10,15 +10,23 @@
     POST  /api/audio/assets/remove      {project, id}
     GET   /api/audio/timeline?project=…
     PUT   /api/audio/timeline?project=… {timeline, based_on}
+    GET   /api/audio/room?size=…&decay=…               the reverb's room sound, for the browser's preview
+    GET   /api/audio/exports?project=…                 this project's exports, newest first
+    POST  /api/audio/export             {project, what, format, bits?, kbps?, sample_rate?, start?, end?, name?}
+    POST  /api/audio/export/stop        {project, id}
+    POST  /api/audio/export/remove      {project, id}
+    GET   /api/audio/export/file?project=…&id=…        the finished file
 """
 import os
 
-from . import media, schemas
+from . import media, render, schemas
+from .exports import Exporter
 from .storage import Conflict, Library
 
 PREFIX = "/api/audio/"
 RAW_ROUTES = ("assets",)
 _library = None
+_exporter = None
 _hooks = {"project_audio": None}
 
 
@@ -35,8 +43,15 @@ def library():
 
 
 def use_library(custom):
-    global _library
-    _library = custom
+    global _library, _exporter
+    _library, _exporter = custom, None
+
+
+def exporter():
+    global _exporter
+    if _exporter is None or _exporter.lib is not library():
+        _exporter = Exporter(library())
+    return _exporter
 
 
 def configure(project_audio=None):
@@ -58,7 +73,10 @@ def handle(method, path, query=None, payload=None, raw=None):
     if method == "GET":
         if route == "info":
             return {"schema": schemas.SCHEMA, "tools": media.has_ffmpeg(), "sample_rate": schemas.DEFAULT_RATE, "asset_kinds": list(schemas.ASSET_KINDS),
-                    "track_kinds": list(schemas.TRACK_KINDS), "peak_rate": media.PEAK_RATE, "max_tracks": 64}
+                    "track_kinds": list(schemas.TRACK_KINDS), "peak_rate": media.PEAK_RATE, "max_tracks": 64,
+                    "effects": {name: {k: list(v) for k, v in spec.items()} for name, spec in schemas.EFFECTS.items()},
+                    "export": {"formats": [f for f in render.OUT_FORMATS if f != "mp3" or (media.has_ffmpeg() and render.features()["mp3"])],
+                               "sample_rates": list(render.OUT_RATES), "mp3_rates": list(render.MP3_RATES)}}
         if route == "assets":
             return {"assets": lib.for_project(_project(query))}
         if route == "asset/file":
@@ -67,6 +85,12 @@ def handle(method, path, query=None, payload=None, raw=None):
             return File(*lib.peaks_file(query.get("id", "")))
         if route == "timeline":
             return lib.timeline(_project(query))
+        if route == "room":
+            return File(exporter().room(_number(query.get("size"), 0.3), _number(query.get("decay"), 1.5)), "audio/wav")
+        if route == "exports":
+            return {"exports": exporter().list(_project(query))}
+        if route == "export/file":
+            return File(*exporter().file(_project(query), query.get("id", "")))
     if method == "POST":
         if route == "assets":
             kind = query.get("kind") if query.get("kind") in schemas.ASSET_KINDS else "other"
@@ -84,6 +108,12 @@ def handle(method, path, query=None, payload=None, raw=None):
             return {"brought": brought, "problems": problems}
         if route == "assets/remove":
             return lib.remove_from(payload.get("id", ""), _project(payload))
+        if route == "export":
+            return exporter().start(_project(payload), payload)
+        if route == "export/stop":
+            return exporter().stop(_project(payload), payload.get("id", ""))
+        if route == "export/remove":
+            return exporter().remove(_project(payload), payload.get("id", ""))
     if method == "PUT":
         if route == "asset":
             return lib.update(query.get("id", ""), payload)
@@ -98,3 +128,11 @@ def _project(source):
     if not isinstance(pid, str) or not pid:
         raise ValueError("Open a project first.")
     return pid
+
+
+def _number(text, fallback):
+    try:
+        value = float(text)
+        return value if value == value and abs(value) < 1e6 else fallback
+    except (TypeError, ValueError):
+        return fallback

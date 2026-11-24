@@ -91,7 +91,7 @@ Studio checks still pass.
 - **Undo history is per visit.** It is not kept after the page is reloaded; the saved versions on
   the server are the recovery route.
 - **Markers are plain markers.** Chapter markers arrive with Podcast Studio.
-- **Touch screens:** dragging works, but the interface is built for a mouse and keyboard.
+- **Touch screens:** not tested. The interface is built for a mouse and keyboard.
 
 ## Recommended next step
 
