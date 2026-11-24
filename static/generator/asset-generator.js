@@ -67,6 +67,7 @@ window.AssetGenerator = (function () {
       body.append(el('<p class="hint ag-lead">Make the three layers separately, choose one of each with <b>Apply to Composed Output</b>, then run the composed output: the image model redraws the three as one picture. It is a redraw, not a cut-and-paste, so small details can change.</p>'));
       const row = el('<div class="ag-row"></div>'); LAYERS.forEach(l => row.append(box(l))); body.append(row, box('composed'));
     }
+    if (mode === 'image' || mode === 'depth') body.append(resetBar());
     root.append(page);
     if (focus) { const again = root.querySelector(`[data-k="${focus}"]`); if (again) again.focus(); }
   }
@@ -109,6 +110,21 @@ window.AssetGenerator = (function () {
   }
   const approved = id => S().approved.includes(id);
   const fileStem = name => ((cfg().name || '').replace(/[^A-Za-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'asset') + '-' + TITLE[name].toLowerCase().replace(/ /g, '-');
+
+  /* Reset, at the bottom of a mode: everything in it back to how a new project has it. */
+  const MODE_BOXES = { image: ['image'], depth: ['background', 'middle', 'foreground', 'composed'] };
+  function resetBar() {
+    const what = mode === 'depth' ? 'Depth Generator' : 'Image Generator', working = MODE_BOXES[mode].some(busy), made = MODE_BOXES[mode].reduce((n, b) => n + B(b).results.length, 0);
+    const bar = el(`<div class="ag-reset"><button class="ag-resetbtn" type="button"${working ? ' disabled' : ''}>Reset ${what}</button><span class="hint">${working ? 'Available when the pictures being generated have finished.' : 'Clears the prompts, references and Asset Configuration here. Pictures already made stay in the Library.'}</span></div>`);
+    bar.querySelector('button').onclick = async () => {
+      if (!confirm(`Reset the ${what}?\n\nThis clears ${mode === 'depth' ? 'all four prompts, their' : 'the prompt, its'} reference pictures, the number of generations${mode === 'depth' ? ', what is applied to the Composed Output,' : ''} and this mode's Asset Configuration.\n\n`
+        + (made ? `The ${made} picture${made > 1 ? 's' : ''} made here will leave ${mode === 'depth' ? 'these boxes' : 'this box'} but ${made > 1 ? 'are' : 'is'} not deleted: ${made > 1 ? 'they stay' : 'it stays'} in the Library.` : 'No pictures have been made here yet.'))) return;
+      clearTimeout(saveTimer);
+      try { const fresh = await call('POST', '/reset', { project: host.pid, mode }); data = null; take(fresh); host.toast(`${what} reset.` + (fresh.moved ? ` ${fresh.moved} picture${fresh.moved > 1 ? 's are' : ' is'} still in the Library.` : '')); }
+      catch (e) { host.toast(e.message); }
+    };
+    return bar;
+  }
 
   function at(name) {                      // which finished picture a box is showing: the remembered one, else the newest
     const list = B(name).results; if (!list.length) return -1;

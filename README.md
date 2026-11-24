@@ -259,6 +259,9 @@ composed output. The pictures are ordinary FLUX.2 stills marked `kind: "gen"` wi
   picture is showing, the line under it reads "Generating an additional 2 images".
 - **Use as Reference** on a generated picture adds it to a box's reference slots as Inspiration (the loosest use), without
   saving anything to Assets. In Depth Generation it asks which box.
+- **Reset Image Generator** / **Reset Depth Generator**, at the bottom of each mode, puts that mode back to how a new
+  project has it: prompts, references, counts, what is applied, and its Asset Configuration. The pictures it made leave the
+  boxes but are not deleted; they stay in the Library. It is refused while that mode is still generating.
 - An empty reference slot asks **Upload** or **Apply from Library**. The library lists every picture the project already
   has (generated pictures newest first, actors' views, assets and props, photos, storyboard shots), each once, with a name
   filter. Choosing one uses the existing file; nothing is copied.

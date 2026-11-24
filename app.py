@@ -623,6 +623,14 @@ def generator_run(pid, box, state=None, placed=None):
         return generator.view(project, generator_models())
 
 
+def generator_reset(pid, mode):
+    with LOCK:
+        project = refresh_statuses(pid)
+        moved = generator.reset(project, mode, project["config"]["identity"]["rating"])
+        save_project(project, touch=False)
+        return dict(generator.view(project, generator_models()), moved=moved)
+
+
 def generator_apply(pid, layer, image):
     with LOCK:
         project = load_project(pid)
@@ -1408,6 +1416,8 @@ class Handler(BaseHTTPRequestHandler):
                 return self.send_json(generator_save(pid, payload.get("state")))
             if path == "/api/generator/run":
                 return self.send_json(generator_run(pid, payload.get("box"), payload.get("state"), payload.get("placed")))
+            if path == "/api/generator/reset":
+                return self.send_json(generator_reset(pid, payload.get("mode")))
             if path == "/api/generator/apply":
                 return self.send_json(generator_apply(pid, payload.get("layer"), payload.get("image")))
             if path == "/api/generator/remove":

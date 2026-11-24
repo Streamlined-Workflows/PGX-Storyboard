@@ -197,6 +197,40 @@ class GeneratorTests(test_core.Base if hasattr(test_core, "Base") else unittest.
                                ("Actors", "misty.png", "Misty · waist-up"), ("Assets and props", "ship.png", "Ship · side"),
                                ("Photos", "photo.png", "Set photo"), ("Storyboard shots", "end.png", "1. Intro · end shot")])
 
+    def test_reset_puts_one_mode_back_to_default_and_keeps_its_pictures_in_the_library(self):
+        app.generator_save(self.pid, {"image": {"prompt": "A ship.", "refs": ["a.png"], "count": 4}, "background": {"prompt": "A hangar.", "count": 3},
+                                      "composed": {"prompt": "Mine.", "refs": ["s.png"]},
+                                      "config": {"image": {"name": "Ship", "rating": "R", "type": "prop", "workflow": {"confirm_before_run": True}}, "depth": {"name": "Cockpit"}}})
+        self.finish("image", "one.png", "two.png"); self.finish("background", "bg.png")
+        app.generator_apply(self.pid, "background", "bg.png")
+        app.generator_save(self.pid, {"approved": ["one.png", "bg.png"]})
+        v = app.generator_reset(self.pid, "image")
+        self.assertEqual(v["moved"], 2)
+        self.assertEqual(v["state"]["image"], {"prompt": "", "refs": [], "at": None, "count": 1})
+        c = v["state"]["config"]["image"]
+        self.assertEqual((c["name"], c["rating"], c["type"], c["workflow"]["confirm_before_run"]), ("", "PG-13", "scene", False))
+        self.assertEqual(v["boxes"]["image"]["results"], [])
+        self.assertEqual(v["state"]["approved"], ["bg.png"])
+        # The other mode is untouched.
+        self.assertEqual((v["state"]["background"]["prompt"], v["state"]["config"]["depth"]["name"], v["state"]["composed"]["applied"]["background"]), ("A hangar.", "Cockpit", "bg.png"))
+        # The pictures are still the project's: on the Library tab and in Apply from Library.
+        self.assertEqual(sorted(g["image"] for g in app.load_project(self.pid)["generated"]), ["bg.png", "one.png", "two.png"])
+        self.assertEqual(sorted(x["image"] for x in app.generator_library(self.pid)["pictures"]), ["a.png" if False else "bg.png", "one.png", "two.png"])
+        v = app.generator_reset(self.pid, "depth")
+        self.assertEqual((v["moved"], v["state"]["background"]["prompt"], v["state"]["composed"]["prompt"], v["state"]["composed"]["refs"], v["state"]["composed"]["applied"]["background"]),
+                         (1, "", generator.COMPOSE_PROMPT, [], None))
+        self.assertEqual(app.generator_reset(self.pid, "depth")["moved"], 0)             # nothing left to reset is not an error
+        with self.assertRaises(ValueError):
+            app.generator_reset(self.pid, "everything")
+
+    def test_reset_waits_for_pictures_that_are_still_being_made(self):
+        app.generator_run(self.pid, "image", {"image": {"prompt": "A ship."}})
+        with self.assertRaises(ValueError) as e:
+            app.generator_reset(self.pid, "image")
+        self.assertIn("still being generated", str(e.exception))
+        self.assertEqual(app.load_project(self.pid)["generator"]["image"]["prompt"], "A ship.")
+        app.generator_reset(self.pid, "depth")                                           # the other mode is free to reset
+
     def test_only_a_layers_own_pictures_can_be_applied_and_a_removed_one_is_no_longer_applied(self):
         self.finish("background", "bg.png"); self.finish("middle", "mid.png"); self.finish("foreground", "fg.png")
         for layer, image in (("background", "mid.png"), ("composed", "bg.png"), ("image", "bg.png"), ("middle", "never-made.png")):

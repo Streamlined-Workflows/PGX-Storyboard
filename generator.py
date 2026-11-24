@@ -180,6 +180,35 @@ def plan(project, box):
     return {"prompt": " ".join([typed.rstrip()] + added), "refs": fixed + [r["image"] for r in drawn], "insert": insert, "count": b["count"]}
 
 
+MODE_BOXES = {"image": ("image",), "depth": LAYERS + ("composed",), "character": (), "3d": ()}
+
+
+def reset(project, mode, rating="PG-13"):
+    """Put one generator mode back to how a new project has it: empty prompts, no references, one generation, nothing
+    applied, and its Asset Configuration at the defaults. Changes `project` in place.
+
+    The pictures it made are not deleted. They leave the mode's boxes but stay in the project's Library, where
+    "Apply from Library" can still reach them. Refused while that mode is still generating, so no picture arrives in a box
+    that was just emptied."""
+    if mode not in MODES:
+        raise ValueError("Unknown part of the Asset Generator.")
+    boxes = MODE_BOXES[mode]
+    if any(j.get("status") in ("queued", "running") for b in boxes for j in project.get("image_jobs", []) if j.get("kind") == "gen" and j.get("slot") == b):
+        raise ValueError("Pictures are still being generated here. Reset when they have finished.")
+    state, fresh = clean(project.get("generator")), clean(None, None, rating)
+    for b in boxes:
+        state[b] = fresh[b]
+    state["config"][mode] = fresh["config"][mode]
+    gone = {g["id"] for g in project.get("generated", []) if g.get("kind") == "gen" and g.get("slot") in boxes}
+    for g in project.get("generated", []):
+        if g["id"] in gone:
+            g["slot"] = None                                     # no longer in a box; still a picture of this project
+    state["approved"] = [a for a in state["approved"] if a not in gone]
+    project["image_jobs"] = [j for j in project.get("image_jobs", []) if not (j.get("kind") == "gen" and j.get("slot") in boxes)]
+    project["generator"] = state
+    return len(gone)
+
+
 def apply(project, layer, image):
     """Choose one of a layer's pictures for the composed output. -> the new stored state."""
     if layer not in LAYERS:
