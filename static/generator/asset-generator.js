@@ -3,7 +3,8 @@
  * A tab for making pictures outside the storyboard. Two modes work today:
  *   Image Generation   one prompt, up to four reference pictures
  *   Depth Generation   background, middle ground and foreground made separately, then redrawn as one picture
- * Character Generation and 3D Generation have their Asset Configuration box; their generators arrive later.
+ * Character Generation has its Asset Configuration box; its generator arrives later. 3D Generation has that box and a 3D
+ * view (viewport-3d.js, three.js) with a grid for each axis; making 3D models arrives later.
  *
  * Every mode starts with an Asset Configuration box: what the asset is (name, rating, type), which models are used, and
  * workflow and approval controls. Each setting is tagged "In use" or "Stored", the same as the Project Configuration Center.
@@ -55,12 +56,14 @@ window.AssetGenerator = (function () {
     root.innerHTML = '';
     const page = el(`<div class="ag"><div class="panel ag-modes" role="tablist" aria-label="Asset Generator mode">
       <button data-m="image" role="tab">Image Generation</button><button data-m="character" role="tab">Character Generation <span class="pill">later</span></button>
-      <button data-m="depth" role="tab">Depth Generation</button><button data-m="3d" role="tab">3D Generation <span class="pill">later</span></button></div><div class="ag-body"></div></div>`);
+      <button data-m="depth" role="tab">Depth Generation</button><button data-m="3d" role="tab">3D Generation</button></div><div class="ag-body"></div></div>`);
     page.querySelectorAll('.ag-modes button').forEach(b => { b.classList.toggle('on', b.dataset.m === mode); b.setAttribute('aria-selected', b.dataset.m === mode); b.onclick = () => { mode = b.dataset.m; draw(); }; });
     const body = page.querySelector('.ag-body');
     body.append(configBox());
-    if (mode === 'character' || mode === '3d') {
-      body.append(el(`<div class="panel hint">${mode === '3d' ? '3D Generation' : 'Character Generation'} is not built yet. The configuration above is saved with the project and will be used when it is.</div>`));
+    if (mode === 'character') {
+      body.append(el('<div class="panel hint">Character Generation is not built yet. The configuration above is saved with the project and will be used when it is.</div>'));
+    } else if (mode === '3d') {
+      body.append(view3d());
     } else if (mode === 'image') {
       body.append(el('<p class="hint ag-lead">One picture from a prompt and up to four reference pictures. Made with FLUX.2, the same image model the storyboard uses.</p>'), box('image'));
     } else {
@@ -70,6 +73,35 @@ window.AssetGenerator = (function () {
     if (mode === 'image' || mode === 'depth') body.append(resetBar());
     root.append(page);
     if (focus) { const again = root.querySelector(`[data-k="${focus}"]`); if (again) again.focus(); }
+  }
+
+  /* ---------- 3D Generation: the 3D view ----------
+   * The view is made once and the same element is put back each time the page is redrawn, so the camera stays where it was.
+   * Which grids are on is remembered in this browser. */
+  let three = null, threeFailed = '';
+  const GRID_KEY = 'sd.view3d.grids', GRID_NAMES = { x: 'the upright plane facing along X (spans Y and Z)', y: 'the floor (spans X and Z)', z: 'the upright plane facing along Z (spans X and Y)' };
+  function gridChoice() { try { return Object.assign({ x: false, y: true, z: false }, JSON.parse(localStorage.getItem(GRID_KEY) || '{}')); } catch (e) { return { x: false, y: true, z: false }; } }
+  function view3d() {
+    const grids = three ? three.grids() : gridChoice();
+    const panel = el(`<div class="panel ag-3d"><div class="ag-3dbar"><span class="ag-label">Grid</span>
+        ${['x', 'y', 'z'].map(k => `<label class="ag-grid ag-grid-${k}" title="${k.toUpperCase()} grid: ${GRID_NAMES[k]}"><input type="checkbox" data-k="grid-${k}" data-g="${k}"${grids[k] ? ' checked' : ''}> ${k.toUpperCase()}</label>`).join('')}
+        <span class="ag-3dspace"></span><button class="small ag-3dreset" type="button" data-k="view-reset" title="Put the camera back where it started">Reset view</button></div>
+      <div class="ag-3dhold"><div class="hint ag-3dwait">Starting the 3D view…</div></div>
+      <div class="hint">Drag to turn, right-drag (or two fingers) to move, scroll to zoom. Each grid square is one unit. Making 3D models is not built yet, so a one-unit cube stands in for now.</div></div>`);
+    const hold = panel.querySelector('.ag-3dhold');
+    const place = () => { hold.innerHTML = ''; hold.append(three.element); };
+    const fail = () => { hold.innerHTML = ''; hold.append(el(`<div class="hint ag-3dwait">The 3D view could not start: ${esc(threeFailed)}</div>`)); };
+    panel.querySelectorAll('[data-g]').forEach(c => { c.onchange = () => {
+      const now = Object.assign(three ? three.grids() : gridChoice(), { [c.dataset.g]: c.checked });
+      try { localStorage.setItem(GRID_KEY, JSON.stringify(now)); } catch (e) { /* private browsing: the choice lasts for this visit */ }
+      if (three) three.setGrid(c.dataset.g, c.checked);
+    }; });
+    panel.querySelector('.ag-3dreset').onclick = () => { if (three) three.resetView(); };
+    if (three) place();
+    else if (threeFailed) fail();
+    else import('./viewport-3d.js?v=1').then(m => { if (!three) three = m.create({ grids: gridChoice() }); if (hold.isConnected) place(); else if (mode === '3d') draw(); })
+      .catch(e => { threeFailed = e.message || 'this browser has no WebGL.'; if (hold.isConnected) fail(); });
+    return panel;
   }
 
   /* ---------- Asset Configuration: the box at the top of every mode ---------- */
@@ -463,6 +495,6 @@ window.AssetGenerator = (function () {
       load();
     },
     hide() { showing = false; clearTimeout(timer); closeLibrary(); },
-    _state: () => data,
+    _state: () => data, _view3d: () => three,
   };
 })();

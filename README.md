@@ -292,6 +292,12 @@ composed output. The pictures are ordinary FLUX.2 stills marked `kind: "gen"` wi
   each applied style guide or inspiration reference. **Replace Prompt Inserts** removes the reference descriptions
   already in the prompt and puts the Reference Prompt text at the start in their place (asking the same Yes / No
   question if the person typed inside them).
+- **3D Generation** has a 3D view (`static/generator/viewport-3d.js`) built on three.js 0.180.0, which is copied into
+  `static/vendor/three/` (MIT) so it works with no internet connection. Drag turns the view, right-drag moves it, scroll
+  zooms, and **Reset view** puts the camera back. Three switches turn a grid on for each axis: X is the upright plane
+  spanning Y and Z, Y is the floor, Z is the upright plane spanning X and Y. The choice is remembered in the browser.
+  The axis colours are the tokens `--swift-axis-x`, `--swift-axis-y` and `--swift-axis-z`. Making 3D models is not built
+  yet, so a one-unit cube stands in; `view.setObject()` is where a model will go.
 - Every piece of text put at the start of the prompt ends with a line break, so each reference's description sits on
   its own line above what the person wrote. The Reference Prompt box keeps one description per line too.
 - **Insert as it is** keeps that picture's own pixels: the page places it in the centre of a blank picture with a mask, and

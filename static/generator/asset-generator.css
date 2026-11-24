@@ -73,3 +73,12 @@
 .ag .ag-promptwrap .ag-prompt::selection { color:transparent; background:rgba(74, 222, 128, .28); }
 .ag .ag-ask { width:min(520px, 100%); } .ag .ag-ask h2 { margin:0 0 10px; } .ag .ag-ask p { margin:0 0 16px; line-height:1.5; color:var(--swift-text); }
 .ag .ag-askbtns { display:flex; gap:10px; align-items:center; } .ag .ag-askbtns .ag-yes, .ag .ag-askbtns .ag-no { min-width:84px; }
+
+/* 3D Generation: the 3D view and its grid switches. */
+.ag .ag-3d { display:grid; gap:10px; }
+.ag .ag-3dbar { display:flex; align-items:center; gap:14px; flex-wrap:wrap; } .ag .ag-3dbar .ag-label { margin:0; } .ag .ag-3dspace { flex:1; }
+.ag .ag-grid { display:inline-flex; align-items:center; gap:6px; margin:0; font-weight:600; cursor:pointer; }
+.ag .ag-grid-x { color:var(--swift-axis-x); } .ag .ag-grid-y { color:var(--swift-axis-y); } .ag .ag-grid-z { color:var(--swift-axis-z); }
+.ag .ag-3dhold { position:relative; height:min(62vh, 620px); min-height:320px; border:1px solid var(--swift-border); border-radius:var(--swift-radius-lg); background:var(--swift-base); overflow:hidden; }
+.ag .ag-view3d { position:absolute; inset:0; } .ag .ag-view3d canvas { display:block; width:100%; height:100%; touch-action:none; cursor:grab; } .ag .ag-view3d canvas:active { cursor:grabbing; }
+.ag .ag-3dwait { position:absolute; inset:0; display:grid; place-items:center; padding:20px; text-align:center; }
