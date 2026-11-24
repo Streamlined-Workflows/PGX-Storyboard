@@ -22,6 +22,7 @@ window.AssetGenerator = (function () {
     foreground: 'Describe what sits closest to the camera. Ask for a plain, empty background so only these things carry over.',
   };
   let root = null, host = null, data = null, mode = 'image', timer = null, saveTimer = null, showing = false;
+  const batch = {};                        // per box, while a run is going: how many were asked for and how many pictures there were before
   const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
   const el = html => { const t = document.createElement('template'); t.innerHTML = html.trim(); return t.content.firstElementChild; };
   async function call(method, path, body) {
@@ -121,10 +122,12 @@ window.AssetGenerator = (function () {
     const card = el(`<section class="panel ag-box${composed ? ' ag-composed' : ''}" data-box="${name}">
       <h2>${TITLE[name]}</h2>
       <div class="ag-stage"><button class="ag-arrow ag-prev" type="button" aria-label="Previous picture" title="Previous picture">‹</button>
-        <div class="ag-pic">${cur ? `<img alt="${TITLE[name]} picture ${i + 1}" src="${esc(host.view(cur.image))}">` : '<div class="ag-empty">No picture yet</div>'}${applied ? '<span class="pill ag-applied">Applied</span>' : ''}</div>
+        <div class="ag-pic">${cur ? `<img alt="${TITLE[name]} picture ${i + 1}" src="${esc(host.view(cur.image))}">` : '<div class="ag-empty">No pictures yet</div>'}${applied ? '<span class="pill ag-applied">Applied</span>' : ''}</div>
         <button class="ag-arrow ag-next" type="button" aria-label="Next picture" title="Next picture">›</button></div>
       <div class="ag-under"><span class="hint ag-count">${list.length ? (i + 1) + ' of ' + list.length : ''}</span><span class="ag-status hint"></span><span class="ag-grow"></span>
-        ${cur ? `<a class="btn small" href="${esc(host.view(cur.image))}" download="${esc(fileStem(name) + '-' + (i + 1) + '.png')}">Download</a>${needOk ? `<button class="small ag-ok${ok ? ' on' : ''}" type="button" aria-pressed="${ok}" title="${ok ? 'Approved. Click to take the approval back.' : 'Approve this picture so it can be saved to Assets.'}">${ok ? '✓ Approved' : 'Approve'}</button>` : ''}<button class="small ag-asset" type="button"${needOk && !ok ? ' disabled' : ''} title="${needOk && !ok ? 'Approve this picture first. This is set in Asset Configuration.' : 'Add this picture to Assets as ' + esc(typeWord) + (cfg().name ? ' named ' + esc(cfg().name) : '')}">Save to Assets</button><button class="small ghost ag-del" type="button" title="Remove this picture from the list">Remove</button>` : ''}</div>
+        ${cur ? `<a class="btn small" href="${esc(host.view(cur.image))}" download="${esc(fileStem(name) + '-' + (i + 1) + '.png')}">Download</a>${needOk ? `<button class="small ag-ok${ok ? ' on' : ''}" type="button" aria-pressed="${ok}" title="${ok ? 'Approved. Click to take the approval back.' : 'Approve this picture so it can be saved to Assets.'}">${ok ? '✓ Approved' : 'Approve'}</button>` : ''}<button class="small ag-asset" type="button"${needOk && !ok ? ' disabled' : ''} title="${needOk && !ok ? 'Approve this picture first. This is set in Asset Configuration.' : 'Add this picture to Assets as ' + esc(typeWord) + (cfg().name ? ' named ' + esc(cfg().name) : '')}">Save to Assets</button>${name === 'image'
+          ? '<button class="small ag-useref" type="button" title="Add this picture to the reference pictures here as loose inspiration. It is not saved to Assets.">Use as Reference</button>'
+          : `<select class="ag-useref" aria-label="Use this picture as a reference" title="Add this picture to a box's reference pictures as loose inspiration. It is not saved to Assets."><option value="">Use as Reference in…</option>${[name, ...['background', 'middle', 'foreground', 'composed'].filter(b => b !== name)].map(b => `<option value="${b}">${TITLE[b]}${b === name ? ' (this box)' : b === 'composed' ? ' (as image 4)' : ''}</option>`).join('')}</select>`}<button class="small ghost ag-del" type="button" title="Remove this picture from the list">Remove</button>` : ''}</div>
       ${composed ? '<div class="ag-layers"></div>' : ''}
       <label class="ag-label">Prompt<span class="ag-promptwrap"><textarea data-k="p-${name}" class="ag-prompt" rows="${composed ? 4 : 5}" placeholder="${esc(HINT[name] || '')}">${esc(st.prompt)}</textarea><span class="ag-chars" aria-live="off"></span></span></label>
       ${composed ? '<p class="hint">Images 1, 2 and 3 are always the background, middle ground and foreground above, in that order. If you add a fourth reference, say what it is, for example: “Use image 4 as the colour and lighting style.” <button class="small ghost ag-reset" type="button">Reset prompt</button></p>' : ''}
@@ -140,6 +143,9 @@ window.AssetGenerator = (function () {
     if (cur) {
       q('.ag-pic img').onclick = () => host.openViewer(host.view(cur.image), TITLE[name]);
       q('.ag-asset').onclick = () => host.saveAsset(cur.image, { type: cfg().type, name: cfg().name, rating: cfg().rating });
+      const use = q('.ag-useref');
+      if (use.tagName === 'SELECT') use.onchange = () => { const to = use.value; use.value = ''; if (to) asReference(cur.image, to); };
+      else use.onclick = () => asReference(cur.image, name);
       if (needOk) q('.ag-ok').onclick = () => { const a = S().approved, n = a.indexOf(cur.id); if (n < 0) a.push(cur.id); else a.splice(n, 1); keep(); draw(); };
       q('.ag-del').onclick = async () => { if (!confirm('Remove this picture from the list?')) return; try { st.at = null; take(await call('POST', '/remove', { project: host.pid, id: cur.id })); draw(); } catch (e) { host.toast(e.message); } };
     }
@@ -156,6 +162,7 @@ window.AssetGenerator = (function () {
       const b = ev.currentTarget;
       if (cfg().workflow.confirm_before_run && !confirm(`Run ${st.count} generation${st.count > 1 ? 's' : ''} for ${TITLE[name]}?`)) return;
       b.disabled = true; clearTimeout(saveTimer);
+      batch[name] = { total: st.count + busy(name), before: list.length };
       try {
         const kept = st.refs.find(r => r.use === 'insert'), placed = kept ? await place(kept.image) : null;
         if (placed && placed.soft) host.toast('The inserted picture is small, so it was enlarged and will look soft. Use a larger one for a sharp result.');
@@ -269,10 +276,26 @@ window.AssetGenerator = (function () {
     return { image, canvas: canvas.toDataURL('image/png'), mask: mask.toDataURL('image/png'), soft: k > 1.5 };
   }
 
+  /* Use as Reference: put one of the generated pictures into a box's reference slots as loose inspiration.
+   * Nothing is saved to Assets; the "How to use it" choice can be changed afterwards like any other reference. */
+  function asReference(image, to) {
+    const st = S()[to], max = to === 'composed' ? 1 : data.limits.refs;
+    if (st.refs.some(r => r.image === image)) return host.toast('That picture is already a reference in ' + TITLE[to] + '.');
+    if (st.refs.length >= max) return host.toast(to === 'composed' ? 'Composed Output has one free reference slot and it is taken. Take that picture out first.' : TITLE[to] + ' already has ' + max + ' reference pictures. Take one out first.');
+    st.refs.push({ image, use: 'inspiration' }); keep(); draw();
+    host.toast('Added to ' + TITLE[to] + ' as a reference, used as loose inspiration. Change “How to use it” on the reference if you want it followed more closely.');
+  }
+
+  /* What a box says while it works. With no picture to show yet, the picture area itself says which one it is on
+   * ("Generating 1/3 photos"). Once there is a picture, the line under it says how many more are coming. */
   function paint(card, name) {
-    const waiting = busy(name), failed = B(name).jobs.filter(j => j.status === 'error'), line = card.querySelector('.ag-status');
+    const waiting = busy(name), failed = B(name).jobs.filter(j => j.status === 'error'), line = card.querySelector('.ag-status'), have = B(name).results.length, empty = card.querySelector('.ag-empty');
+    if (!waiting) delete batch[name];
+    else if (!batch[name]) batch[name] = { total: waiting, before: have };                       // the page was opened while a run was already going
+    const run = batch[name], done = run ? Math.max(0, have - run.before) : 0, total = run ? Math.max(run.total, done + waiting) : 0;
+    if (empty) { empty.textContent = waiting ? `Generating ${Math.min(total, done + 1)}/${total} photo${total > 1 ? 's' : ''}` : 'No pictures yet'; empty.classList.toggle('ag-working', !!waiting); }
     line.className = 'ag-status ' + (failed.length && !waiting ? 'err' : waiting ? 'busy' : 'hint');
-    line.textContent = waiting ? `Generating ${waiting} picture${waiting > 1 ? 's' : ''}…` : failed.length ? 'Failed: ' + (failed[failed.length - 1].error || 'unknown error') : '';
+    line.textContent = waiting && !empty ? `Generating an additional ${waiting} image${waiting > 1 ? 's' : ''}` : !waiting && failed.length ? 'Failed: ' + (failed[failed.length - 1].error || 'unknown error') : '';
   }
   function status() { root.querySelectorAll('.ag-box').forEach(card => paint(card, card.dataset.box)); }
 

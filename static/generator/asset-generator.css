@@ -55,3 +55,5 @@
 .ag .ag-promptwrap { position:relative; display:block; } .ag .ag-promptwrap .ag-prompt { padding-bottom:22px; }
 .ag .ag-chars { position:absolute; right:14px; bottom:8px; padding:0 6px; font-size:11px; font-variant-numeric:tabular-nums; color:var(--swift-text-muted); background:var(--swift-base); border-radius:8px; pointer-events:auto; cursor:help; }
 .ag .ag-chars.ag-near { color:var(--swift-warn, var(--swift-amber-400)); } .ag .ag-chars.ag-over { color:var(--swift-danger); font-weight:600; }
+.ag .ag-empty.ag-working { color:var(--swift-green); font-size:15px; }
+.ag select.ag-useref { width:auto; padding:3px 8px; font-size:12px; }

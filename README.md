@@ -255,6 +255,10 @@ composed output. The pictures are ordinary FLUX.2 stills marked `kind: "gen"` wi
 - Each prompt box shows `x / y` at its bottom right: the characters that will be sent (typed text plus the sentences added
   for references) against about 2,000. FLUX.2 reads up to 512 tokens, which is roughly that many characters of English,
   so the figure is an estimate and is labelled as one. It warns near and past the limit; it does not block.
+- While a box works, an empty picture area reads "Generating 1/3 photos" (which one it is on, of how many); once a
+  picture is showing, the line under it reads "Generating an additional 2 images".
+- **Use as Reference** on a generated picture adds it to a box's reference slots as Inspiration (the loosest use), without
+  saving anything to Assets. In Depth Generation it asks which box.
 - An empty reference slot asks **Upload** or **Apply from Library**. The library lists every picture the project already
   has (generated pictures newest first, actors' views, assets and props, photos, storyboard shots), each once, with a name
   filter. Choosing one uses the existing file; nothing is copied.
