@@ -281,10 +281,17 @@ composed output. The pictures are ordinary FLUX.2 stills marked `kind: "gen"` wi
 - **Apply again** replaces that reference's description. If the person typed inside it, a Yes / No question asks whether
   to keep those words (Yes leaves them in the prompt, No removes them with the old description). Text outside the
   description is never touched, and with nothing typed inside there is no question.
-- Each reference keeps a number from 1 to 4 while it is there, with a colour: green, blue, cyan, magenta. The text under a
-  reference is in its colour, and so are the words it put in the prompt. Those words are tracked as ranges of the prompt
-  (`marks`); anything typed or changed, even inside one, falls outside the ranges and shows in the normal colour. The
-  prompt box is a plain text area with see-through text over a coloured copy of the same text.
+- Each reference keeps a number from 1 to 4 while it is there. Everything the language model wrote is shown in one
+  colour, the `--swift-ai-text` token (set beside the other aliases in `static/index.html`; green in the SWIFT theme):
+  the text under a reference, the words put in the prompt, and the Reference Prompt box. Those words are tracked as
+  ranges of the prompt (`marks`); anything typed or changed, even inside one, falls outside the ranges and shows in the
+  normal colour. The prompt box is a plain text area with see-through text over a coloured copy of the same text.
+- **Reference Prompt** is a text box beside the reference slots. Each Apply adds that reference's description to it, and
+  it can be edited by hand. **Clean and Combine** sends the box to the Prompting Model (`assist.combine_references`,
+  `POST /api/generator/combine`), which rewrites it as one passage with the overlap removed, up to 300 characters for
+  each applied style guide or inspiration reference. **Replace Prompt Inserts** removes the reference descriptions
+  already in the prompt and puts the Reference Prompt text at the start in their place (asking the same Yes / No
+  question if the person typed inside them).
 - **Insert as it is** keeps that picture's own pixels: the page places it in the centre of a blank picture with a mask, and
   the inpainting graph draws everything around it and pastes the original back. One per box. The composed output's fourth
   reference cannot be inserted, because images 1 to 3 are fixed as the three layers.

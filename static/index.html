@@ -11,7 +11,7 @@
 <link rel="stylesheet" href="/static/identity/identity-studio.css?v=9">
 <link rel="stylesheet" href="/static/config/config-center.css?v=2">
 <link rel="stylesheet" href="/static/audio/audio-lab.css?v=3">
-<link rel="stylesheet" href="/static/generator/asset-generator.css?v=10">
+<link rel="stylesheet" href="/static/generator/asset-generator.css?v=11">
 <style>
   /* Montserrat (SIL Open Font License 1.1), served from the server so the page needs no outside network. */
   @font-face { font-family:Montserrat; font-weight:400; font-display:swap; src:url('/static/fonts/montserrat-latin-400-normal.woff2') format('woff2'); }
@@ -23,7 +23,8 @@
   /* The page's own names, each mapped onto a SWIFT token (swift-tokens.css). No colour is defined here. */
   :root { color-scheme:dark;
           --bg:var(--swift-base); --panel:var(--swift-card); --panel2:var(--swift-elevated); --line:var(--swift-ring); --text:var(--swift-text); --dim:var(--swift-text-muted);
-          --accent:var(--swift-danger); --accent2:var(--swift-green); --ok:var(--swift-green); --warn:var(--swift-warn); --side:252px; }
+          --accent:var(--swift-danger); --accent2:var(--swift-green); --ok:var(--swift-green); --swift-ai-text:var(--swift-green-400);      /* text written by a language model; one token so a theme can restyle it in one place */
+           --warn:var(--swift-warn); --side:252px; }
   * { box-sizing:border-box; }
   body { margin:0; background:var(--bg); color:var(--text); font:14px/1.5 var(--swift-font); -webkit-font-smoothing:antialiased; }
   nav { position:fixed; left:0; top:0; bottom:0; width:var(--side); background:var(--panel); border-right:1px solid var(--line); padding:14px 10px; display:flex; flex-direction:column; gap:4px; z-index:6; }
@@ -2006,7 +2007,7 @@ async function boot() {
 <script src="/static/config/config-center.js?v=1"></script>
 <script src="/static/audio/audio-mix.js?v=3"></script>
 <script src="/static/audio/audio-lab.js?v=3"></script>
-<script src="/static/generator/asset-generator.js?v=11"></script>
+<script src="/static/generator/asset-generator.js?v=12"></script>
 <script src="/static/identity/vendor/imagetracer_v1.2.6.js"></script>
 <script src="/static/identity/teams-icons.js?v=9"></script>
 <script src="/static/identity/download.js?v=10"></script>

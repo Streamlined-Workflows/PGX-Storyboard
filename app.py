@@ -637,6 +637,16 @@ def generator_describe(pid, image, use):
     return {"text": assist.describe_reference(base64.b64encode(data).decode(), use), "use": use, "image": image, "model": assist.MODEL}
 
 
+def generator_combine(pid, text, references):
+    """Clean and Combine: one tidy passage from the Reference Prompt box's text."""
+    load_project(pid)                                    # the project must exist; the text itself comes from the page
+    try:
+        count = int(references)
+    except (TypeError, ValueError):
+        count = 1
+    return {"text": assist.combine_references(text, count), "limit": assist.REFERENCE_LIMIT * max(1, min(4, count)), "model": assist.MODEL}
+
+
 def generator_reset(pid, mode):
     with LOCK:
         project = refresh_statuses(pid)
@@ -1430,6 +1440,8 @@ class Handler(BaseHTTPRequestHandler):
                 return self.send_json(generator_save(pid, payload.get("state")))
             if path == "/api/generator/run":
                 return self.send_json(generator_run(pid, payload.get("box"), payload.get("state"), payload.get("placed")))
+            if path == "/api/generator/combine":
+                return self.send_json(generator_combine(pid, payload.get("text"), payload.get("references")))
             if path == "/api/generator/describe":
                 return self.send_json(generator_describe(pid, payload.get("image"), payload.get("use")))
             if path == "/api/generator/reset":

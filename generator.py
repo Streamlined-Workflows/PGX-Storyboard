@@ -14,9 +14,11 @@ Every reference picture carries how it is to be used:
 An attached picture outweighs any sentence about it, so "match the style only" cannot be asked for while the picture
 is attached: the image model copies it. Describing it in words is what makes the last two different from the second.
 
-Each reference has a number from 1 to 4 that it keeps for as long as it is there, and a colour that goes with the
-number. Words a reference added to the prompt are remembered as ranges of the prompt (`marks`), so the page can show
-them in that reference's colour; anything the person types or changes is outside those ranges.
+Each reference has a number from 1 to 4 that it keeps for as long as it is there. Words the language model put in the
+prompt are remembered as ranges of the prompt (`marks`), so the page can show them in the one colour kept for
+AI-written text; anything the person types or changes is outside those ranges. Each box also has a Reference Prompt:
+the references' descriptions gathered in one place, which can be cleaned up into one passage and then put into the
+prompt in place of the separate descriptions.
 
 What is kept for a project (project["generator"]) is only what the person typed and chose: each box's
 prompt, reference pictures and how many to make; which picture is showing; and which three pictures are
@@ -124,7 +126,7 @@ def _marks(listed, length):
     for m in sorted((m for m in listed if isinstance(m, (list, tuple)) and len(m) == 3 and all(isinstance(v, int) and not isinstance(v, bool) for v in m)),
                     key=lambda m: m[0]) if isinstance(listed, list) else []:
         start, end, slot = m
-        if last <= start < end <= length and 1 <= slot <= MAX_REFS:
+        if last <= start < end <= length and 0 <= slot <= MAX_REFS:      # 0: the combined Reference Prompt, not one reference's own words
             out.append([start, end, slot])
             last = end
     return out[:MAX_MARKS]
@@ -136,6 +138,8 @@ def _box(incoming, current, refs=MAX_REFS, uses=USES, fixed=None):
            "refs": _refs(incoming.get("refs", current.get("refs", [])), refs, uses, fixed),
            "at": incoming.get("at", current.get("at")) if isinstance(incoming.get("at", current.get("at")), str) else None}
     # Marks describe the prompt they came with. A prompt sent without marks has none; a save that leaves the prompt out keeps both.
+    # The Reference Prompt box: the references' descriptions gathered in one place, to be cleaned up and put into the prompt as one.
+    out["ref_prompt"] = str(incoming.get("ref_prompt", current.get("ref_prompt", "")) or "")[:MAX_REFS * TEXT_LIMIT + 200]
     out["marks"] = _marks(incoming.get("marks") if "prompt" in incoming else current.get("marks"), len(out["prompt"]))
     try:
         out["count"] = max(1, min(MAX_COUNT, int(incoming.get("count", current.get("count", 1)))))

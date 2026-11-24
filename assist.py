@@ -346,15 +346,40 @@ def describe_reference(image_b64, use):
     label, system = REFERENCE_ASKS[use]
     schema = {"type": "object", "required": ["description"], "properties": {"description": {"type": "string"}}}
     out = chat(system, "Describe this picture as instructed.", schema, think=False, temperature=0.3, images=[image_b64])
-    text = " ".join(str(out.get("description", "")).split())
+    text = _fit(out.get("description", ""), REFERENCE_LIMIT - len(label))
     if not text:
         raise ValueError("The language model returned no description. Try again.")
-    room = REFERENCE_LIMIT - len(label)
-    if len(text) > room:                                 # cut at the end of a sentence if one fits, else at a word
+    return label + text
+
+
+def _fit(text, room):
+    """Trim to `room` characters at the end of a sentence if one fits, else at a word, and end with a full stop."""
+    text = " ".join(str(text).split())
+    if len(text) > room:
         cut = text[:room]
         stop = max(cut.rfind(". "), cut.rfind("; "))
         text = cut[:stop + 1] if stop > room * 0.5 else cut[:cut.rfind(" ")].rstrip(",;:") + "."
-    return label + (text if text.endswith((".", "!", "?")) else text + ".")
+    return text if not text or text.endswith((".", "!", "?")) else text + "."
+
+
+def combine_references(text, references=1):
+    """Rewrite the collected reference descriptions as one clean passage: overlap removed, wording tidied, every distinct
+    point kept, nothing new added. The result may run to REFERENCE_LIMIT characters for each reference it draws on."""
+    text = " ".join(str(text or "").split())
+    if not text:
+        raise ValueError("There is no reference text to clean up. Press Apply on a style guide or inspiration reference first.")
+    room = REFERENCE_LIMIT * max(1, min(4, int(references or 1)))
+    schema = {"type": "object", "required": ["description"], "properties": {"description": {"type": "string"}}}
+    system = ("You are given short notes written for an image generator. They were taken from several reference pictures: some "
+              "describe a visual style, some a general idea, and they may repeat or overlap each other. Rewrite them as ONE clean "
+              "passage for the image generator. Remove repetition and overlap, reconcile the wording, and keep every distinct point. "
+              "Add nothing that is not in the notes, and do not describe a subject the notes do not mention. Write plain sentences "
+              f"with no labels, no list and no line breaks. Return JSON with 'description', at most {room - 20} characters.")
+    out = chat(system, "Notes:\n" + text[:4 * REFERENCE_LIMIT + 400], schema, think=False, temperature=0.3)
+    result = _fit(out.get("description", ""), room)
+    if not result:
+        raise ValueError("The language model returned nothing. Try again.")
+    return result
 
 
 def describe_actor(name, images_b64):

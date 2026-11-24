@@ -35,7 +35,7 @@ class GeneratorTests(test_core.Base if hasattr(test_core, "Base") else unittest.
     def test_a_new_project_starts_empty_with_the_composed_prompt_ready(self):
         v = app.generator_view(self.pid)
         self.assertEqual(sorted(v["boxes"]), ["background", "composed", "foreground", "image", "middle"])
-        self.assertEqual(v["state"]["image"], {"prompt": "", "refs": [], "at": None, "marks": [], "count": 1})
+        self.assertEqual(v["state"]["image"], {"prompt": "", "refs": [], "at": None, "ref_prompt": "", "marks": [], "count": 1})
         self.assertEqual(v["state"]["approved"], [])
         self.assertEqual(v["prompt_limit"], {"model": "FLUX.2 [dev]", "tokens": 512, "characters": 2000})      # what the count beside each prompt is measured against
         self.assertEqual(v["state"]["composed"]["prompt"], generator.COMPOSE_PROMPT)
@@ -129,6 +129,33 @@ class GeneratorTests(test_core.Base if hasattr(test_core, "Base") else unittest.
         self.assertEqual(app.generator_save(self.pid, {"image": {"prompt": "0123456789", "marks": bad}})["state"]["image"]["marks"], [[0, 4, 1], [8, 10, 2]])
         v = app.generator_save(self.pid, {"image": {"refs": [{"image": "look.png", "use": "keep exactly", "text": "left over"}, {"image": "b.png", "use": "inspiration", "text": "x" * 400}]}})
         self.assertEqual([len(r["text"]) for r in v["state"]["image"]["refs"]], [0, 300])                # only a described reference has words, and at most 300 characters
+
+    def test_the_reference_prompt_is_stored_and_can_be_cleaned_into_one_passage(self):
+        import assist
+        v = app.generator_save(self.pid, {"image": {"ref_prompt": "Visual style: teal panels. Loosely inspired by: a courier ship.", "prompt": "Combined text here. A frigate.", "marks": [[0, 19, 0]]}})
+        self.assertEqual(v["state"]["image"]["ref_prompt"], "Visual style: teal panels. Loosely inspired by: a courier ship.")
+        self.assertEqual(v["state"]["image"]["marks"], [[0, 19, 0]])                     # 0 marks the combined passage, which belongs to no single reference
+        self.assertEqual(len(app.generator_save(self.pid, {"image": {"ref_prompt": "x" * 5000}})["state"]["image"]["ref_prompt"]), 1400)
+        asked, real = [], assist.chat
+        answer = {"text": "Matte teal and platinum panels under soft light, in the spirit of a compact courier ship"}
+        assist.chat = lambda system, user, schema, **k: asked.append((system, user, k.get("images"))) or {"description": answer["text"]}
+        try:
+            got = app.generator_combine(self.pid, "Visual style: teal panels.  Loosely inspired by: a courier ship.", 2)
+            self.assertEqual((got["text"], got["limit"]), (answer["text"] + ".", 600))
+            self.assertIn("Remove repetition and overlap", asked[0][0]); self.assertIn("Add nothing that is not in the notes", asked[0][0]); self.assertIn("at most 580 characters", asked[0][0])
+            self.assertEqual((asked[0][1], asked[0][2]), ("Notes:\nVisual style: teal panels. Loosely inspired by: a courier ship.", None))      # words only; no picture is sent
+            answer["text"] = "One sentence that fits. " + "padding " * 200
+            for count, most in ((1, 300), (3, 900), (9, 1200), ("x", 300)):
+                self.assertLessEqual(len(app.generator_combine(self.pid, "Some notes.", count)["text"]), most)
+            self.assertGreater(len(app.generator_combine(self.pid, "Some notes.", 4)["text"]), 900)       # up to 300 characters for each reference
+            for empty in ("", "   ", None):
+                with self.assertRaises(ValueError):
+                    app.generator_combine(self.pid, empty, 2)
+            answer["text"] = ""
+            with self.assertRaises(ValueError):
+                app.generator_combine(self.pid, "Some notes.", 2)
+        finally:
+            assist.chat = real
 
     def test_describing_a_reference_asks_the_language_model_and_caps_the_result(self):
         import assist
@@ -257,7 +284,7 @@ class GeneratorTests(test_core.Base if hasattr(test_core, "Base") else unittest.
         app.generator_save(self.pid, {"approved": ["one.png", "bg.png"]})
         v = app.generator_reset(self.pid, "image")
         self.assertEqual(v["moved"], 2)
-        self.assertEqual(v["state"]["image"], {"prompt": "", "refs": [], "at": None, "marks": [], "count": 1})
+        self.assertEqual(v["state"]["image"], {"prompt": "", "refs": [], "at": None, "ref_prompt": "", "marks": [], "count": 1})
         c = v["state"]["config"]["image"]
         self.assertEqual((c["name"], c["rating"], c["type"], c["workflow"]["confirm_before_run"]), ("", "PG-13", "scene", False))
         self.assertEqual(v["boxes"]["image"]["results"], [])

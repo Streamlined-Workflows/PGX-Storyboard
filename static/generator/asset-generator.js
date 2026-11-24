@@ -41,7 +41,7 @@ window.AssetGenerator = (function () {
   /* New results from the server replace what is shown, but never what the person is typing. */
   function take(fresh) {
     const before = data ? JSON.stringify(data.boxes) : '', first = !data;
-    if (data) { ['image', ...LAYERS, 'composed'].forEach(n => { const mine = S()[n]; fresh.state[n].prompt = mine.prompt; fresh.state[n].marks = mine.marks; fresh.state[n].count = mine.count; fresh.state[n].refs = mine.refs; fresh.state[n].at = mine.at; });
+    if (data) { ['image', ...LAYERS, 'composed'].forEach(n => { const mine = S()[n]; fresh.state[n].prompt = mine.prompt; fresh.state[n].marks = mine.marks; fresh.state[n].ref_prompt = mine.ref_prompt; fresh.state[n].count = mine.count; fresh.state[n].refs = mine.refs; fresh.state[n].at = mine.at; });
       fresh.state.config = S().config; fresh.state.approved = S().approved.filter(id => fresh.state.approved.includes(id) || Object.values(fresh.boxes).some(b => b.results.some(r => r.id === id))); }
     data = fresh;
     if (first || before !== JSON.stringify(data.boxes) || !root.querySelector('.ag')) draw(); else status();
@@ -194,12 +194,13 @@ window.AssetGenerator = (function () {
   }
 
   /* ---------- reference pictures ----------
-   * Each reference has a number from 1 to 4 that it keeps while it is there, and the colour that goes with the number
-   * (green, blue, cyan, magenta). Its "How to use it" choice decides what happens to it:
+   * Each reference has a number from 1 to 4 that it keeps while it is there. Everything the language model wrote, here and
+   * in the prompt, is shown in one colour, the theme's AI-text token (green in the SWIFT theme); what the person types is
+   * in the normal colour. A reference's "How to use it" choice decides what happens to it:
    *   Insert as it is            its own pixels are kept and the rest is drawn around it
    *   Follow closely (redrawn)   the picture is sent to the image model
    *   Style guide, Inspiration   the picture is NOT sent. Apply has the language model put it into words, and those words
-   *                              go at the start of the prompt, in the reference's colour. */
+   *                              go at the start of the prompt and into the Reference Prompt box. */
   const useOf = id => data.uses.find(u => u.id === id) || data.uses[1];
   const sent = r => r.use === 'keep exactly';
   /* The number the image model knows each attached picture by. Not the same as the reference's own number: only
@@ -229,7 +230,7 @@ window.AssetGenerator = (function () {
    * or changed, even inside one of those stretches, is outside the marks and so shows in the normal colour. */
   function backdrop(card, name) {
     const st = S()[name], back = card.querySelector('.ag-back'), area = card.querySelector('.ag-prompt'); let html = '', at = 0;
-    st.marks.forEach(([a, b, slot]) => { html += esc(st.prompt.slice(at, a)) + `<span class="ag-c${slot}">${esc(st.prompt.slice(a, b))}</span>`; at = b; });
+    st.marks.forEach(([a, b]) => { html += esc(st.prompt.slice(at, a)) + `<span class="ag-ai">${esc(st.prompt.slice(a, b))}</span>`; at = b; });
     back.innerHTML = html + esc(st.prompt.slice(at)) + '\n';      // the last line break keeps the copy as tall as the text area's own content
     /* The box is made exactly tall enough for its text whenever the text changes, so all of it shows. It can still be dragged
        taller or shorter by its corner; that lasts until the text next changes. */
@@ -293,7 +294,10 @@ window.AssetGenerator = (function () {
       unwrite(st, r.slot);
       const lead = got.text + (st.prompt ? ' ' : '');
       st.marks = [[0, got.text.length, r.slot], ...st.marks.map(([a, b, c]) => [a + lead.length, b + lead.length, c])];
-      st.prompt = lead + st.prompt; r.text = got.text; keep();
+      st.prompt = lead + st.prompt;
+      /* The Reference Prompt box gathers the descriptions: a new one replaces this reference's earlier one if it is still there word for word, and is added at the end otherwise. */
+      st.ref_prompt = r.text && st.ref_prompt.includes(r.text) ? st.ref_prompt.replace(r.text, got.text) : (st.ref_prompt.trim() ? st.ref_prompt.trim() + ' ' : '') + got.text;
+      r.text = got.text; keep();
     } catch (e) { host.toast(e.message); }
     draw();
   }
@@ -305,15 +309,16 @@ window.AssetGenerator = (function () {
       const says = use.described ? (r.text ? (live ? r.text : r.text + ' (No longer in the prompt as written: it was edited or removed there.)') : 'Not applied yet, so this reference has no effect. Press Apply.')
         : r.use === 'insert' ? 'Kept exactly as it is; the rest is drawn around it.'
         : nums[n] ? `Sent to the image model as image ${nums[n]}.` : 'Not sent: a kept picture takes one of the four places, so only three others fit.';
-      const slot = el(`<div class="ag-refcard"><div class="ag-ref"><img alt="Reference ${r.slot}" src="${esc(host.view(r.image))}"><button class="ag-x" type="button" title="Take this reference out" aria-label="Remove reference ${r.slot}">×</button><span class="ag-num ag-b${r.slot}">${r.slot}</span></div>
+      const slot = el(`<div class="ag-refcard"><div class="ag-ref"><img alt="Reference ${r.slot}" src="${esc(host.view(r.image))}"><button class="ag-x" type="button" title="Take this reference out" aria-label="Remove reference ${r.slot}">×</button><span class="ag-num">${r.slot}</span></div>
         <label title="${esc(use.help)}">How to use it<select data-k="u-${name}-${r.slot}" class="ag-use">${uses.map(u => `<option value="${u.id}"${u.id === r.use ? ' selected' : ''}>${esc(u.name)}</option>`).join('')}</select></label>
         ${use.described ? `<button data-k="ap-${name}-${r.slot}" class="small ag-apply-ref" type="button" title="${esc(use.help)}">${r.text ? 'Apply again' : 'Apply'}</button>` : ''}
-        <div class="ag-reftext ag-c${r.slot}">${esc(says)}</div></div>`);
-      slot.querySelector('.ag-x').onclick = () => { const gone = unwrite(st, r.slot); st.refs.splice(n, 1); keep(); draw(); if (gone) host.toast('The reference was taken out, and so was its description in the prompt.'); };
+        <div class="ag-reftext ${use.described && r.text ? 'ag-ai' : 'hint'}">${esc(says)}</div></div>`);
+      const forget = () => { if (r.text && st.ref_prompt.includes(r.text)) st.ref_prompt = st.ref_prompt.replace(r.text, '').replace(/\s{2,}/g, ' ').trim(); };      // its description leaves the Reference Prompt box too
+      slot.querySelector('.ag-x').onclick = () => { const gone = unwrite(st, r.slot); forget(); st.refs.splice(n, 1); keep(); draw(); if (gone) host.toast('The reference was taken out, and so was its description in the prompt.'); };
       slot.querySelector('img').onclick = () => host.openViewer(host.view(r.image), 'Reference ' + r.slot);
       slot.querySelector('.ag-use').onchange = ev => {
         if (ev.target.value === 'insert') st.refs.forEach(o => { if (o !== r && o.use === 'insert') { o.use = 'keep exactly'; host.toast('Only one picture in a box can be inserted as it is. The other one is now followed closely.'); } });
-        const gone = unwrite(st, r.slot); r.use = ev.target.value; r.text = ''; keep(); draw();
+        const gone = unwrite(st, r.slot); forget(); r.use = ev.target.value; r.text = ''; keep(); draw();
         if (gone) host.toast('Its earlier description was taken out of the prompt. Press Apply for a new one.');
       };
       const apply = slot.querySelector('.ag-apply-ref'); if (apply) apply.onclick = () => applyRef(name, r, apply);
@@ -330,7 +335,46 @@ window.AssetGenerator = (function () {
       holder.append(add);
     }
     const adds = added(name);
-    if (adds.length) holder.append(el(`<div class="hint ag-adds"><b>Added after your prompt:</b> ${adds.map(t => `<span class="ag-c${t.slot}">${esc(t.text)}</span>`).join(' ')}</div>`));
+    holder.append(refPrompt(name));
+    if (adds.length) holder.append(el(`<div class="hint ag-adds"><b>Added after your prompt:</b> ${esc(adds.map(t => t.text).join(' '))}</div>`));
+  }
+  /* The Reference Prompt box, beside the reference slots. It gathers the descriptions the language model wrote for this box's
+   * style guide and inspiration references. Clean and Combine has the language model rewrite them as one passage with the
+   * overlap removed; Replace Prompt Inserts puts the box's text into the prompt in place of the separate descriptions. */
+  function refPrompt(name) {
+    const st = S()[name], described = st.refs.filter(r => useOf(r.use).described && r.text).length, room = data.text_limit * Math.max(1, described), inserts = st.marks.length;
+    const panel = el(`<div class="ag-refprompt"><label class="ag-label">Reference Prompt<span class="ag-promptwrap"><textarea data-k="rp-${name}" class="ag-rp ag-ai" rows="3" placeholder="Press Apply on a style guide or inspiration reference and its description is added here.">${esc(st.ref_prompt)}</textarea><span class="ag-chars ag-rpcount"></span></span></label>
+      <div class="ag-rpbtns"><button data-k="rc-${name}" class="small ag-combine" type="button" title="The language model rewrites this text as one cleaner passage: overlap removed, every point kept. Up to ${data.text_limit} characters for each style guide or inspiration reference.">Clean and Combine</button>
+        <button data-k="rr-${name}" class="small ag-replace" type="button" title="Puts this text at the start of the prompt in place of the reference descriptions already inserted there.">Replace Prompt Inserts</button></div>
+      <div class="hint">Up to ${data.text_limit} characters for each style guide or inspiration reference.</div></div>`);
+    const area = panel.querySelector('.ag-rp'), count = panel.querySelector('.ag-rpcount'), combine = panel.querySelector('.ag-combine'), replace = panel.querySelector('.ag-replace');
+    const show = () => { const n = st.ref_prompt.trim().length; count.textContent = n.toLocaleString() + ' / ' + room.toLocaleString(); count.className = 'ag-chars ag-rpcount' + (n > room ? ' ag-over' : '');
+      count.title = `${data.text_limit} characters for each of the ${Math.max(1, described)} style guide or inspiration reference${described > 1 ? 's' : ''} applied in this box.`;
+      combine.disabled = replace.disabled = !n; if (area.offsetParent) { area.style.height = 'auto'; area.style.height = (area.scrollHeight + 2) + 'px'; } };
+    area.oninput = () => { st.ref_prompt = area.value; keep(); show(); };
+    show(); requestAnimationFrame(show);
+    combine.onclick = async () => {
+      combine.disabled = replace.disabled = true; combine.textContent = 'Combining…';
+      try { st.ref_prompt = (await call('POST', '/combine', { project: host.pid, text: st.ref_prompt, references: Math.max(1, described) })).text; keep(); } catch (e) { host.toast(e.message); }
+      draw();
+    };
+    replace.onclick = async () => {
+      const text = st.ref_prompt.trim(); if (!text) return;
+      const typed = [0, 1, 2, 3, 4].flatMap(slot => editsInside(st, slot)).map(([a, b]) => st.prompt.slice(a, b).trim()).filter(Boolean);
+      let keepEdits = true;
+      if (typed.length) {
+        const answer = await ask('Keep your edits?', `You typed inside the reference text in your prompt: <b>${typed.map(esc).join('</b>, <b>')}</b>.<br><br><b>Yes</b> replaces the reference text and leaves what you typed in the prompt.<br><b>No</b> replaces the reference text and removes what you typed inside it.<br>Anything you wrote outside the reference text stays either way.`);
+        if (!answer) return;
+        keepEdits = answer === 'yes';
+      }
+      if (!keepEdits) [0, 1, 2, 3, 4].flatMap(slot => editsInside(st, slot)).sort((x, y) => y[0] - x[0]).forEach(([a, b]) => edited(st, st.prompt.slice(0, a) + st.prompt.slice(b)));
+      [0, 1, 2, 3, 4].forEach(slot => unwrite(st, slot));
+      const lead = text + (st.prompt ? ' ' : '');
+      st.marks = [[0, text.length, 0], ...st.marks.map(([a, b, c]) => [a + lead.length, b + lead.length, c])];
+      st.prompt = lead + st.prompt; keep(); draw();
+      host.toast(inserts ? 'The reference text in your prompt was replaced with the Reference Prompt.' : 'The Reference Prompt was put at the start of your prompt.');
+    };
+    return panel;
   }
   /* A new reference takes the lowest number not in use in its box (the composed output's one slot is always 4). */
   function fresh(name, image, use) {

@@ -58,12 +58,12 @@
 .ag .ag-empty.ag-working { color:var(--swift-green); font-size:15px; }
 .ag select.ag-useref { width:auto; padding:3px 8px; font-size:12px; }
 .ag .ag-reset { display:flex; gap:12px; align-items:center; flex-wrap:wrap; padding-top:4px; }
-/* Reference colours: one per reference number. Green is the SWIFT token; the design tokens have no blue, cyan or magenta yet, so those three are set here. */
-.ag { --ag-ref1:var(--swift-green-400); --ag-ref2:#60a5fa; --ag-ref3:#22d3ee; --ag-ref4:#e879f9; }
-.ag .ag-c1 { color:var(--ag-ref1); } .ag .ag-c2 { color:var(--ag-ref2); } .ag .ag-c3 { color:var(--ag-ref3); } .ag .ag-c4 { color:var(--ag-ref4); }
-.ag .ag-num.ag-b1 { background:var(--ag-ref1); } .ag .ag-num.ag-b2 { background:var(--ag-ref2); } .ag .ag-num.ag-b3 { background:var(--ag-ref3); } .ag .ag-num.ag-b4 { background:var(--ag-ref4); }
-.ag .ag-num { color:#04130a; font-weight:700; }
+/* One colour for everything the language model wrote: the theme's AI-text token. What a person types keeps the normal text colour. */
+.ag .ag-ai { color:var(--swift-ai-text); }
 .ag .ag-reftext { font-size:12px; line-height:1.4; overflow-wrap:anywhere; } .ag .ag-apply-ref { width:100%; }
+.ag .ag-refprompt { flex:1 1 320px; min-width:min(320px, 100%); display:grid; gap:6px; align-content:start; }
+.ag .ag-refprompt .ag-rp { width:100%; resize:vertical; padding-bottom:22px; }
+.ag .ag-rpbtns { display:flex; gap:8px; flex-wrap:wrap; }
 /* The prompt box: see-through typing over a coloured copy of the same text. Both must wrap identically, so they share every measurement. */
 .ag .ag-promptwrap .ag-back, .ag .ag-promptwrap .ag-prompt { box-sizing:border-box; width:100%; margin:0; padding:9px 12px 22px; border:1px solid transparent; font:inherit; font-size:14px; line-height:1.5; letter-spacing:normal;
   white-space:pre-wrap; overflow-wrap:break-word; word-break:normal; tab-size:4; overflow-y:auto; scrollbar-gutter:stable; }
