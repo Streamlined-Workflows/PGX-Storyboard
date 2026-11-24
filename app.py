@@ -782,6 +782,31 @@ def reference_place(pid, rid, row_id, direction, image, state=None):
         return reference_out(project, placed=art["id"])
 
 
+def reference_assemble(pid, rid, png, used, state=None):
+    """Store a sheet the page assembled on a canvas from the chosen pictures. Nothing is generated: the PNG arrives finished."""
+    with LOCK:
+        project = load_project(pid)
+        reference.sync(project)
+        if state is not None:
+            project["reference"] = reference.clean(state, project["reference"], new_id)
+        ref = reference.find(project["reference"], rid)
+        try:
+            data = base64.b64decode(str(png).split(",", 1)[-1], validate=True)
+        except (ValueError, TypeError):
+            data = b""
+        if data[:8] != b"\x89PNG\r\n\x1a\n" or len(data) < 64 or len(data) > 80 * 1024 * 1024:
+            raise ValueError("The assembled sheet did not arrive properly. Try again.")
+        width, height = int.from_bytes(data[16:20], "big"), int.from_bytes(data[20:24], "big")
+        aid = new_id()
+        # Checked before the file is stored, so a refused request leaves nothing behind.
+        reference.assembled({"reference": json.loads(json.dumps(project["reference"]))}, rid, "", width, height, used, lambda: aid)
+        image = comfy_upload(f"ref_{pid}_{rid}_{aid}_sheet.png", data)
+        art = reference.assembled(project, rid, image, width, height, used, lambda: aid)
+        project["generated"].append({"id": aid, "image": image, "kind": "ref", "created": art["created"], "slot": rid, "label": f"Reference sheet · {ref['name']} · assembled"})
+        save_project(project, touch=False)
+        return reference_out(project, assembled=aid)
+
+
 def reference_decide(pid, ids, action, confirmed=False, force=False):
     """Approve or deny pictures. Approving one that needs other pending pictures changes nothing and returns `needs`
     until the page sends it again with confirmed set."""
@@ -1638,6 +1663,8 @@ class Handler(BaseHTTPRequestHandler):
                 return self.send_json(reference_run(pid, payload.get("reference"), payload.get("state")))
             if path == "/api/reference/views":
                 return self.send_json(reference_views(pid, payload.get("reference"), payload.get("row"), payload.get("what"), payload.get("state"), bool(payload.get("preview"))))
+            if path == "/api/reference/assemble":
+                return self.send_json(reference_assemble(pid, payload.get("reference"), payload.get("png"), payload.get("used"), payload.get("state")))
             if path == "/api/reference/place":
                 return self.send_json(reference_place(pid, payload.get("reference"), payload.get("row"), payload.get("direction"), payload.get("image"), payload.get("state")))
             if path == "/api/reference/decide":

@@ -5,6 +5,7 @@
  *   Sheet Generation   Simple mode: a classification, up to four source pictures, a prompt, and 1 to 10 complete sheets.
  *                      Advanced mode: rows (a complete asset, base anatomy, one component...), each with up to six source
  *                      pictures and six view slots that are generated, uploaded, locked or switched off one by one.
+ *                      Rows are then assembled into one sheet by reference-assembly.js, with optional specification panels.
  *   Sheet Extraction   choose a sheet, mark regions on it (by hand, or with Detect regions), and cut them out as pictures.
  * Every picture made here is pending until approved or denied, and a pending one is deleted ten days after it was made.
  *
@@ -19,6 +20,8 @@ window.ReferenceGeneration = (function () {
   'use strict';
   let lastLoad = 0, host = null, tools = null, data = null, loadedFor = null, workflow = 'generate', timer = null, saveTimer = null, showing = false, chosen = null;
   const root = document.createElement('div'); root.className = 'rg';
+  let preview = null;                      // the assembled sheet last previewed: { pid, canvas, used, stamp }
+  const openPanels = new Set();            // which specification panels are open, so a redraw does not close them
   const batch = {};                        // per reference project, while a run is going: how many were asked for and how many sheets there were before
   const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
   const el = html => { const t = document.createElement('template'); t.innerHTML = html.trim(); return t.content.firstElementChild; };
@@ -261,6 +264,11 @@ window.ReferenceGeneration = (function () {
         <button class="primary rg-genrow" type="button"${dims.blocked || row.locked ? ' disabled' : ''}>${any ? 'Regenerate Row' : 'Generate Row'}</button>
         <button class="rg-genmissing" type="button"${dims.blocked || row.locked ? ' disabled' : ''}>Generate Missing Views</button><span class="rg-wholeadd"></span>
         <span class="hint">Each view is ${dims.size[0]} × ${dims.size[1]} pixels.${working ? ` ${working} picture${working > 1 ? 's' : ''} in progress.` : ''}</span></div>
+      <div class="ag-run rg-rowlayout"><label>Width on the sheet<select data-k="rw-${row.id}" class="rg-rwidth"><option value="full"${row.width === 'full' ? ' selected' : ''}>Full</option><option value="half"${row.width === 'half' ? ' selected' : ''}>Half</option><option value="custom"${row.width === 'custom' ? ' selected' : ''}>Custom</option></select></label>
+        ${row.width === 'custom' ? `<label>Percent<input data-k="rx-${row.id}" class="ag-n rg-rpct" type="number" min="20" max="100" step="5" value="${row.width_pct}"></label>` : ''}
+        ${whole.length ? `<label>On the sheet show<select data-k="rm-${row.id}" class="rg-rassemble"><option value="views"${row.assemble === 'views' ? ' selected' : ''}>The views</option><option value="whole"${row.assemble === 'whole' ? ' selected' : ''}>The complete row picture</option></select></label>` : ''}
+        <span class="hint">Rows narrower than full sit side by side when they fit.</span></div>
+      ${row.section === 'detail' ? '<div class="cc rg-rowpanel"></div>' : ''}
       ${dims.blocked ? `<div class="rg-blocked">${esc(dims.blocked)}</div>` : ''}
       <div class="rg-slots"></div>
       ${whole.length ? `<div class="ag-label">Complete row picture <span class="hint">Kept whole for assembly. It is not split into views; use Sheet Extraction for that.</span></div><div class="rg-wholes"></div>` : ''}</section>`);
@@ -295,6 +303,10 @@ window.ReferenceGeneration = (function () {
     const rec = card.querySelector('.rg-recommend'); if (rec) rec.onclick = () => { row.prompt_edited = false; saveNow(); };
     card.querySelector('.rg-genrow').onclick = ev => runViews(row, 'row', ev.target); card.querySelector('.rg-genmissing').onclick = ev => runViews(row, 'missing', ev.target);
     if (!row.locked) card.querySelector('.rg-wholeadd').append(source('Upload complete row', image => placeIn(row, '', image), []));
+    card.querySelector('.rg-rwidth').onchange = ev => { row.width = ev.target.value; keep(); draw(); };
+    const pct = card.querySelector('.rg-rpct'); if (pct) pct.onchange = () => { row.width_pct = Math.max(20, Math.min(100, Math.round(+pct.value) || 50)); keep(); draw(); };
+    const asm = card.querySelector('.rg-rassemble'); if (asm) asm.onchange = () => { row.assemble = asm.value; keep(); draw(); };
+    const rp = card.querySelector('.rg-rowpanel'); if (rp) rp.append(panelEditor(row.panel, row.id, 'Specification panel for this row', 'Drawn beside this row.', [row.label, row.role]));
     const slots = card.querySelector('.rg-slots'); data.directions.forEach(d => slots.append(slotCard(row, d)));
     const wholes = card.querySelector('.rg-wholes');
     if (wholes) whole.forEach((a, k) => { const c = el(`<div class="rg-view"><img alt="Complete row picture ${k + 1}" loading="lazy" src="${esc(host.view(a.image))}">${pill(a)}${a === wholeUse ? '<span class="pill rg-selected">In use</span>' : '<button class="small rg-usewhole" type="button">Use this one</button>'}</div>`);
@@ -302,11 +314,102 @@ window.ReferenceGeneration = (function () {
       c.append(actions(a, `${stem()}-row-${index + 1}-${k + 1}.png`)); wholes.append(c); });
     return card;
   }
+  /* ----- Specification panels and assembly ----- */
+  const RA = () => window.ReferenceAssembly;
+  /* A specification panel's editor: whether it is drawn, its Label and Sub Label, three optional dimensions and any number of named lines. */
+  function panelEditor(panel, key, title, note, names) {                  // names: [label, sub label] drawn when the fields are left empty
+    const units = P().layout.units, [big, small] = units === 'imperial' ? ['ft', 'in'] : ['m', 'cm'];
+    const filled = panel.fields.filter(f => f.value.trim()).length + Object.values(panel.dims).filter(Boolean).length;
+    const box = el(`<details class="cc-section rg-panel" data-panel="${key}"${openPanels.has(key) ? ' open' : ''}><summary><b>${esc(title)}</b><span class="hint">${panel.include ? 'On the sheet' : 'Not on the sheet'} · ${esc(panel.label || names[0] || 'no label')} · ${filled} line${filled === 1 ? '' : 's'} filled in</span></summary><div class="cc-body rg-panelbody">
+      <label class="cc-check"><input type="checkbox" data-k="pi-${key}" class="rg-pinclude"${panel.include ? ' checked' : ''}> <span>Include this panel on the assembled sheet</span></label><span class="hint">${esc(note)} Switching it off keeps everything typed here.</span>
+      <div class="rg-fields"><label class="ag-label">Label<input data-k="pl-${key}" class="rg-plabel" type="text" maxlength="60" value="${esc(panel.label)}" placeholder="${esc(names[0] || 'for example: Pirate Hat')}"></label>
+        <label class="ag-label">Sub Label<input data-k="ps-${key}" class="rg-psub" type="text" maxlength="60" value="${esc(panel.sub_label)}" placeholder="${esc(names[1] || 'for example: Headwear')}"></label>
+        ${['height', 'width', 'depth'].map(d => { const [a, b2] = panel.dims[d] ? RA().split(panel.dims[d], units) : ['', '']; return `<span class="rg-dim" data-dim="${d}"><span class="ag-label">${cap(d)}</span><input data-k="pd-${key}-${d}-a" type="number" min="0" step="1" value="${a}" aria-label="${cap(d)} in ${big}"><i>${big}</i><input data-k="pd-${key}-${d}-b" type="number" min="0" step="0.1" value="${b2}" aria-label="${cap(d)} in ${small}"><i>${small}</i></span>`; }).join('')}</div>
+      <div class="rg-plines"></div><div><button class="small rg-padd" type="button"${panel.fields.length >= 16 ? ' disabled' : ''}>Add a line</button> <span class="hint">Lines left empty are not drawn. Dimensions are stored in centimetres and shown in the units chosen under Assemble.</span></div></div></details>`);
+    box.addEventListener('toggle', () => { if (box.open) openPanels.add(key); else openPanels.delete(key); });
+    box.querySelector('.rg-pinclude').onchange = ev => { panel.include = ev.target.checked; keep(); draw(); };
+    const bind = (sel, k) => { const f = box.querySelector(sel); f.oninput = () => { panel[k] = f.value; keep(); }; };
+    bind('.rg-plabel', 'label'); bind('.rg-psub', 'sub_label');
+    box.querySelectorAll('.rg-dim').forEach(d => { const [a, b2] = d.querySelectorAll('input'); a.onchange = b2.onchange = () => { panel.dims[d.dataset.dim] = RA().toCm(a.value, b2.value, units) || null; keep(); }; });      // no redraw: the person may be on their way to the second box
+    const lines = box.querySelector('.rg-plines');
+    panel.fields.forEach((f, k) => { const row = el(`<div class="rg-pline"><input data-k="pn-${key}-${k}" type="text" maxlength="40" value="${esc(f.name)}" placeholder="Name" aria-label="Line ${k + 1} name"><input data-k="pv-${key}-${k}" type="text" maxlength="300" value="${esc(f.value)}" placeholder="Value" aria-label="Line ${k + 1} value">
+        <button class="small ghost" data-a="up" type="button" aria-label="Move line up"${k ? '' : ' disabled'}>▲</button><button class="small ghost" data-a="down" type="button" aria-label="Move line down"${k < panel.fields.length - 1 ? '' : ' disabled'}>▼</button><button class="small ghost" data-a="rm" type="button" aria-label="Remove line">×</button></div>`);
+      const [nm, val] = row.querySelectorAll('input'); nm.oninput = () => { f.name = nm.value; keep(); }; val.oninput = () => { f.value = val.value; keep(); };
+      row.querySelector('[data-a=up]').onclick = () => { panel.fields.splice(k - 1, 0, panel.fields.splice(k, 1)[0]); keep(); draw(); };
+      row.querySelector('[data-a=down]').onclick = () => { panel.fields.splice(k + 1, 0, panel.fields.splice(k, 1)[0]); keep(); draw(); };
+      row.querySelector('[data-a=rm]').onclick = () => { panel.fields.splice(k, 1); keep(); draw(); }; lines.append(row); });
+    box.querySelector('.rg-padd').onclick = () => { panel.fields.push({ name: '', value: '' }); keep(); draw(); };
+    return box;
+  }
+  /* Everything reference-assembly.js needs to lay the sheet out: the pictures in use, loaded, and the text to draw. */
+  async function sheetSpec() {
+    const p = P(), L = p.layout, load = image => new Promise(done => { const i = new Image(); i.onload = () => done(i); i.onerror = () => done(null); i.src = host.view(image); });
+    const panelOf = (pn, names) => pn.include ? { label: pn.label.trim() || names[0], sub: pn.sub_label.trim() || names[1], lines: [...['height', 'width', 'depth'].filter(d => pn.dims[d]).map(d => ({ name: d, value: RA().length(pn.dims[d], L.units) })), ...pn.fields.filter(f => f.value.trim()).map(f => ({ name: f.name, value: f.value }))] } : null;
+    const sections = [];
+    for (const section of data.sections) {
+      const blocks = [];
+      for (const row of p.rows.filter(r => r.section === section)) {
+        const views = data.directions.filter(d => row.slots[d].enabled && chosenOf(row, d)).map(d => ({ a: chosenOf(row, d), caption: cap(d) })), whole = chosenOf(row, null);
+        const pick = (row.assemble === 'whole' || !views.length) && whole ? [{ a: whole, caption: '' }] : views, images = [];
+        for (const x of pick) { const img = await load(x.a.image); if (img && img.naturalWidth) images.push({ img, caption: x.caption, id: x.a.id }); }
+        blocks.push({ label: row.label, sub: row.role, fraction: row.width === 'half' ? 0.5 : row.width === 'custom' ? row.width_pct / 100 : 1, images, panel: section === 'detail' ? panelOf(row.panel, [row.label, row.role]) : null });
+      }
+      if (section === 'base' && p.panel.include) { const first = blocks.find(b => b.images.length); const names = [p.name, typeOf(p.type).label + (p.subtype ? ' · ' + (p.subtype === 'Custom' ? p.custom_subtype : p.subtype) : '')]; if (first) first.panel = panelOf(p.panel, names); else blocks.unshift({ label: '', sub: '', fraction: 1, images: [], panel: panelOf(p.panel, names) }); }
+      sections.push({ name: section, blocks });
+    }
+    const css = getComputedStyle(document.documentElement), width = L.orientation === 'portrait' ? Math.round(L.resolution / Math.SQRT2 / 16) * 16 : L.resolution;
+    return { width, height: L.height, background: L.background === 'solid' ? L.colour : null, margin: Math.round(L.margin * width / 2048), spacing: Math.round(L.spacing * width / 2048), labels: L.labels, align: L.align,
+      title: L.title ? p.name : '', accent: css.getPropertyValue('--swift-green').trim(), font: getComputedStyle(document.body).fontFamily, panelStyle: L.panel_style, sections };
+  }
+  const stampOf = p => JSON.stringify([p.name, p.rows.map(r => [r.id, r.section, r.label, r.role, r.width, r.width_pct, r.assemble, r.selected, r.panel, data.directions.map(d => [r.slots[d].enabled, (chosenOf(r, d) || {}).id])]), p.panel, p.layout]);
+  function assembleBox() {
+    const p = P(), L = p.layout, o = data.layout_options, sel = (k, text, names) => `<label>${text}<select data-k="ly-${k}" data-ly="${k}">${o[k].map(v => `<option value="${v}"${v === L[k] ? ' selected' : ''}>${esc((names || {})[v] || cap(v))}</option>`).join('')}</select></label>`;
+    const have = p.rows.some(r => data.directions.some(d => r.slots[d].enabled && chosenOf(r, d)) || chosenOf(r, null)), mine = preview && preview.pid === p.id ? preview : null, stale = mine && mine.stamp !== stampOf(p);
+    const sheets = arts('sheet').filter(a => a.origin === 'assembled');
+    const box = el(`<section class="rg-assemble"><h2>Assemble the sheet</h2>
+      <p class="hint">Puts the pictures in use into one sheet: Base rows on top, Detail rows below, in the order above. The pictures are placed as they are, scaled to fit without stretching; nothing is regenerated, nothing is extracted, and the rows are not changed.</p>
+      <div class="ag-run rg-layout">${sel('orientation', 'Orientation')}<label>Width<select data-k="ly-resolution" data-ly="resolution">${data.profiles.map(x => `<option value="${x.profile}"${x.profile === L.resolution ? ' selected' : ''}>${L.orientation === 'portrait' ? Math.round(x.profile / Math.SQRT2 / 16) * 16 : x.profile} px</option>`).join('')}</select></label>
+        <label>Height (0 = automatic)<input data-k="ly-height" data-ly="height" class="ag-n" type="number" min="0" max="16384" step="16" value="${L.height}"></label>
+        ${sel('background', 'Background', { solid: 'Solid colour', transparent: 'See-through' })}${L.background === 'solid' ? `<label>Colour<input data-k="ly-colour" data-ly="colour" type="color" value="${esc(L.colour)}"></label>` : ''}
+        ${sel('align', 'Pictures', { left: 'To the left', center: 'Centred', right: 'To the right' })}<label>Spacing<input data-k="ly-spacing" data-ly="spacing" class="ag-n" type="number" min="0" max="200" step="4" value="${L.spacing}"></label>
+        <label>Margin<input data-k="ly-margin" data-ly="margin" class="ag-n" type="number" min="0" max="400" step="4" value="${L.margin}"></label>${sel('panel_style', 'Panels', { boxed: 'In a box', plain: 'Plain text' })}${sel('units', 'Units', { metric: 'Metres and centimetres', imperial: 'Feet and inches' })}
+        <label class="cc-check"><input type="checkbox" data-k="ly-labels" data-ly="labels"${L.labels ? ' checked' : ''}> <span>Row and view names</span></label><label class="cc-check"><input type="checkbox" data-k="ly-title" data-ly="title"${L.title ? ' checked' : ''}> <span>Title (the reference's name)</span></label></div>
+      <div class="rg-fields"><button class="primary rg-preview" type="button"${have ? '' : ' disabled'}>Preview the assembled sheet</button><button class="rg-savesheet" type="button"${mine && !stale ? '' : ' disabled'}>Save as a sheet</button>
+        <span class="hint">${!have ? 'No row has a picture in use yet.' : !mine ? 'Preview first; saving stores exactly what the preview shows, as a new pending sheet.' : stale ? 'Something changed since this preview. Preview again before saving.' : `${mine.canvas.width} × ${mine.canvas.height} pixels, ${mine.used.length} picture${mine.used.length === 1 ? '' : 's'}.${mine.scale < 1 ? ' The content was shrunk to fit the height you set.' : ''}`}</span></div>
+      <div class="rg-previewhold${L.background === 'transparent' ? ' rg-checker' : ''}"></div>
+      <h2>Assembled sheets <span class="hint">${sheets.length}</span></h2><div class="rg-sheets"></div></section>`);
+    box.querySelectorAll('[data-ly]').forEach(f => { f.onchange = () => { const k = f.dataset.ly; L[k] = f.type === 'checkbox' ? f.checked : f.type === 'number' || k === 'resolution' ? +f.value : f.value; keep(); draw(); }; });
+    if (mine) box.querySelector('.rg-previewhold').append(mine.canvas);
+    box.querySelector('.rg-preview').onclick = async ev => {
+      ev.target.disabled = true; ev.target.textContent = 'Laying out…';
+      try { if (document.fonts && document.fonts.ready) await document.fonts.ready; const pl = RA().plan(await sheetSpec()), canvas = RA().draw(pl);
+        preview = { pid: p.id, canvas, plan: pl, scale: pl.scale, used: [...new Set(pl.items.filter(i => i.type === 'image').map(i => i.id))], stamp: stampOf(p) }; canvas.onclick = () => host.openViewer(canvas.toDataURL('image/png')); }
+      catch (e) { host.toast(e.message); }
+      draw();
+    };
+    box.querySelector('.rg-savesheet').onclick = async ev => {
+      ev.target.disabled = true; ev.target.textContent = 'Saving…'; flush();
+      try { const out = await call('POST', '/assemble', { project: host.pid, reference: p.id, png: mine.canvas.toDataURL('image/png'), used: mine.used, state: S() }); preview = null; take(out, true); host.toast('Saved as a new sheet. It is pending until you approve it.'); }
+      catch (e) { host.toast(e.message); draw(); }
+    };
+    const grid = box.querySelector('.rg-sheets');
+    if (!sheets.length) grid.append(el('<p class="hint">None yet.</p>'));
+    sheets.forEach((a, k) => { const c = el(`<div class="rg-view rg-sheetcard"><img alt="Assembled sheet ${k + 1}" loading="lazy" src="${esc(host.view(a.image))}"><b>Assembled sheet ${k + 1}</b><span class="hint">${a.width} × ${a.height} · made from ${a.requires.length} picture${a.requires.length === 1 ? '' : 's'}</span>${pill(a)}${p.selected === a.id ? '<span class="pill rg-selected">Selected sheet</span>' : ''}<span class="rg-actions rg-sheetbtns"></span></div>`);
+      c.querySelector('img').onclick = () => host.openViewer(host.view(a.image));
+      const pick = el(`<button class="small" type="button"${p.selected === a.id ? ' disabled' : ''} title="Make this the project's sheet. It does not approve it.">${p.selected === a.id ? 'Selected' : 'Select as the sheet'}</button>`); pick.onclick = () => { p.selected = a.id; keep(); draw(); };
+      const cut = el('<button class="small" type="button" title="Open Sheet Extraction with this sheet. Nothing is cut until you say so.">Extract from this sheet…</button>'); cut.onclick = () => { p.extraction = { source: a.image, regions: [] }; workflow = 'extract'; keep(); draw(); };
+      c.querySelector('.rg-sheetbtns').append(pick, cut); c.append(actions(a, `${stem()}-assembled-${k + 1}.png`)); grid.append(c); });
+    return box;
+  }
+
   function advanced() {
     const p = P(), box = el(`<section class="panel rg-gen rg-adv"><datalist id="rg-roles">${data.roles.map(r => `<option value="${esc(r)}">`).join('')}</datalist>
-      <p class="hint">A row is one thing to document: the complete asset, its base anatomy, or one component such as a hat or a coat. Each row has its own sources, prompt and up to six views. Generating or changing one row or view never touches another. Assembling the rows into one sheet, and specification panels, are the next step to be built.</p>
+      <p class="hint">A row is one thing to document: the complete asset, its base anatomy, or one component such as a hat or a coat. Each row has its own sources, prompt and up to six views. Generating or changing one row or view never touches another. When the rows have pictures, assemble them into one sheet at the bottom.</p>
+      <div class="cc rg-basepanel"></div>
       <div class="rg-rows"></div><div class="rg-fields"><button class="rg-addbase" type="button">Add a Base row</button><button class="rg-adddetail" type="button">Add a Detail row</button><span class="hint">${p.rows.length} of ${data.limits.rows} rows</span></div></section>`);
     box.prepend(modeBar());
+    box.querySelector('.rg-basepanel').append(panelEditor(p.panel, 'base', 'Base specification panel', 'Drawn beside the first Base row.', [p.name, typeOf(p.type).label]));
+    box.append(assembleBox());
     const rows = box.querySelector('.rg-rows');
     ['base', 'detail'].forEach(section => { const mine = p.rows.filter(r => r.section === section); if (mine.length) rows.append(el(`<h2>${cap(section)} <span class="hint">${mine.length}</span></h2>`)); mine.forEach(r => rows.append(rowCard(r, p.rows.indexOf(r)))); });
     if (!p.rows.length) rows.append(el('<p class="hint">No rows yet.</p>'));
@@ -317,7 +420,7 @@ window.ReferenceGeneration = (function () {
 
   /* ----- Simple mode ----- */
   function simple() {
-    const p = P(), list = arts('sheet'), i = Math.max(0, list.findIndex(a => a.id === p.at)), cur = list.length ? (list.some(a => a.id === p.at) ? list[i] : list[list.length - 1]) : null, n = cur ? list.indexOf(cur) : -1;
+    const p = P(), list = arts('sheet').filter(a => a.origin !== 'assembled'), i = Math.max(0, list.findIndex(a => a.id === p.at)), cur = list.length ? (list.some(a => a.id === p.at) ? list[i] : list[list.length - 1]) : null, n = cur ? list.indexOf(cur) : -1;
     const dims = data.profiles.find(x => x.profile === p.profile).sizes[p.aspect], working = busy(p.id), failed = (data.jobs[p.id] || []).filter(j => j.status === 'error');
     const b = batch[p.id], doneNow = b ? Math.min(b.asked, list.length - b.had) : 0;
     const box = el(`<section class="panel rg-gen">
@@ -478,6 +581,6 @@ window.ReferenceGeneration = (function () {
       return root;
     },
     hide() { showing = false; clearTimeout(timer); },
-    _state: () => data,
+    _state: () => data, _preview: () => preview,
   };
 })();

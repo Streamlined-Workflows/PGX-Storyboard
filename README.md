@@ -315,7 +315,7 @@ asset and cutting pictures out of them. The design is `docs/Reference_Generation
 it prepares for is in `3d_Generation_Plan/`. Code: `reference.py`, the `/api/reference` routes in `app.py`,
 `static/generator/reference-generation.js`, tests in `tests/test_reference.py`.
 
-**Built so far** (the design's section 16, steps 1 to 4 and part of 6):
+**Built so far** (the design's section 16, steps 1 to 5 and part of 6):
 
 - **Reference projects.** One per asset, several per SWIFT Director project, each with a name and a classification:
   four parents, eight asset types, optional subtype including Custom (the registry of `3d_Phase_3.md`).
@@ -347,6 +347,22 @@ it prepares for is in `3d_Generation_Plan/`. Code: `reference.py`, the `/api/ref
     pending stays pending with the same expiry, and shares the file with the original.
   - Switching between Simple and Advanced loses nothing. The first switch to Advanced makes a first row from Simple's
     sources and selected sheet; nothing is extracted.
+- **Specification panels.** One for the Base section and one for each Detail row: a Label and Sub Label (left empty,
+  they are drawn as the name and role of what the panel belongs to), optional height, width and depth, and any number
+  of named lines that can be added, reordered and removed. Each has its own "include on the sheet" tick; unticking it
+  keeps everything typed. Dimensions are stored in centimetres and entered and shown in metres and centimetres or feet
+  and inches (100 cm per metre, 30.48 per foot, 2.54 per inch); changing the units changes nothing stored.
+- **Assembling the sheet.** `static/generator/reference-assembly.js` lays the pictures in use out on a canvas: Base
+  rows on top, Detail rows below, in row order. No model is involved. Each picture keeps its proportions and is never
+  enlarged past its own size; pictures of different sizes and shapes sit together without a fixed grid. A row can be
+  full width, half, or a custom percent, and narrower rows sit side by side when they fit. Settings: orientation,
+  width, automatic or fixed height (content taller than a fixed height is shrunk as a whole), solid or see-through
+  background, alignment, spacing, margin, row and view names, a title, and boxed or plain panels. All text is drawn by
+  the browser, so it is spelled as typed. **Preview** shows the result; **Save as a sheet** stores exactly that as a
+  new pending sheet. Assembling changes no row or view and never starts an extraction.
+- **An assembled sheet needs the pictures on it.** Approving one while some of those are still pending shows the
+  design's "Approve Required Dependencies" question, listing each with the reason, and approves them together or not
+  at all. A picture an approved sheet shows cannot be denied.
 - **Sheet Extraction.** A separate workflow that only starts when you open it. Choose a sheet made here, upload one
   (PNG, JPEG, WebP) or take one from the Library; mark regions by dragging, or use **Detect regions**; say what each
   shows (a direction or a detail, Base or Detail, a component name) and adjust its edges by number; then extract. The
@@ -363,8 +379,9 @@ it prepares for is in `3d_Generation_Plan/`. Code: `reference.py`, the `/api/ref
   deleted and the file stays in ComfyUI's input folder. Start with `COMFY_INPUT=/path/to/ComfyUI/input ./run.sh` and
   the file is deleted too, unless something else in the project still uses it.
 
-**Not built yet:** specification panels, deterministic assembly of rows into a sheet, validation reporting, the four export profiles, the
-hand-over to 3D Generation, and choosing between providers (there is one). Automatic detection does not suggest
+**Not built yet:** validation reporting, the four export profiles, the
+hand-over to 3D Generation, choosing between providers (there is one), specification panels on Simple sheets, and
+branding beyond the title line. Automatic detection does not suggest
 directions or tell text from pictures beyond the size rule above.
 
 ## Lore

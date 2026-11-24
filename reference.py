@@ -1,11 +1,15 @@
 """Reference Generation: reference sheets for an asset, and the pictures cut out of them.
 
-Design document: docs/Reference_Generation_Design.md. Built so far (its section 16, steps 1 to 4 and the manual half
+Design document: docs/Reference_Generation_Design.md. Built so far (its section 16, steps 1 to 5 and the manual half
 of step 6): the workspace with its two separately started workflows, the classification registry, Simple sheet
 generation with candidates, approval and ten-day retention, Advanced rows with six directional slots (generate,
-upload, lock, disable, inherit from other rows, row classification), and Sheet Extraction by hand-drawn regions.
-Not built yet: specification panels, assembly, validation reporting, the export profiles and the hand-over to
-3D Generation.
+upload, lock, disable, inherit from other rows, row classification), specification panels, assembling the rows
+into one sheet, and Sheet Extraction by hand-drawn regions.
+Not built yet: validation reporting, the export profiles and the hand-over to 3D Generation.
+
+Assembly is done by the page (static/generator/reference-assembly.js): it lays the chosen pictures out on a canvas,
+never asking a model to redraw anything, and sends the finished PNG here to be stored as a new pending sheet that
+records which pictures it was made from.
 
 What is kept for a SWIFT Director project (project["reference"]):
   projects   reference projects: [{id, name, parent, type, subtype, custom_subtype, mode, prompt, prompt_edited,
@@ -148,6 +152,50 @@ def _region(r):
             "component": _text(r.get("component"), 60), "detected": bool(r.get("detected"))}
 
 
+PANEL_FIELDS, FIELD_NAME, FIELD_VALUE = 16, 40, 300
+DEFAULT_FIELDS = ("Build", "Materials", "Colours", "Style", "Notes")
+WIDTHS = ("full", "half", "custom")
+LAYOUT = {"orientation": ("landscape", "portrait"), "background": ("solid", "transparent"), "align": ("left", "center", "right"),
+          "panel_style": ("boxed", "plain"), "units": ("metric", "imperial")}
+LAYOUT_DEFAULT = {"orientation": "landscape", "resolution": 2048, "height": 0, "background": "solid", "colour": "#e6e6e6", "labels": True, "title": True,
+                  "spacing": 24, "margin": 48, "align": "center", "panel_style": "boxed", "units": "metric"}
+
+
+def _panel(incoming, current):
+    """A specification panel: a Label, a Sub Label, optional dimensions (kept in centimetres whatever units are shown) and
+    any number of named lines. `include` only says whether it is drawn on the sheet; switching it off keeps everything.
+    A Label or Sub Label left empty is drawn as the name and role of what the panel belongs to, so it follows a rename."""
+    incoming = incoming if isinstance(incoming, dict) else {}
+    get = lambda k, d=None: incoming.get(k, current.get(k, d))
+    fields = get("fields")
+    if not isinstance(fields, list):
+        fields = [{"name": n, "value": ""} for n in DEFAULT_FIELDS]
+    dims = get("dims") if isinstance(get("dims"), dict) else {}
+    def cm(v):
+        try:
+            return round(min(1_000_000.0, float(v)), 2) if v is not None and float(v) > 0 else None
+        except (TypeError, ValueError):
+            return None
+    return {"include": bool(get("include", False)), "label": _text(get("label", ""), 60), "sub_label": _text(get("sub_label", ""), 60),
+            "dims": {k: cm(dims.get(k)) for k in ("height", "width", "depth")},
+            "fields": [{"name": _text(f.get("name"), FIELD_NAME), "value": _text(f.get("value"), FIELD_VALUE)} for f in fields[:PANEL_FIELDS] if isinstance(f, dict)]}
+
+
+def _layout(incoming, current):
+    incoming = incoming if isinstance(incoming, dict) else {}
+    get = lambda k: incoming.get(k, current.get(k, LAYOUT_DEFAULT[k]))
+    out = {k: get(k) if get(k) in allowed else LAYOUT_DEFAULT[k] for k, allowed in LAYOUT.items()}
+    out["resolution"] = get("resolution") if get("resolution") in PROFILES else LAYOUT_DEFAULT["resolution"]
+    out["colour"] = get("colour") if isinstance(get("colour"), str) and re.fullmatch(r"#[0-9a-fA-F]{6}", get("colour")) else LAYOUT_DEFAULT["colour"]
+    out["labels"], out["title"] = bool(get("labels")), bool(get("title"))
+    for key, low, high in (("spacing", 0, 200), ("margin", 0, 400), ("height", 0, 16384)):      # height 0 = as tall as the content needs
+        try:
+            out[key] = max(low, min(high, int(get(key))))
+        except (TypeError, ValueError):
+            out[key] = LAYOUT_DEFAULT[key]
+    return out
+
+
 def _row(incoming, current, project_type, name, known):
     incoming = incoming if isinstance(incoming, dict) else {}
     get = lambda k, d=None: incoming.get(k, current.get(k, d))
@@ -180,6 +228,13 @@ def _row(incoming, current, project_type, name, known):
     out["aspect"] = get("aspect") if get("aspect") in [a for a, _, _ in ASPECTS] else ROW_SHAPE.get(real, "1:1")
     out["at"] = get("at") if isinstance(get("at"), str) else None             # the complete-row picture on show
     out["selected"] = get("selected") if isinstance(get("selected"), str) else None
+    out["width"] = get("width") if get("width") in WIDTHS else "full"         # how much of the sheet's width the row takes when assembled
+    try:
+        out["width_pct"] = max(20, min(100, int(get("width_pct", 50))))
+    except (TypeError, ValueError):
+        out["width_pct"] = 50
+    out["assemble"] = get("assemble") if get("assemble") in ("views", "whole") else "views"      # which of its pictures go on the sheet
+    out["panel"] = _panel(get("panel"), current.get("panel") or {})
     slots, was, starts = get("slots") if isinstance(get("slots"), dict) else {}, current.get("slots") or {}, ROW_VIEWS.get(real, DIRECTIONS[:4])
     out["slots"] = {}
     for d in DIRECTIONS:
@@ -235,6 +290,8 @@ def _project(incoming, current, new_id):
     rows = [r for r in (_row(r, was.get(r.get("id")) or {}, kind, plain, known) for r in listed[:MAX_ROWS] if isinstance(r, dict)) if r]
     out["rows"] = list({r["id"]: r for r in rows}.values())
     _uncycle(out["rows"])
+    out["panel"] = _panel(get("panel"), current.get("panel") or {})       # the Base section's panel
+    out["layout"] = _layout(get("layout"), current.get("layout") or {})
     return out
 
 
@@ -384,6 +441,29 @@ def place(project, rid, row_id, direction, image, new_id, now=None):
     return art
 
 
+def assembled(project, rid, image, width, height, used, new_id, now=None):
+    """Record a sheet the page assembled from chosen pictures. It is a new pending picture of its own, and it needs the
+    pictures it was made from: approving it asks about any of those that are still pending.
+    `used` is the ids of the pictures on it. -> the new artifact"""
+    now = now or time.time()
+    state = project["reference"]
+    p = find(state, rid)
+    by = {a["id"]: a for a in state["artifacts"] if a["project"] == rid}
+    ids = [i for i in dict.fromkeys(used if isinstance(used, list) else []) if i in by]
+    if not ids:
+        raise ValueError("There is nothing to assemble: no row has a picture yet.")
+    rows = {r["id"]: r for r in p["rows"]}
+    def why(a):
+        row = rows.get(a.get("row"), {})
+        where = f"the row “{row.get('label') or row.get('role') or 'unnamed'}”"
+        return f"The {a['direction']} view of {where}, shown on this sheet." if a["role"] == "view" else f"The complete picture of {where}, shown on this sheet."
+    art = {"id": new_id(), "project": rid, "role": "sheet", "image": image, "state": "pending", "created": now, "expires": now + RETENTION,
+           "width": width, "height": height, "upscaled": False, "origin": "assembled", "requires": [{"id": i, "reason": why(by[i])} for i in ids],
+           "prompt": "", "seed": None, "sources": [by[i]["image"] for i in ids], "provider": "Assembled by SWIFT Director"}
+    state["artifacts"].append(art)
+    return art
+
+
 def sync(project, now=None):
     """Bring the artifact list in step with the pictures: record newly finished sheets as pending, and delete the ones
     whose ten days have run out. -> (state, the picture names whose records were deleted). Changes `project` in place."""
@@ -519,5 +599,5 @@ def view(project, now=None):
             "profiles": [{"profile": pr, "sizes": {a: {"size": list(size(pr, a)), "blocked": supported(pr, a)} for a, _, _ in ASPECTS}} for pr in PROFILES],
             "aspects": [a for a, _, _ in ASPECTS], "directions": list(DIRECTIONS), "sections": list(SECTIONS),
             "limits": {"sources": MAX_SOURCES, "count": MAX_COUNT, "regions": MAX_REGIONS, "retention_days": RETENTION // 86400, "rows": MAX_ROWS, "row_sources": ROW_SOURCES},
-            "roles": list(ROLES), "direction_words": dict(DIRECTION_WORDS),
+            "roles": list(ROLES), "direction_words": dict(DIRECTION_WORDS), "layout_options": {k: list(v) for k, v in LAYOUT.items()},
             "prompt_limit": dict(PROMPT_LIMIT), "provider": dict(PROVIDER)}

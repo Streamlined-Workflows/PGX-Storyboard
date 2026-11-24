@@ -285,6 +285,41 @@ class Rows(unittest.TestCase):
         self.assertEqual((row["slots"]["front"]["locked"], row["slots"]["front"]["selected"]), (False, None))
 
 
+class PanelsAndAssembly(unittest.TestCase):
+    def test_panels_start_with_label_and_sub_label_and_keep_their_text_when_switched_off(self):
+        p, ref = advanced()
+        self.assertEqual((ref["panel"]["label"], ref["panel"]["sub_label"], ref["panel"]["include"]), ("", "", False))       # empty: drawn as the name and type
+        hat = ref["rows"][1]["panel"]
+        self.assertEqual((hat["label"], hat["sub_label"], [f["name"] for f in hat["fields"]]), ("", "", ["Build", "Materials", "Colours", "Style", "Notes"]))
+        hat = dict(hat, include=True, label="Pirate Hat", dims={"height": 25.4, "width": "x", "depth": -3}, fields=[{"name": "Material", "value": "Felt"}, {"name": "Notes", "value": ""}])
+        s = reference.clean({"projects": [dict(ref, rows=[ref["rows"][0], dict(ref["rows"][1], panel=hat)])]}, p["reference"])
+        kept = s["projects"][0]["rows"][1]["panel"]
+        self.assertEqual((kept["dims"], kept["fields"][0]), ({"height": 25.4, "width": None, "depth": None}, {"name": "Material", "value": "Felt"}))
+        off = reference.clean({"projects": [dict(s["projects"][0], rows=[s["projects"][0]["rows"][0], dict(s["projects"][0]["rows"][1], panel=dict(kept, include=False))])]}, s)["projects"][0]["rows"][1]["panel"]
+        self.assertEqual((off["include"], off["label"], off["fields"][0]["value"], off["dims"]["height"]), (False, "Pirate Hat", "Felt", 25.4))
+
+    def test_layout_settings_are_limited_to_what_exists(self):
+        p, ref = advanced()
+        self.assertEqual(ref["layout"], reference.LAYOUT_DEFAULT)
+        lay = reference.clean({"projects": [dict(ref, layout={"orientation": "diagonal", "resolution": 999, "colour": "red", "spacing": 9999, "background": "transparent", "units": "imperial", "labels": False})]}, p["reference"])["projects"][0]["layout"]
+        self.assertEqual((lay["orientation"], lay["resolution"], lay["colour"], lay["spacing"], lay["background"], lay["units"], lay["labels"]), ("landscape", 2048, "#e6e6e6", 200, "transparent", "imperial", False))
+        row = reference.clean({"projects": [dict(ref, rows=[dict(ref["rows"][0], width="half", width_pct=5, assemble="whole")])]}, p["reference"])["projects"][0]["rows"][0]
+        self.assertEqual((row["width"], row["width_pct"], row["assemble"]), ("half", 20, "whole"))
+
+    def test_an_assembled_sheet_is_pending_and_needs_the_pictures_on_it(self):
+        p, ref = advanced()
+        view(p, "g1", "front", 1000.0); view(p, "g2", "left", 1000.0); reference.sync(p, now=1001.0)
+        with self.assertRaises(ValueError):
+            reference.assembled(p, "rpaaaaaa01", "sheet.png", 2048, 900, ["nothing"], lambda: "s1")
+        a = reference.assembled(p, "rpaaaaaa01", "sheet.png", 2048, 900, ["g1", "g2", "g1"], lambda: "s1", now=2000.0)
+        self.assertEqual((a["role"], a["origin"], a["state"], a["expires"], [r["id"] for r in a["requires"]]), ("sheet", "assembled", "pending", 2000.0 + 10 * DAY, ["g1", "g2"]))
+        self.assertEqual(a["requires"][0]["reason"], "The front view of the row \u201cComplete character\u201d, shown on this sheet.")
+        self.assertEqual([n["id"] for n in reference.approve(p, ["s1"])["needs"]], ["g1", "g2"])          # the dependency question now has something to ask
+        self.assertEqual(reference.approve(p, ["s1"], confirmed=True), {"approved": ["g1", "g2", "s1"]})
+        self.assertEqual(reference.delete(p, ["g1"]), [])                                                  # a view an approved sheet shows is kept
+        self.assertEqual(len([x for x in p["reference"]["artifacts"] if x["role"] == "view"]), 2)         # assembling changed no view
+
+
 class Files(unittest.TestCase):
     def test_a_deleted_pictures_file_is_removed_only_when_the_folder_is_known_and_nothing_else_uses_it(self):
         import os, tempfile
