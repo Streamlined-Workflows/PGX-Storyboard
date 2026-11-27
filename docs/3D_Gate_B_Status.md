@@ -23,6 +23,7 @@ Blender, Character Creator or iClone has been tried. Those sample files are not 
 | 17 Library (whole assets only; a first piece of Gate C) | Add approved assets, search, tags, favourites, flat collections, archive, use in any project as an independent pinned asset, where-used list, remove | `studio3d/library.py` |
 | 18 Export and reimport | SWIFT ZIP with manifest, checksums and compatibility report; read-back check; pending confirmation; validated reimport as a new editable asset | `studio3d/package.py` |
 | 19-21 Providers, queue, locks | Capability table, provider registry, one-at-a-time ledger kept on disk, lock scopes, cancel, force-stop confirmation, retry, interrupted-on-restart | `studio3d/jobs.py` |
+| GLB to FBX (decided 27 Nov 2026) | Blender converter service, self-test before first use, GLB import as a pending FBX with the GLB kept as a source file | `convert-service/`, `studio3d/convert.py` |
 | 22 Lifecycle and storage | Content-addressed store, 10-day expiry, approve with dependency confirmation, deny deletes, free-space floor, orphan sweep, hourly cleanup and Clean Up Now | `studio3d/store.py`, `assets.py` |
 | 23 Workspace | Header, nine tabs, parts tree, inspector, job list, the two inherited confirmation dialogs | `static/studio3d/studio3d.js` |
 | 24 Local security | Same-origin check on changes, size limits before reading, path and checksum checks on packages, external picture addresses in FBX never fetched, no outbound calls | `app.py`, `package.py`, `viewport.js` |
@@ -32,7 +33,7 @@ Blender, Character Creator or iClone has been tried. Those sample files are not 
 - **Any provider that makes or changes geometry**: generation from references, optimisation, segmentation, FBX
   conversion or normalising, UVs, texture generation and baking, pose conversion, weight transfer, landmarks. The tabs
   exist and say "Not available yet" with the reason.
-- **Writing FBX.** The studio stores and exports files byte for byte. A file in other axes or units is reported, not converted.
+- **Converting FBX.** An FBX in other axes or units is reported, not converted; only GLB goes through Blender.
 - Library entries for materials and texture sets, and shared (update-everywhere) assignments: there is nothing that
   makes materials yet.
 - Phases 7 to 13 and 15 (optimisation, components as separate files, UVs, textures, materials, surface editing,
@@ -67,7 +68,13 @@ Blender, Character Creator or iClone has been tried. Those sample files are not 
 - The reader measured a made-up mesh of 202,500 control points (8 MB) in 1.5 seconds in the test sandbox. Real files have
   not been timed.
 
+- The converter was run for real in the test sandbox with Blender 5.3 as a Python module on an ordinary PC chip: the
+  test cube came out the right size, direction and position, and a GLB went through the page to a drawn FBX. The
+  container in `convert-service/Dockerfile` installs Ubuntu 24.04's own Blender (4.0), which has **not** been built or
+  run, on the PGX or anywhere. The **Test the converter** button is how you find out whether it works there.
+
 ## To try on the PGX
+0. After updating, look for "The converter is running." Then open 3D Generation and press **Test the converter**.
 
 1. Import a real character FBX from Blender or Character Creator. Does it draw, and do the counts match the source tool?
 2. Import a large file (hundreds of MB). How long does the read take, and does the page stay usable?

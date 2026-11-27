@@ -58,10 +58,14 @@ class Store:
                 s = json.load(f)
         except (OSError, ValueError):
             s = {}
-        return {"floor_bytes": max(256 * 1024 ** 2, int(s.get("floor_bytes", FLOOR_DEFAULT))), "budget_bytes": max(0, int(s.get("budget_bytes", 0)))}
+        passed = s.get("qualified") if isinstance(s.get("qualified"), dict) else {}
+        return {"floor_bytes": max(256 * 1024 ** 2, int(s.get("floor_bytes", FLOOR_DEFAULT))), "budget_bytes": max(0, int(s.get("budget_bytes") or 0)),
+                "qualified": {str(k)[:60]: str(v)[:60] for k, v in passed.items()}}      # provider id -> the version that passed a test on this machine
 
     def set_settings(self, **changes):
-        s = dict(self.settings(), **{k: int(v) for k, v in changes.items() if k in ("floor_bytes", "budget_bytes")})
+        s = dict(self.settings(), **{k: int(v or 0) for k, v in changes.items() if k in ("floor_bytes", "budget_bytes")})
+        if isinstance(changes.get("qualified"), dict):
+            s["qualified"] = changes["qualified"]
         s["floor_bytes"] = max(256 * 1024 ** 2, s["floor_bytes"])      # the floor cannot be set below a hard minimum
         self._write(self.settings_path, json.dumps(s).encode())
         return self.settings()

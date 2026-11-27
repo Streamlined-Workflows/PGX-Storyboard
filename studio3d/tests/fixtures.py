@@ -68,3 +68,24 @@ def broken():
     verts = CUBE[0] + [999, 999, 999]
     faces = CUBE[1] + [[0, 1, 1, 2], [0, 3, 2, 1]]
     return scene([mesh(100, "Broken", verts, faces), model(200, "Broken")], [(100, 200), (200, 0)])
+
+
+def glb_cube(size=1.0, lift=0.5, name="Crate", at=(0, 0, 0)):
+    """A cube as a binary glTF file (GLB), in metres as GLB is, standing on the ground. 8 points, 12 triangles."""
+    import json
+    import struct
+    h = size / 2
+    pts = [(x, y + lift, z) for x in (-h, h) for y in (-h, h) for z in (-h, h)]
+    tris = [0, 1, 3, 0, 3, 2, 4, 6, 7, 4, 7, 5, 0, 4, 5, 0, 5, 1, 2, 3, 7, 2, 7, 6, 0, 2, 6, 0, 6, 4, 1, 5, 7, 1, 7, 3]
+    vb, ib = b"".join(struct.pack("<3f", *p) for p in pts), struct.pack("<36H", *tris)
+    doc = {"asset": {"version": "2.0"}, "scene": 0, "scenes": [{"nodes": [0]}], "nodes": [{"mesh": 0, "name": name, "translation": list(at)}],
+           "meshes": [{"name": name, "primitives": [{"attributes": {"POSITION": 0}, "indices": 1}]}],
+           "buffers": [{"byteLength": len(vb) + len(ib)}],
+           "bufferViews": [{"buffer": 0, "byteOffset": 0, "byteLength": len(vb), "target": 34962}, {"buffer": 0, "byteOffset": len(vb), "byteLength": len(ib), "target": 34963}],
+           "accessors": [{"bufferView": 0, "componentType": 5126, "count": 8, "type": "VEC3", "min": [min(p[i] for p in pts) for i in range(3)], "max": [max(p[i] for p in pts) for i in range(3)]},
+                         {"bufferView": 1, "componentType": 5123, "count": 36, "type": "SCALAR"}]}
+    js = json.dumps(doc).encode()
+    js += b" " * (-len(js) % 4)
+    body = vb + ib
+    body += b"\x00" * (-len(body) % 4)
+    return b"glTF" + struct.pack("<II", 2, 12 + 8 + len(js) + 8 + len(body)) + struct.pack("<I", len(js)) + b"JSON" + js + struct.pack("<I", len(body)) + b"BIN\x00" + body

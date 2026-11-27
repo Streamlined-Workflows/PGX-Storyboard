@@ -44,5 +44,17 @@ if docker build -t swift-director-speech speech-service; then
 else
   echo "PROBLEM: the speech service could not be built. Everything else works. Send Claude the last 30 lines above."
 fi
+# The converter: Blender, run without a window, turns GLB files into the studio's FBX. It listens on this computer only.
+echo
+echo "Now preparing the converter (Blender). The first time, this downloads about 1 GB of software."
+if docker build -t swift-director-convert convert-service; then
+  docker rm -f swift-director-convert >/dev/null 2>&1 || true
+  docker run -d --name swift-director-convert --restart unless-stopped --network host --read-only --tmpfs /tmp:size=4g \
+    --cap-drop ALL --security-opt no-new-privileges swift-director-convert >/dev/null \
+    && echo "The converter is running." \
+    || echo "PROBLEM: the converter was built but would not start. Everything else works. Send Claude the lines above."
+else
+  echo "PROBLEM: the converter could not be built. Everything else works; GLB files cannot be imported. Send Claude the last 30 lines above."
+fi
 echo
 echo "SWIFT Director is running. Open http://$(hostname).local:8190 in your browser."

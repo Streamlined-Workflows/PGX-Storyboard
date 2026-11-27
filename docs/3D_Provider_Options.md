@@ -14,7 +14,7 @@ or tried on the PGX. Check every licence yourself before relying on it; this is 
 | Geometry from several views | **Hunyuan3D 2.0 MV / 2.1** (Tencent) | People report it running on the DGX Spark, which is the same GB10 hardware; it accepts multiple views, which fits the reference sheets | Tencent's community licence, which reports say does not apply in the EU, UK or South Korea. A US user appears to be inside it, but read it. One report says the ComfyUI multi-view workflow gave meshes without textures. |
 | Splitting into parts | Hunyuan3D-Part | Open weights for part segmentation | Same Tencent licence family. NVIDIA's PartPacker is non-commercial, so it is out. |
 | Remeshing | AutoRemesher | One team reports using it on a DGX Spark | It needed a patch for ARM64 |
-| **GLB to FBX** | Not chosen | Every model above writes GLB, and the studio's canonical file is FBX | This is a gap in the plan's tooling. Blender run without a window is the usual answer; whether to add it is your call. |
+| **GLB to FBX** | **Decided 27 Nov 2026: Blender, run without a window** | Every model above writes GLB, and the studio's canonical file is FBX | Built as `convert-service/`. Not yet run on the PGX. |
 
 ## Things to know before choosing
 

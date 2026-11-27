@@ -239,6 +239,22 @@ class Studio:
             self.store.save(r)
             return r, art
 
+    def add_source(self, asset_id, made_id, data, filename, fmt):
+        """Keep the file a geometry candidate was converted from, beside it, as its own pending artifact. It is a record
+        of where the candidate came from, not something the candidate needs: either can be approved or denied alone."""
+        with self.store.lock:
+            r = self.store.load(asset_id)
+            made = self._find(r, made_id)
+            now = self.store.clock()
+            digest, size = self.store.put(data)
+            art = {"id": self.store.new_id("art"), "category": "source", "format": fmt, "name": re.sub(r"[^A-Za-z0-9 ._-]+", "_", _text(filename, 120)) or "source." + fmt,
+                   "blob": digest, "size": size, "state": made["state"], "created": now, "expires": now + RETENTION, "origin": "imported", "requires": [], "made": made_id}
+            r["artifacts"].append(art)
+            made["source"] = art["id"]
+            r["modified"] = now
+            self.store.save(r)
+            return art
+
     def select(self, asset_id, artifact_id):
         """Make a candidate the asset's current geometry. This is not approval and does not move any expiry."""
         with self.store.lock:

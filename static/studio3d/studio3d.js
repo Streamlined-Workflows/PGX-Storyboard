@@ -172,7 +172,7 @@ window.Studio3D = (function () {
         <label class="s3-inline" title="Give each part its own colour so parts can be told apart. This is only for looking; it is not the asset's material."><input type="checkbox" data-k="palette" data-opt="palette"> Colour by part</label>
         <label class="s3-inline" title="Mark the faces the checks found faults in"><input type="checkbox" data-k="faults" data-opt="faults"> Mark faults</label>
         <span class="s3-group"><span class="ag-label">Grid</span>${['x', 'y', 'z'].map(k => `<label class="ag-grid ag-grid-${k}"><input type="checkbox" data-k="grid-${k}" data-g="${k}"${g[k] ? ' checked' : ''}> ${k.toUpperCase()}</label>`).join('')}</span></div>
-      <div class="ag-3dhold s3-hold"><div class="hint ag-3dwait">${current() ? 'Starting the 3D view…' : 'Nothing to show yet. Import an FBX file or a SWIFT ZIP.'}</div></div>
+      <div class="ag-3dhold s3-hold"><div class="hint ag-3dwait">${current() ? 'Starting the 3D view…' : 'Nothing to show yet. Import an FBX, a GLB or a SWIFT ZIP.'}</div></div>
       <div class="hint">Drag to turn, right-drag (or two fingers) to move, scroll to zoom. <span class="s3-viewnote">${esc(viewNote)}</span> What you set here is only for looking and is not saved.</div></div>`);
     const hold = box.querySelector('.s3-hold');
     box.querySelectorAll('[data-opt]').forEach(c => { const k = c.dataset.opt; if (c.type === 'checkbox') c.checked = look[k]; else c.value = look[k];
@@ -193,19 +193,24 @@ window.Studio3D = (function () {
     const s = list.storage, c = current();
     const box = el(`<section class="panel s3-head"><div class="rg-fields">
         <label class="ag-label">3D asset<select data-k="asset" class="s3-asset"><option value="">${list.assets.length ? 'Choose an asset…' : 'No 3D assets yet'}</option>${list.assets.map(a => `<option value="${esc(a.id)}"${asset && a.id === asset.id ? ' selected' : ''}>${esc(a.name)}${a.pending ? ` (${a.pending} pending)` : ''}</option>`).join('')}</select></label>
-        <button type="button" class="s3-import primary" data-k="import">Import FBX or SWIFT ZIP</button><input type="file" class="s3-pick" accept=".fbx,.zip" hidden>
+        <button type="button" class="s3-import primary" data-k="import">Import FBX, GLB or SWIFT ZIP</button><input type="file" class="s3-pick" accept=".fbx,.glb,.zip" hidden>
         <label class="s3-inline" title="Keep the imported file permanently straight away instead of reviewing it first"><input type="checkbox" class="s3-approve" data-k="approve-on-import"> Approve on import</label>
         ${asset ? `<label class="s3-inline" title="Add the next file to the open asset as another candidate instead of making a new asset"><input type="checkbox" class="s3-into" data-k="into"> Add to this asset</label>` : ''}
         <span class="ag-grow"></span>${asset ? `<button type="button" class="small" data-k="tolib" data-do="tolib"${c && c.state === 'approved' ? ' title="Keep the selected file in the asset library, for use in any project"' : ' disabled title="Only an approved file can go in the library. Approve the selected file first."'}>Add to Library</button>` : ''}${asset ? '<button type="button" class="small" data-k="copy" data-do="copy">Duplicate</button><button type="button" class="small ghost" data-k="delete" data-do="delete">Delete asset</button>' : ''}</div>
       ${asset ? `<div class="s3-context"><b>${esc(asset.name)}</b><span>${esc(asset.parent_label)} / ${esc(asset.type_label)}${asset.subtype ? ' / ' + esc(asset.subtype === 'Custom' ? asset.custom_subtype || 'Custom' : asset.subtype) : ''}</span>
           <span>${c ? 'Showing: ' + esc(c.name) + ' ' + pill(c) : 'No geometry yet'}</span>${asset.busy.length ? `<span class="pill rg-pending">${esc(asset.busy[0].label)}: ${esc(asset.busy[0].state)}</span>` : ''}</div>` : ''}
       <div class="hint s3-storage">Storage: ${bytes(s.approved)} approved, ${bytes(s.pending)} pending, ${bytes(s.free)} free on the disk. New work stops when less than ${bytes(s.floor_bytes)} is free. Files are binary FBX; ${esc(info.conventions)} is what the studio expects.
-        <button type="button" class="small ghost" data-k="cleanup" data-do="cleanup" title="Delete every pending file whose ${info.retention_days} days have run out, now rather than at the next hourly check">Clean Up Now</button></div></section>`);
+        <button type="button" class="small ghost" data-k="cleanup" data-do="cleanup" title="Delete every pending file whose ${info.retention_days} days have run out, now rather than at the next hourly check">Clean Up Now</button></div>
+      <div class="hint s3-storage">${info.converter.tested ? `GLB files are converted to FBX by Blender ${esc(info.converter.blender)}, which passed its test on this computer.` : `<span class="pill rg-pending">GLB import is off</span> ${esc(info.converter.reason)}${info.converter.running ? '' : ' It is set up by the update script.'}`}
+        ${info.converter.running ? `<button type="button" class="small${info.converter.tested ? ' ghost' : ''}" data-k="convtest" data-do="convtest" title="Convert a known one-metre cube with Blender and check that it comes out the right size, the right way up and in the right place">${info.converter.tested ? 'Test the converter again' : 'Test the converter'}</button>` : '<button type="button" class="small ghost" data-k="convcheck" data-do="convcheck">Check again</button>'}</div></section>`);
     const file = box.querySelector(".s3-pick");
     box.querySelector('.s3-asset').onchange = ev => { if (ev.target.value) open(ev.target.value); else { asset = null; draw(); } };
     box.querySelector('.s3-import').onclick = () => file.click();
     file.onchange = () => { const into = box.querySelector('.s3-into'); bring(file.files[0], into && into.checked ? asset.id : null, box.querySelector('.s3-approve').checked); file.value = ''; };
     box.querySelectorAll('[data-do]').forEach(b => { b.onclick = async () => {
+      if (b.dataset.do === 'convcheck') { try { info = await call('GET', '/info'); draw(); } catch (e) { host.toast(e.message); } }
+      if (b.dataset.do === 'convtest') { b.disabled = true; b.textContent = 'Testing…';
+        try { const out = await call('POST', '/converter/test', {}); info.converter = out.converter; draw(); host.toast(out.passed ? `The converter passed with Blender ${out.blender}. GLB files can be imported.` : 'The converter did not pass: ' + out.problems.join('; ') + '. GLB import stays off.'); } catch (e) { host.toast(e.message); draw(); } }
       if (b.dataset.do === 'tolib') { try { await call('POST', '/library/add', { asset: asset.id }); host.toast('Added to the library. It is kept there even if this asset is deleted.'); loadLibrary(); } catch (e) { host.toast(e.message); } }
       if (b.dataset.do === 'copy') act(() => call('POST', '/asset/copy', { id: asset.id }), 'Duplicated. The copy shares the same stored files until one of them changes.');
       if (b.dataset.do === 'cleanup') { try { const out = await call('POST', '/cleanup'); list.storage = out.storage; host.toast(out.expired ? `Deleted ${out.expired} expired file${out.expired === 1 ? '' : 's'} and freed ${bytes(out.freed)}.` : 'Nothing had expired.'); if (asset) await open(asset.id, true); await relist(); draw(); } catch (e) { host.toast(e.message); } }
@@ -268,6 +273,13 @@ window.Studio3D = (function () {
         if (b.dataset.a === 'save') { if (a.state === 'pending' && !await dialog('Export Unapproved Asset', `<p>This file has not been approved for permanent storage. It will be deleted from SWIFT Director when its time runs out (${esc(left(a).replace('Pending · ', ''))}) unless you approve it first. Downloading does not approve it or give it more time. Your downloaded copy is not affected when the local one is deleted. Continue?</p>`, [['Cancel', null], ['Continue Export', 'yes', true]])) return;
           save(`/api/studio3d/file?asset=${encodeURIComponent(asset.id)}&artifact=${encodeURIComponent(a.id)}`, /\.fbx$/i.test(a.name) ? a.name : a.name + '.fbx').catch(e => host.toast(e.message)); }
       }; });
+      files.querySelector('.s3-files').append(row); });
+    asset.artifacts.filter(a => a.category === 'source').forEach(a => { const made = asset.artifacts.find(x => x.id === a.made);
+      const row = el(`<div class="s3-file"><div><b>${esc(a.name)}</b> <span class="pill">Source file</span> ${pill(a)}<div class="hint">${made ? `What ${esc(made.name)} was converted from` : 'The file it was converted to is gone'} · ${bytes(a.size)} · kept as it arrived; not needed by the FBX</div></div>
+        <span class="rg-actions">${a.state === 'pending' ? `<button type="button" class="small" data-a="approve" data-k="ok-${esc(a.id)}">Approve</button>` : ''}<button type="button" class="small" data-a="deny" data-k="no-${esc(a.id)}">${a.state === 'pending' ? 'Deny' : 'Delete'}</button><button type="button" class="small ghost" data-a="save" data-k="dl-${esc(a.id)}">Download</button></span></div>`);
+      row.querySelector('[data-a="approve"]') && (row.querySelector('[data-a="approve"]').onclick = () => approve(a));
+      row.querySelector('[data-a="deny"]').onclick = () => deny(a);
+      row.querySelector('[data-a="save"]').onclick = () => save(`/api/studio3d/file?asset=${encodeURIComponent(asset.id)}&artifact=${encodeURIComponent(a.id)}`, a.name).catch(e => host.toast(e.message));
       files.querySelector('.s3-files').append(row); });
     if (!geometry().length) files.querySelector('.s3-files').append(el('<p class="hint">No files yet. Use Import with “Add to this asset” ticked, or import to make a new asset.</p>'));
     pane.append(files);
@@ -458,7 +470,7 @@ window.Studio3D = (function () {
     root.innerHTML = '';
     root.append(head());
     if (!asset) {
-      root.append(el(`<section class="panel"><h2>3D Generation</h2><p>Bring in a binary FBX file, or a SWIFT ZIP exported from here, to look at it, measure it, check it and package it. Each file is pending until you approve it and is deleted after ${info.retention_days} days if you do not.</p>
+      root.append(el(`<section class="panel"><h2>3D Generation</h2><p>Bring in a binary FBX file, a GLB file (converted to FBX by Blender), or a SWIFT ZIP exported from here, to look at it, measure it, check it and package it. Each file is pending until you approve it and is deleted after ${info.retention_days} days if you do not.</p>
         <p class="hint">Making or changing 3D models (generation, optimisation, UVs, textures, pose conversion, landmarks) is not available: no tool for it is set up on this computer yet. ${esc(info.access)}</p></section>`));
       if (viewer) { viewer.clear(); inView = null; }
     } else {

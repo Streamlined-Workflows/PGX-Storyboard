@@ -299,13 +299,13 @@ composed output. The pictures are ordinary FLUX.2 stills marked `kind: "gen"` wi
 The fourth mode of the Asset Generator. It is the first working slice ("Gate B") of the plan in `3d_Generation_Plan/`;
 `docs/3D_Gate_B_Status.md` lists what is built, what is not, and what has only been tested against stand-ins.
 
-What it does today: takes in a **binary FBX** file or a **SWIFT ZIP** it exported earlier, shows it in a 3D view, measures
+What it does today: takes in a **binary FBX** file, a **GLB** file or a **SWIFT ZIP** it exported earlier, shows it in a 3D view, measures
 it, checks it for faults, lets you name the parts and give them roles, checks a character's preparation, attaches reference
 pictures sent from Reference Generation, and exports a SWIFT ZIP that can be brought back in.
 
 What it does not do: make or change a 3D model. Generation, optimisation, UV unwrapping, textures, materials, pose
 conversion, weight transfer and landmarks have no tool behind them on this computer, so their tabs say so and change nothing.
-Files are stored exactly as they arrive: nothing is converted, repaired or re-saved. Text-form (ASCII) FBX is refused.
+FBX files are stored exactly as they arrive: nothing is converted, repaired or re-saved. Text-form (ASCII) FBX is refused.
 
 - **Pending and approved.** Every file that arrives is *pending* and is deleted 10 days later unless approved. Selecting,
   exporting, downloading and recording a hand-off never approve anything or give more time. **Approve on import** keeps a
@@ -325,6 +325,12 @@ Files are stored exactly as they arrive: nothing is converted, repaired or re-sa
   SHA-256 checksums) and `Documentation/Compatibility_Report.md`. It is read back and checked before it is offered. If
   anything in it is pending you are asked first. Importing a SWIFT ZIP checks every path and checksum before storing
   anything and always makes a new asset; nothing already here is overwritten.
+- **GLB files** are converted to FBX by Blender, run without a window in its own small container
+  (`convert-service/`, started by `run.sh`, listening on this computer only at port 8193). The result is written in the
+  studio's axes and centimetres, and the GLB is kept beside it as a *source file* that can be approved or denied on its
+  own. GLB import stays off until **Test the converter** has passed on this computer: it converts a known one-metre cube
+  and checks its size, direction and position. A different Blender version has to pass again. Only meshes, groups and
+  armatures are carried over: no animation, cameras, lights or pictures.
 - **Asset library.** **Add to Library** keeps an approved file for reuse in any project; it is a separate step from
   approving. **Use in this project** makes a new, already-approved asset from the same stored file (nothing is copied on
   disk) that can be changed without touching the library item. Items can be searched by name, tag and type, marked as

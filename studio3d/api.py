@@ -6,7 +6,7 @@
     GET   /api/studio3d/asset?id=…                   one asset: files, components, budget, references, character checks
     PUT   /api/studio3d/asset?id=…      {fields}
     POST  /api/studio3d/asset/copy      {id}         /asset/delete {id}
-    POST  /api/studio3d/import?project=…&asset=…&name=…&approve=1     the FBX or SWIFT ZIP itself as the request body
+    POST  /api/studio3d/import?project=…&asset=…&name=…&approve=1     the FBX, GLB or SWIFT ZIP itself as the request body
     GET   /api/studio3d/file?asset=…&artifact=…      a stored FBX, exactly as stored
     GET   /api/studio3d/defects?asset=…&artifact=…   the faulty faces as shapes, for the 3D view to mark
     POST  /api/studio3d/select          {asset, artifact}
@@ -24,6 +24,7 @@
     PUT   /api/studio3d/library/item?id=…  {fields: name?, tags?, favorite?, archived?}
     GET   /api/studio3d/library/usage?id=…
     POST  /api/studio3d/library/collection  {name} | {id, name} | {id, delete} | {id, item, on}
+    POST  /api/studio3d/converter/test               convert a known cube with Blender and check the result
     POST  /api/studio3d/cleanup                      delete what has expired, now
     PUT   /api/studio3d/settings        {floor_gb?, budget_gb?}
 
@@ -34,7 +35,7 @@ import os
 import threading
 import time
 
-from . import assets, character, fbx, jobs, library, package
+from . import assets, character, convert, fbx, jobs, library, package
 from .store import Blocked, Store
 
 PREFIX = "/api/studio3d/"
@@ -88,8 +89,34 @@ def ledger():
                                    limits="Reads binary FBX and measures it. It does not convert, repair or rewrite files."))
         reg.register(jobs.Provider("director.package", "Director packager", "1.0", ("package.export", "package.import"), _run_package,
                                    limits="Writes and reads SWIFT ZIP packages. Tested only against this application."))
+        reg.register(jobs.Provider(convert.PROVIDER, "Blender converter", "", ("geometry.convert",), _run_convert, enabled=False, qualified=False,
+                                   limits="Turns a GLB file into FBX in the studio's axes and centimetres. Meshes, groups and armatures only: no animation, cameras, lights or pictures."))
         _state["ledger"] = jobs.Ledger(st.store.root, reg, clock=st.store.clock)
     return _state["ledger"]
+
+
+def converter(fresh=False):
+    """Bring the converter's entry in the registry up to date with what is really there. -> its status for the page"""
+    led, st = ledger(), studio()
+    p, seen = led.registry.providers[convert.PROVIDER], _state.get("convert_info", convert.info)(fresh)
+    passed = (st.store.settings().get("qualified") or {}).get(convert.PROVIDER)
+    p.enabled, p.version = seen["ok"], seen["blender"]
+    p.qualified = bool(seen["ok"] and passed and passed == seen["blender"])
+    return {"running": seen["ok"], "blender": seen["blender"], "tested": p.qualified, "reason": "" if p.qualified else seen["reason"] if not seen["ok"] else
+            "The converter has not passed its test on this computer yet." if not passed else f"Blender changed from {passed} to {seen['blender']}, so the converter has to pass its test again."}
+
+
+def _run_convert(request, ctx):
+    p, st = request["payload"], studio()
+    try:
+        glb = _staged(p)
+        made = _state.get("convert_run", convert.glb_to_fbx)(glb)
+        name = os.path.splitext(p["name"])[0]
+        r, art = st.import_geometry(p["project"], p.get("asset"), made, name + ".fbx", approve=p.get("approve", False), origin="converted")
+        src = st.add_source(r["id"], art["id"], glb, p["name"], "glb")
+    finally:
+        _drop(p["staged"])
+    return {"asset": r["id"], "artifacts": [art["id"], src["id"]], "notes": [f"Converted from GLB by Blender {request['provider_version']}. The GLB is kept beside it as the source file."]}
 
 
 def start():
@@ -173,7 +200,8 @@ def _do(operation, payload, **kw):
 # ---------- views ----------
 def info():
     st, led = studio(), ledger()
-    return {"capabilities": led.registry.table(), "providers": [p.describe() for p in led.registry.providers.values()],
+    status = converter()
+    return {"converter": status, "capabilities": led.registry.table(), "providers": [p.describe() for p in led.registry.providers.values()],
             "storage": dict(st.store.usage(), **st.store.settings()), "retention_days": assets.RETENTION // 86400,
             "quality": {k: {"low": v[0], "high": v[1], "preset": v[2]} for k, v in assets.QUALITY.items()},
             "modes": assets.MODES, "production": assets.PRODUCTION, "structural": assets.STRUCTURAL, "origins": assets.ORIGINS, "sides": assets.SIDES,
@@ -248,7 +276,7 @@ def _guard(route, query, b, st):
     """Library items are changed only through the library routes, and no project may pose as the library."""
     if (query or {}).get("project") == library.LIBRARY or b.get("project") == library.LIBRARY:
         raise Refusal("That is not a project.")
-    if route.startswith("library") or route in ("file", "defects", "asset", "info", "jobs", "assets", "import", "cleanup", "settings", "export/plan", "export/file", "export") or route.startswith("jobs/"):
+    if route.startswith("library") or route in ("file", "defects", "asset", "info", "jobs", "assets", "import", "cleanup", "settings", "converter/test", "export/plan", "export/file", "export") or route.startswith("jobs/"):
         return
     target = b.get("asset") or b.get("id")
     if isinstance(target, str):
@@ -374,6 +402,15 @@ def _handle(method, route, query, body, raw, st):
             return {"job": _public(ledger().get(r["id"]))}
         if route == "jobs/force":
             return {"job": _public(ledger().force(_need(b, "id"), b.get("confirmed") is True))}
+        if route == "converter/test":                       # a real conversion on this machine, before Auto may use it (Q19-04)
+            out = _state.get("convert_test", convert.self_test)()
+            passed = dict(st.store.settings().get("qualified") or {})
+            if out["passed"]:
+                passed[convert.PROVIDER] = out["blender"]
+            else:
+                passed.pop(convert.PROVIDER, None)
+            st.store.set_settings(qualified=passed)
+            return dict(out, converter=converter(fresh=True))
         if route == "cleanup":
             out = clean()
             return dict(out, storage=dict(st.store.usage(), **st.store.settings()))
@@ -411,8 +448,12 @@ def _import(query, data, st):
         raise Refusal("No file arrived.")
     if len(data) > assets.MAX_IMPORT:
         raise Refusal("That file is larger than the studio reads.")
-    is_zip = data[:4] == b"PK\x03\x04"
-    if not is_zip and not data.startswith(b"Kaydara FBX Binary"):
+    is_zip, is_glb = data[:4] == b"PK\x03\x04", data[:4] == b"glTF"
+    if is_glb:
+        status = converter(fresh=True)
+        if not status["tested"]:
+            raise Refusal("GLB files need the converter, and it is not ready. " + status["reason"])
+    if not is_zip and not is_glb and not data.startswith(b"Kaydara FBX Binary"):
         fbx.analyse(data)                               # raises with the reason: ASCII FBX, or not FBX at all
     st.store.admit(len(data) * 2)
     asset = query.get("asset") or None
@@ -422,7 +463,9 @@ def _import(query, data, st):
     with open(staged, "wb") as f:
         f.write(data)
     payload = {"project": project, "staged": staged, "name": name, "approve": query.get("approve") == "1"}
-    if is_zip:
+    if is_glb:
+        result = _do("geometry.convert", dict(payload, asset=asset), asset=asset, project=project, label=f"Convert {name}")["result"]
+    elif is_zip:
         result = _do("package.import", payload, project=project, label=f"Reimport {name}")["result"]
     else:
         result = _do("geometry.import", dict(payload, asset=asset), asset=asset, project=project, label=f"Import {name}")["result"]
