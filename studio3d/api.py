@@ -19,6 +19,11 @@
     GET   /api/studio3d/export/file?id=…             the finished package
     GET   /api/studio3d/jobs?project=…
     POST  /api/studio3d/jobs/cancel     {id}         /jobs/retry {id}     /jobs/force {id, confirmed}
+    GET   /api/studio3d/library?q=…&type=…&favorite=1&archived=1&collection=…     the asset library, shared by every project
+    POST  /api/studio3d/library/add     {asset}      /library/use {id, project}     /library/remove {id}
+    PUT   /api/studio3d/library/item?id=…  {fields: name?, tags?, favorite?, archived?}
+    GET   /api/studio3d/library/usage?id=…
+    POST  /api/studio3d/library/collection  {name} | {id, name} | {id, delete} | {id, item, on}
     POST  /api/studio3d/cleanup                      delete what has expired, now
     PUT   /api/studio3d/settings        {floor_gb?, budget_gb?}
 
@@ -29,14 +34,14 @@ import os
 import threading
 import time
 
-from . import assets, character, fbx, jobs, package
+from . import assets, character, fbx, jobs, library, package
 from .store import Blocked, Store
 
 PREFIX = "/api/studio3d/"
 RAW_ROUTES = ("import",)
 WAIT = 300                                  # seconds an import or export waits for its turn before reporting back
 _state = {"studio": None, "ledger": None, "worker": False}
-_hooks = {"resolve_reference": None, "read_reference": None, "handovers": None}
+_hooks = {"resolve_reference": None, "read_reference": None, "handovers": None, "project_name": None}
 
 
 class File:
@@ -50,11 +55,11 @@ class Refusal(ValueError):
         self.status = status
 
 
-def configure(resolve_reference=None, read_reference=None, handovers=None):
+def configure(resolve_reference=None, read_reference=None, handovers=None, project_name=None):
     """resolve_reference(project, artifact_id) -> {image, state, expires, what} or None; read_reference(project, image)
     -> bytes or None; handovers(project) -> the Reference Generation hand-overs. Without them references show as
     unavailable and nothing else changes."""
-    _hooks.update(resolve_reference=resolve_reference, read_reference=read_reference, handovers=handovers)
+    _hooks.update(resolve_reference=resolve_reference, read_reference=read_reference, handovers=handovers, project_name=project_name)
     if _state["studio"]:
         _state["studio"].resolve_reference = resolve_reference or (lambda project, artifact: None)
 
@@ -239,8 +244,26 @@ def handle(method, path, query, body=None, raw=None):
         raise Refusal(str(e))
 
 
+def _guard(route, query, b, st):
+    """Library items are changed only through the library routes, and no project may pose as the library."""
+    if (query or {}).get("project") == library.LIBRARY or b.get("project") == library.LIBRARY:
+        raise Refusal("That is not a project.")
+    if route.startswith("library") or route in ("file", "defects", "asset", "info", "jobs", "assets", "import", "cleanup", "settings", "export/plan", "export/file", "export") or route.startswith("jobs/"):
+        return
+    target = b.get("asset") or b.get("id")
+    if isinstance(target, str):
+        try:
+            if library.is_item(st.store.load(target)):
+                raise Refusal("That is a library item. Change it from the library, or use it in a project first.")
+        except LookupError:
+            pass
+
+
 def _handle(method, route, query, body, raw, st):
     b = body if isinstance(body, dict) else {}
+    _guard(route, query, b, st)
+    if route.startswith("library"):
+        return _library(method, route, query, b, st)
     if method == "GET":
         if route == "info":
             return info()
@@ -279,6 +302,8 @@ def _handle(method, route, query, body, raw, st):
             return {"jobs": ledger().listing(query.get("project"))}
     if method == "PUT":
         if route == "asset":
+            if library.is_item(st.store.load(_need(query, "id"))):
+                raise Refusal("That is a library item. Change it from the library.")
             st.update(_need(query, "id"), b.get("fields"))
             return asset_view(query["id"])
         if route == "settings":
@@ -352,6 +377,26 @@ def _handle(method, route, query, body, raw, st):
         if route == "cleanup":
             out = clean()
             return dict(out, storage=dict(st.store.usage(), **st.store.settings()))
+    raise LookupError(route)
+
+
+def _library(method, route, query, b, st):
+    if method == "GET" and route == "library":
+        return library.items(st, query.get("q", ""), query.get("type", ""), query.get("favorite") == "1", query.get("archived") == "1", query.get("collection", ""))
+    if method == "GET" and route == "library/usage":
+        return {"usage": library.usage(st, _need(query, "id"), _hooks["project_name"])}
+    if method == "PUT" and route == "library/item":
+        library.update(st, _need(query, "id"), b.get("fields"))
+        return {"ok": True}
+    if method == "POST":
+        if route == "library/add":
+            return {"item": library.add(st, _need(b, "asset"))["id"]}
+        if route == "library/use":
+            return asset_view(library.use(st, *_need(b, "id", "project"))["id"])
+        if route == "library/remove":
+            return {"freed": library.remove(st, _need(b, "id"))}
+        if route == "library/collection":
+            return {"collections": library.collection(st, b)}
     raise LookupError(route)
 
 

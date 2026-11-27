@@ -325,6 +325,11 @@ Files are stored exactly as they arrive: nothing is converted, repaired or re-sa
   SHA-256 checksums) and `Documentation/Compatibility_Report.md`. It is read back and checked before it is offered. If
   anything in it is pending you are asked first. Importing a SWIFT ZIP checks every path and checksum before storing
   anything and always makes a new asset; nothing already here is overwritten.
+- **Asset library.** **Add to Library** keeps an approved file for reuse in any project; it is a separate step from
+  approving. **Use in this project** makes a new, already-approved asset from the same stored file (nothing is copied on
+  disk) that can be changed without touching the library item. Items can be searched by name, tag and type, marked as
+  favourites, grouped in flat collections, archived, and removed. Removing an item never changes assets made from it.
+  Materials and texture sets are not in the library yet (`studio3d/library.py`).
 - **Jobs.** Imports and exports go through one queue so nothing overlaps (`studio3d/jobs.py`). The same queue is where
   model-backed work will go; today every provider is part of the application.
 - **Access.** Changes to `/api/studio3d/` are refused when they come from another website. Like the rest of the app

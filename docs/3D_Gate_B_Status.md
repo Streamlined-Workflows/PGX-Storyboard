@@ -6,7 +6,10 @@ or imported FBX, review a candidate, reopen it, confirm a pending export and val
 The **imported FBX** half of that path is built and passes in automated tests and in a browser run. The **from approved
 references** half (generating geometry) is not built, because no geometry model is installed or chosen.
 
-Nothing here has been run on the PGX yet, and no real-world FBX (Blender, Character Creator, iClone) has been tried.
+Nothing here has been run on the PGX yet. Three real binary FBX files from the three.js examples (two rigged Mixamo
+characters of about 25,000 control points, and a cube) were imported through the page: they were read in under half a
+second, drew correctly in their bind pose, and their parts could be selected and isolated. No file exported from
+Blender, Character Creator or iClone has been tried. Those sample files are not in the repository.
 
 ## Built
 
@@ -17,6 +20,7 @@ Nothing here has been run on the PGX yet, and no real-world FBX (Blender, Charac
 | 6 Geometry (import only) | Binary FBX reader: counts, bounds, axes and units, parts, rigging carried, seven kinds of fault; pending candidates; select; budget shown against target | `studio3d/fbx.py` |
 | 14 Character preparation (inspect only) | Roles, profile, stated pose, height, ground, centring, axes, base-mesh faults, two confirmations, hand-off record | `studio3d/character.py` |
 | 16 Viewport | FBX display, named views, perspective/orthographic, frame, shading, colour by part, fault marking, hide/isolate/select, per-axis grids | `static/studio3d/viewport.js` |
+| 17 Library (whole assets only; a first piece of Gate C) | Add approved assets, search, tags, favourites, flat collections, archive, use in any project as an independent pinned asset, where-used list, remove | `studio3d/library.py` |
 | 18 Export and reimport | SWIFT ZIP with manifest, checksums and compatibility report; read-back check; pending confirmation; validated reimport as a new editable asset | `studio3d/package.py` |
 | 19-21 Providers, queue, locks | Capability table, provider registry, one-at-a-time ledger kept on disk, lock scopes, cancel, force-stop confirmation, retry, interrupted-on-restart | `studio3d/jobs.py` |
 | 22 Lifecycle and storage | Content-addressed store, 10-day expiry, approve with dependency confirmation, deny deletes, free-space floor, orphan sweep, hourly cleanup and Clean Up Now | `studio3d/store.py`, `assets.py` |
@@ -29,7 +33,9 @@ Nothing here has been run on the PGX yet, and no real-world FBX (Blender, Charac
   conversion or normalising, UVs, texture generation and baking, pose conversion, weight transfer, landmarks. The tabs
   exist and say "Not available yet" with the reason.
 - **Writing FBX.** The studio stores and exports files byte for byte. A file in other axes or units is reported, not converted.
-- Phases 7 to 13, 15 and 17 (optimisation, components as separate files, UVs, textures, materials, surface editing,
+- Library entries for materials and texture sets, and shared (update-everywhere) assignments: there is nothing that
+  makes materials yet.
+- Phases 7 to 13 and 15 (optimisation, components as separate files, UVs, textures, materials, surface editing,
   landmarks, assembly) beyond the read-only facts shown on their tabs.
 - Components are the model nodes the file already has. They cannot be split, joined or exported one by one.
 - Materials and textures inside an FBX are counted but not read or shown; the view's colours are only for looking.
@@ -52,6 +58,8 @@ Nothing here has been run on the PGX yet, and no real-world FBX (Blender, Charac
 
 - `./run-tests.sh`: `studio3d/tests/` covers the reader, storage, lifecycle, queue, export, reimport, character checks
   and the routes. The FBX files are small ones written by the tests themselves.
+- The library was clicked through in the browser in one project. Use from a second project is covered by the server
+  tests only.
 - A browser run (Chrome, software WebGL) against the real server: import, parts list, hide/isolate, lock, views and lens,
   character checks, each unavailable tab, export cancelled then confirmed, download, reimport, approve, a second
   candidate with faults marked, deny, reload, and a phone-width layout. No request left the machine.

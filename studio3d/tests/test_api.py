@@ -89,6 +89,25 @@ class Api(unittest.TestCase):
         self.assertTrue(out and all(d["model"] and d["polygons"] and all(len(p) % 3 == 0 and len(p) >= 9 for p in d["polygons"]) for d in out))
         self.assertEqual({d["kind"] for d in out}, {d["kind"] for d in art["report"]["defects"] if d["faces"]})
 
+    def test_the_library_through_the_routes(self):
+        a = self.bring(fixtures.cube(), "Crate.fbx", approve="1")["asset"]
+        item = self.post("library/add", {"asset": a["id"]})["item"]
+        self.assertEqual([i["name"] for i in self.get("library")["items"]], ["Crate"])
+        for route, body in (("deny", {"asset": item, "ids": ["x"]}), ("asset/delete", {"id": item}), ("select", {"asset": item, "artifact": "x"})):
+            with self.assertRaises(ValueError) as e:
+                self.post(route, body)
+            self.assertIn("library item", str(e.exception))
+        with self.assertRaises(ValueError):
+            self.get("assets", project="@library")
+        used = self.post("library/use", {"id": item, "project": "p2"})
+        self.assertEqual((used["project"], used["artifacts"][0]["state"], used["artifacts"][0]["origin"]), ("p2", "approved", "library"))
+        api.handle("PUT", api.PREFIX + "library/item", {"id": item}, {"fields": {"favorite": True}})
+        self.assertEqual(len(self.get("library", favorite="1")["items"]), 1)
+        self.assertEqual({u["project"] for u in self.get("library/usage", id=item)["usage"]}, {"p1", "p2"})
+        with open(self.get("file", asset=item, artifact=self.get("library")["items"][0]["artifact"]).path, "rb") as f:
+            self.assertEqual(f.read(), fixtures.cube())                                # the item can be previewed
+        self.assertEqual(self.post("library/remove", {"id": item})["freed"], 0)
+
     def test_info_says_what_is_not_available(self):
         info = self.get("info")
         caps = {c["capability"]: c for c in info["capabilities"]}

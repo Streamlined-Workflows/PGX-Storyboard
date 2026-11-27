@@ -22,6 +22,7 @@ window.Studio3D = (function () {
   let tab = 'geometry', part = null, hidden = new Set(), isolated = null, viewer = null, viewerFailed = '', inView = null, viewNote = '';
   const look = { shading: 'solid', palette: false, faults: true, projection: 'perspective' };
   const exportChoice = { profile: 'standard', references: false };
+  let lib = null; const libFilter = { q: '', type: '', favorite: false, archived: false, collection: '' };
   const TABS = [['geometry', 'Geometry'], ['optimization', 'Optimization'], ['components', 'Components'], ['uvs', 'UVs'], ['textures', 'Textures'], ['materials', 'Materials'], ['surface', 'Surface Editing'], ['character', 'Character Tools'], ['export', 'Export']];
   const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
   const el = html => { const t = document.createElement('template'); t.innerHTML = html.trim(); return t.content.firstElementChild; };
@@ -41,9 +42,9 @@ window.Studio3D = (function () {
         <div class="ag-askbtns"><span class="ag-grow"></span>${buttons.map(([label, , primary], i) => `<button type="button" data-i="${i}" class="${primary ? 'primary' : ''}">${esc(label)}</button>`).join('')}</div></div></div>`);
       const end = v => { document.removeEventListener('keydown', key); box.remove(); done(v); setTimeout(() => { if (back && back.isConnected) back.focus(); }, 0); };
       const key = ev => { if (ev.key === 'Escape') end(null); };
-      box.querySelectorAll('[data-i]').forEach(b => { b.onclick = () => end(buttons[+b.dataset.i][1]); });
+      box.querySelectorAll('[data-i]').forEach(b => { b.onclick = () => { const v = buttons[+b.dataset.i][1]; end(typeof v === 'function' ? v() : v); }; });
       box.onpointerdown = ev => { if (ev.target === box) end(null); };
-      document.addEventListener('keydown', key); tools.layer().append(box); box.querySelector('[data-i]').focus();
+      document.addEventListener('keydown', key); tools.layer().append(box); (box.querySelector('input') || box.querySelector('[data-i]')).focus();
     });
   }
   async function save(url, name) {
@@ -67,7 +68,7 @@ window.Studio3D = (function () {
       let want = asset && list.assets.some(a => a.id === asset.id) ? asset.id : null;
       if (!want) { try { want = localStorage.getItem(lastKey()); } catch (e) { /* private browsing */ } }
       if (want && list.assets.some(a => a.id === want)) await open(want, true); else { asset = null; draw(); }
-      refreshJobs();
+      refreshJobs(); loadLibrary();
     } catch (e) { root.innerHTML = `<section class="panel hint">${esc(e.message)}</section>`; }
   }
   async function open(id, quiet) {
@@ -195,7 +196,7 @@ window.Studio3D = (function () {
         <button type="button" class="s3-import primary" data-k="import">Import FBX or SWIFT ZIP</button><input type="file" class="s3-pick" accept=".fbx,.zip" hidden>
         <label class="s3-inline" title="Keep the imported file permanently straight away instead of reviewing it first"><input type="checkbox" class="s3-approve" data-k="approve-on-import"> Approve on import</label>
         ${asset ? `<label class="s3-inline" title="Add the next file to the open asset as another candidate instead of making a new asset"><input type="checkbox" class="s3-into" data-k="into"> Add to this asset</label>` : ''}
-        <span class="ag-grow"></span>${asset ? '<button type="button" class="small" data-k="copy" data-do="copy">Duplicate</button><button type="button" class="small ghost" data-k="delete" data-do="delete">Delete asset</button>' : ''}</div>
+        <span class="ag-grow"></span>${asset ? `<button type="button" class="small" data-k="tolib" data-do="tolib"${c && c.state === 'approved' ? ' title="Keep the selected file in the asset library, for use in any project"' : ' disabled title="Only an approved file can go in the library. Approve the selected file first."'}>Add to Library</button>` : ''}${asset ? '<button type="button" class="small" data-k="copy" data-do="copy">Duplicate</button><button type="button" class="small ghost" data-k="delete" data-do="delete">Delete asset</button>' : ''}</div>
       ${asset ? `<div class="s3-context"><b>${esc(asset.name)}</b><span>${esc(asset.parent_label)} / ${esc(asset.type_label)}${asset.subtype ? ' / ' + esc(asset.subtype === 'Custom' ? asset.custom_subtype || 'Custom' : asset.subtype) : ''}</span>
           <span>${c ? 'Showing: ' + esc(c.name) + ' ' + pill(c) : 'No geometry yet'}</span>${asset.busy.length ? `<span class="pill rg-pending">${esc(asset.busy[0].label)}: ${esc(asset.busy[0].state)}</span>` : ''}</div>` : ''}
       <div class="hint s3-storage">Storage: ${bytes(s.approved)} approved, ${bytes(s.pending)} pending, ${bytes(s.free)} free on the disk. New work stops when less than ${bytes(s.floor_bytes)} is free. Files are binary FBX; ${esc(info.conventions)} is what the studio expects.
@@ -205,6 +206,7 @@ window.Studio3D = (function () {
     box.querySelector('.s3-import').onclick = () => file.click();
     file.onchange = () => { const into = box.querySelector('.s3-into'); bring(file.files[0], into && into.checked ? asset.id : null, box.querySelector('.s3-approve').checked); file.value = ''; };
     box.querySelectorAll('[data-do]').forEach(b => { b.onclick = async () => {
+      if (b.dataset.do === 'tolib') { try { await call('POST', '/library/add', { asset: asset.id }); host.toast('Added to the library. It is kept there even if this asset is deleted.'); loadLibrary(); } catch (e) { host.toast(e.message); } }
       if (b.dataset.do === 'copy') act(() => call('POST', '/asset/copy', { id: asset.id }), 'Duplicated. The copy shares the same stored files until one of them changes.');
       if (b.dataset.do === 'cleanup') { try { const out = await call('POST', '/cleanup'); list.storage = out.storage; host.toast(out.expired ? `Deleted ${out.expired} expired file${out.expired === 1 ? '' : 's'} and freed ${bytes(out.freed)}.` : 'Nothing had expired.'); if (asset) await open(asset.id, true); await relist(); draw(); } catch (e) { host.toast(e.message); } }
       if (b.dataset.do === 'delete') { const keep = asset.artifacts.filter(a => a.state === 'approved').length;
@@ -380,6 +382,59 @@ window.Studio3D = (function () {
     return unavailable('Surface Editing', null, '');
   }
 
+  /* ---------- the asset library: approved assets kept for any project ---------- */
+  async function loadLibrary() {
+    const q = new URLSearchParams(); if (libFilter.q) q.set('q', libFilter.q); if (libFilter.type) q.set('type', libFilter.type); if (libFilter.favorite) q.set('favorite', '1'); if (libFilter.archived) q.set('archived', '1'); if (libFilter.collection) q.set('collection', libFilter.collection);
+    try { lib = await call('GET', '/library?' + q); if (libFilter.collection && !lib.collections.some(c => c.id === libFilter.collection)) { libFilter.collection = ''; return loadLibrary(); } drawLibrary(); } catch (e) { /* the next action reports it */ }
+  }
+  function drawLibrary() {
+    const box = root.querySelector('.s3-library'); if (!box || !lib) return;
+    const focus = document.activeElement && box.contains(document.activeElement) ? document.activeElement.dataset.k : null, caret = focus === 'lib-q' ? document.activeElement.selectionStart : null;
+    box.innerHTML = '';
+    box.append(el(`<div><h2>Asset library</h2><p class="hint">Approved 3D assets kept for reuse in any project. Adding is a separate step from approving. Using an item makes a new asset in this project from the same stored file; nothing is copied on disk and changing that asset never changes the library item. ${lib.total} item${lib.total === 1 ? '' : 's'} in all.</p>
+      <div class="rg-fields"><label class="ag-label">Search<input type="search" data-k="lib-q" class="s3-libq" value="${esc(libFilter.q)}" placeholder="Name, tag or type"></label>
+        <label class="ag-label">Type<select data-k="lib-type" data-lf="type"><option value="">Any type</option>${info.types.map(t => `<option value="${t.key}"${t.key === libFilter.type ? ' selected' : ''}>${esc(t.label)}</option>`).join('')}</select></label>
+        <label class="ag-label">Collection<select data-k="lib-col" data-lf="collection"><option value="">All items</option>${lib.collections.map(c => `<option value="${esc(c.id)}"${c.id === libFilter.collection ? ' selected' : ''}>${esc(c.name)} (${c.count})</option>`).join('')}</select></label>
+        <label class="s3-inline"><input type="checkbox" data-k="lib-fav" data-lf="favorite"${libFilter.favorite ? ' checked' : ''}> Favourites only</label>
+        <label class="s3-inline"><input type="checkbox" data-k="lib-arch" data-lf="archived"${libFilter.archived ? ' checked' : ''}> Show archived instead</label>
+        <span class="ag-grow"></span><button type="button" class="small" data-k="lib-newcol">New collection</button>${libFilter.collection ? '<button type="button" class="small ghost" data-k="lib-delcol">Delete this collection</button>' : ''}</div></div>`));
+    let wait = null;
+    box.querySelector('.s3-libq').oninput = ev => { libFilter.q = ev.target.value; clearTimeout(wait); wait = setTimeout(loadLibrary, 300); };
+    box.querySelectorAll('[data-lf]').forEach(i => { i.onchange = () => { libFilter[i.dataset.lf] = i.type === 'checkbox' ? i.checked : i.value; loadLibrary(); }; });
+    box.querySelector('[data-k="lib-newcol"]').onclick = async () => {
+      const go = await dialog('New collection', '<p>A collection is a named group of library items. Deleting a collection never deletes the items in it.</p><label class="ag-label">Name<input type="text" maxlength="60" class="s3-colname"></label>', [['Cancel', null], ['Create', () => document.querySelector('.s3-colname').value, true]]);
+      const name = (go || '').trim(); if (name) { try { await call('POST', '/library/collection', { name }); loadLibrary(); } catch (e) { host.toast(e.message); } } };
+    const del = box.querySelector('[data-k="lib-delcol"]'); if (del) del.onclick = async () => { try { await call('POST', '/library/collection', { id: libFilter.collection, delete: true }); libFilter.collection = ''; loadLibrary(); } catch (e) { host.toast(e.message); } };
+    const grid = el('<div class="s3-libgrid"></div>');
+    lib.items.forEach(i => {
+      const card = el(`<div class="s3-libitem${i.complete ? '' : ' s3-incomplete'}"><div><b>${esc(i.name)}</b>${i.favorite ? ' <span class="pill rg-approved">★ Favourite</span>' : ''}${i.archived ? ' <span class="pill">Archived</span>' : ''}${i.complete ? '' : ' <span class="pill rg-pending">File missing</span>'}
+          <div class="hint">${esc(i.parent_label)} / ${esc(i.type_label)}${i.subtype ? ' / ' + esc(i.subtype) : ''} · ${num(i.vertices)} control points${i.size_cm ? ' · ' + i.size_cm.map(n => +n.toFixed(0)).join(' × ') + ' cm' : ''} · ${bytes(i.size)}${i.canonical === false ? ' · axes or units differ from the studio' : ''}</div>
+          <div class="hint">${i.tags.length ? 'Tags: ' + i.tags.map(esc).join(', ') : 'No tags'} · used ${i.uses} time${i.uses === 1 ? '' : 's'}</div></div>
+        <span class="rg-actions"><button type="button" class="small primary" data-l="use" data-k="lib-use-${esc(i.id)}"${i.complete && !i.archived ? '' : ' disabled'}>Use in this project</button>
+          <button type="button" class="small" data-l="fav" data-k="lib-fav-${esc(i.id)}" aria-pressed="${i.favorite}">${i.favorite ? 'Unfavourite' : 'Favourite'}</button>
+          <button type="button" class="small" data-l="tags" data-k="lib-tags-${esc(i.id)}">Name and tags</button><button type="button" class="small" data-l="where" data-k="lib-where-${esc(i.id)}">Where used</button>
+          ${lib.collections.length ? `<select class="s3-libcol" data-k="lib-put-${esc(i.id)}" aria-label="Collections for ${esc(i.name)}"><option value="">Collections…</option>${lib.collections.map(c => `<option value="${esc(c.id)}">${i.collections.includes(c.id) ? 'Take out of' : 'Put in'} ${esc(c.name)}</option>`).join('')}</select>` : ''}
+          <button type="button" class="small ghost" data-l="arch" data-k="lib-arch-${esc(i.id)}">${i.archived ? 'Restore' : 'Archive'}</button><button type="button" class="small ghost" data-l="remove" data-k="lib-rm-${esc(i.id)}">Remove from library</button></span></div>`);
+      const put = fields => call('PUT', '/library/item?id=' + encodeURIComponent(i.id), { fields }).then(loadLibrary).catch(e => host.toast(e.message));
+      const sel = card.querySelector('.s3-libcol'); if (sel) sel.onchange = () => { if (sel.value) call('POST', '/library/collection', { id: sel.value, item: i.id, on: !i.collections.includes(sel.value) }).then(loadLibrary).catch(e => host.toast(e.message)); };
+      card.querySelectorAll('[data-l]').forEach(b => { b.onclick = async () => {
+        const what = b.dataset.l;
+        if (what === 'fav') put({ favorite: !i.favorite });
+        if (what === 'arch') put({ archived: !i.archived });
+        if (what === 'use') { try { take(await call('POST', '/library/use', { id: i.id, project: host.pid })); await relist(); draw(); loadLibrary(); host.toast(`“${i.name}” is now an asset in this project, already approved.`); } catch (e) { host.toast(e.message); } }
+        if (what === 'tags') { const go = await dialog('Name and tags', `<label class="ag-label">Name<input type="text" maxlength="80" class="s3-libname" value="${esc(i.name)}"></label><label class="ag-label">Tags, separated by commas<input type="text" class="s3-libtags" value="${esc(i.tags.join(', '))}"></label>`, [['Cancel', null], ['Save', () => ({ name: document.querySelector('.s3-libname').value, tags: document.querySelector('.s3-libtags').value.split(',').map(t => t.trim()).filter(Boolean) }), true]]);
+          if (go) put(go); }
+        if (what === 'where') { try { const u = (await call('GET', '/library/usage?id=' + encodeURIComponent(i.id))).usage;
+          await dialog('Where used', u.length ? `<ul class="rg-needs">${u.map(x => `<li><span><b>${esc(x.name)}</b> in ${esc(x.project_name)} <span class="hint">· ${esc(x.relation)}</span></span></li>`).join('')}</ul>` : '<p>No project is using this item, and the asset it came from has been deleted. The library still holds its file.</p>', [['Close', null, true]]); } catch (e) { host.toast(e.message); } }
+        if (what === 'remove') { const go = await dialog('Remove from library', `<p><b>${esc(i.name)}</b> will be taken out of the library. ${i.uses ? `The ${i.uses} asset${i.uses === 1 ? '' : 's'} made from it stay${i.uses === 1 ? 's' : ''} as ${i.uses === 1 ? 'it is' : 'they are'} and keep${i.uses === 1 ? 's' : ''} the file.` : 'Its file is deleted too unless another asset still uses it.'} This cannot be undone.</p>`, [['Cancel', null], ['Remove', 'yes', true]]);
+          if (go) { try { const out = await call('POST', '/library/remove', { id: i.id }); host.toast(out.freed ? `Removed. ${bytes(out.freed)} freed.` : 'Removed. The file is still in use elsewhere, so no space was freed.'); loadLibrary(); await relist(); } catch (e) { host.toast(e.message); } } }
+      }; });
+      grid.append(card); });
+    if (!lib.items.length) grid.append(el(`<p class="hint">${lib.total ? 'Nothing matches.' : 'The library is empty. Open an asset, approve its file, then choose Add to Library.'}</p>`));
+    box.append(grid);
+    if (focus) { const again = box.querySelector(`[data-k="${CSS.escape(focus)}"]`); if (again) { again.focus(); if (caret != null) again.setSelectionRange(caret, caret); } }
+  }
+
   function drawJobs() {
     const box = root.querySelector('.s3-jobs'); if (!box) return;
     const recent = jobs.slice().sort((a, b) => b.created - a.created).slice(0, 8);
@@ -413,7 +468,7 @@ window.Studio3D = (function () {
       side.append(inspector()); work.append(tree(), viewBox(), side);
       root.append(tabs, work);
     }
-    root.append(el('<section class="panel s3-jobs"></section>')); drawJobs();
+    root.append(el('<section class="panel s3-library"></section>'), el('<section class="panel s3-jobs"></section>')); drawLibrary(); drawJobs();
     if (focus) { const again = root.querySelector(`[data-k="${CSS.escape(focus)}"]`); if (again) again.focus(); }
   }
 

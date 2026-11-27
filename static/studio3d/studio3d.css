@@ -31,5 +31,8 @@
 .s3 .s3-refs { display:flex; gap:8px; flex-wrap:wrap; align-items:flex-start; } .s3 .s3-handed { display:grid; gap:8px; justify-items:start; } .s3 .s3-handed .rg-fields { width:100%; align-items:center; }
 .s3 .s3-plan ul { margin:6px 0; padding-left:18px; font-size:13px; }
 .s3 .s3-joblist { list-style:none; margin:0; padding:0; display:grid; gap:6px; font-size:13px; } .s3 .s3-joblist li { display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
+.s3 .s3-library > div { display:grid; gap:8px; } .s3 .s3-libgrid { display:grid; gap:8px; }
+.s3 .s3-libitem { display:flex; gap:10px; align-items:center; justify-content:space-between; flex-wrap:wrap; padding:8px 10px; border:1px solid var(--swift-border); border-radius:var(--swift-radius-lg); }
+.s3 .s3-libitem.s3-incomplete { border-color:var(--swift-warn); } .s3 .s3-libcol { width:auto; font-size:12px; padding:3px 6px; } .s3 .s3-libq { min-width:220px; }
 @media (max-width:1250px) { .s3 .s3-work { grid-template-columns:minmax(180px, 240px) minmax(0, 1fr); } .s3 .s3-inspector { grid-column:1 / -1; max-height:none; } }
 @media (max-width:760px) { .s3 .s3-work { grid-template-columns:minmax(0, 1fr); } .s3 .s3-tree { max-height:260px; } }

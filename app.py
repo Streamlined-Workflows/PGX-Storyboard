@@ -430,6 +430,13 @@ def studio3d_picture(pid, image):
         return None
 
 
+def studio3d_project_name(pid):
+    try:
+        return load_project(pid).get("name") or pid
+    except ValueError:
+        return "A project that no longer exists"
+
+
 def studio3d_handovers(pid):
     try:
         return reference_view(pid)["handover"]
@@ -1897,7 +1904,7 @@ if __name__ == "__main__":
     identity_api.start()
     assist.before_chat = make_room_for_language_model
     audio_api.configure(project_audio=project_audio_files)
-    studio3d_api.configure(resolve_reference=studio3d_reference, read_reference=studio3d_picture, handovers=studio3d_handovers)
+    studio3d_api.configure(resolve_reference=studio3d_reference, read_reference=studio3d_picture, handovers=studio3d_handovers, project_name=studio3d_project_name)
     studio3d_api.start()
     print(f"SWIFT Director on http://0.0.0.0:{PORT}  ->  ComfyUI at {COMFY}", flush=True)
     ThreadingHTTPServer(("0.0.0.0", PORT), Handler).serve_forever()
