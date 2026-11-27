@@ -1,0 +1,35 @@
+/* 3D Generation (studio3d.js, viewport.js). Colours are the theme's tokens; nothing here names a colour. */
+.s3 .s3-inline { display:inline-flex; align-items:center; gap:6px; margin:0; font-size:13px; color:var(--swift-text); cursor:pointer; }
+.s3 .s3-inline select { width:auto; }
+.s3 .s3-context { display:flex; gap:14px; align-items:center; flex-wrap:wrap; font-size:13px; } .s3 .s3-context b { color:var(--swift-text-strong); font-size:15px; }
+.s3 .s3-storage { display:flex; gap:10px; align-items:center; flex-wrap:wrap; }
+.s3 .s3-tabs { display:flex; } .s3 .s3-tabs button { white-space:nowrap; } .s3 .s3-pick { display:none; }
+.s3 .s3-work { display:grid; grid-template-columns:minmax(240px, 300px) minmax(0, 1fr) minmax(300px, 420px); gap:14px; align-items:start; }
+.s3 .s3-tree, .s3 .s3-inspector { min-width:0; align-content:start; max-height:calc(min(62vh, 620px) + 130px); overflow:auto; }
+.s3 .s3-stage { display:grid; gap:8px; min-width:0; }
+.s3 .s3-bar { display:flex; gap:10px 14px; align-items:center; flex-wrap:wrap; } .s3 .s3-group { display:inline-flex; gap:6px; align-items:center; flex-wrap:wrap; } .s3 .s3-group .ag-label { margin:0; }
+.s3 .ag-grid-x { color:var(--swift-axis-x); } .s3 .ag-grid-y { color:var(--swift-axis-y); } .s3 .ag-grid-z { color:var(--swift-axis-z); }
+.s3 .s3-view { position:absolute; inset:0; } .s3 .s3-view canvas { display:block; width:100%; height:100%; touch-action:none; cursor:grab; outline-offset:-2px; } .s3 .s3-view canvas:active { cursor:grabbing; }
+.s3 .s3-view canvas:focus-visible { outline:2px solid var(--swift-focus); }
+.s3 .s3-nodes { list-style:none; margin:0; padding:0; display:grid; gap:2px; }
+.s3 .s3-nodes li { display:flex; flex-wrap:wrap; gap:4px; align-items:center; padding-left:calc(var(--d, 0) * 14px); border-radius:6px; }
+.s3 .s3-nodes li.on { background:var(--swift-highlight); outline:1px solid var(--swift-ring-strong); }
+.s3 .s3-node { flex:1 1 120px; min-width:0; text-align:left; background:none; border-color:transparent; padding:5px 6px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; color:var(--swift-text); }
+.s3 .s3-nodes li.on .s3-node { color:var(--swift-text-strong); font-weight:600; }
+.s3 .s3-nodes button[aria-pressed="true"] { border-color:var(--swift-warn); color:var(--swift-warn); }
+.s3 .s3-lock { font-size:10px; }
+.s3 .s3-pane { display:grid; gap:16px; } .s3 .s3-pane > div { display:grid; gap:8px; } .s3 .s3-pane h2 { margin:0; }
+.s3 .s3-form { display:grid; grid-template-columns:repeat(auto-fit, minmax(150px, 1fr)); gap:10px; align-items:end; } .s3 .s3-form .ag-label { min-width:0; margin:0; }
+.s3 .s3-form input[type="text"], .s3 .s3-form input[type="number"], .s3 .s3-form select { width:100%; }
+.s3 .s3-files { display:grid; gap:8px; }
+.s3 .s3-file { display:flex; gap:10px; align-items:center; justify-content:space-between; flex-wrap:wrap; padding:8px 10px; border:1px solid var(--swift-border); border-radius:var(--swift-radius-lg); }
+.s3 .s3-file.on { border-color:var(--swift-ring-strong); background:var(--swift-highlight); }
+.s3 .s3-facts { display:grid; grid-template-columns:max-content minmax(0, 1fr); gap:6px 14px; margin:0; font-size:13px; } .s3 .s3-facts dt { color:var(--swift-text-muted); } .s3 .s3-facts dd { margin:0; color:var(--swift-text); }
+.s3 .s3-issues { list-style:none; margin:0; padding:0; display:grid; gap:6px; font-size:13px; }
+.s3 .s3-issues li { padding:6px 10px; border:1px solid var(--swift-border); border-radius:var(--swift-radius-lg); }
+.s3 .s3-issues li.s3-bad { border-color:var(--swift-danger); } .s3 .s3-issues li.s3-bad > b { color:var(--swift-danger); }
+.s3 .s3-refs { display:flex; gap:8px; flex-wrap:wrap; align-items:flex-start; } .s3 .s3-handed { display:grid; gap:8px; justify-items:start; } .s3 .s3-handed .rg-fields { width:100%; align-items:center; }
+.s3 .s3-plan ul { margin:6px 0; padding-left:18px; font-size:13px; }
+.s3 .s3-joblist { list-style:none; margin:0; padding:0; display:grid; gap:6px; font-size:13px; } .s3 .s3-joblist li { display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
+@media (max-width:1250px) { .s3 .s3-work { grid-template-columns:minmax(180px, 240px) minmax(0, 1fr); } .s3 .s3-inspector { grid-column:1 / -1; max-height:none; } }
+@media (max-width:760px) { .s3 .s3-work { grid-template-columns:minmax(0, 1fr); } .s3 .s3-tree { max-height:260px; } }

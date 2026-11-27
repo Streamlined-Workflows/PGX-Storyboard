@@ -292,21 +292,46 @@ composed output. The pictures are ordinary FLUX.2 stills marked `kind: "gen"` wi
   each applied style guide or inspiration reference. **Replace Prompt Inserts** removes the reference descriptions
   already in the prompt and puts the Reference Prompt text at the start in their place (asking the same Yes / No
   question if the person typed inside them).
-- **3D Generation** has a 3D view (`static/generator/viewport-3d.js`) built on three.js 0.180.0, which is copied into
-  `static/vendor/three/` (MIT) so it works with no internet connection. Drag turns the view, right-drag moves it, scroll
-  zooms, and **Reset view** puts the camera back. Three switches turn a grid on for each axis: X is the upright plane
-  spanning Y and Z, Y is the floor, Z is the upright plane spanning X and Y. The choice is remembered in the browser.
-  The axis colours are the tokens `--swift-axis-x`, `--swift-axis-y` and `--swift-axis-z`. Making 3D models is not built
-  yet, so a one-unit cube stands in; `view.setObject()` is where a model will go.
-- Every piece of text put at the start of the prompt ends with a line break, so each reference's description sits on
-  its own line above what the person wrote. The Reference Prompt box keeps one description per line too.
-- **Insert as it is** keeps that picture's own pixels: the page places it in the centre of a blank picture with a mask, and
-  the inpainting graph draws everything around it and pastes the original back. One per box. The composed output's fourth
-  reference cannot be inserted, because images 1 to 3 are fixed as the three layers.
-- **Run generations** queues one still per requested generation (1 to 10), each from a different seed.
-- The composed output always sends the applied background, middle ground and foreground as images 1, 2 and 3, in that
-  order, and the optional fourth reference as image 4. It will not run until all three layers are applied.
-- Composing is a redraw by the image model from three references, not a pixel-exact layering.
+- **3D Generation** is its own workspace, described under [3D Generation](#3d-generation) below.
+
+## 3D Generation
+
+The fourth mode of the Asset Generator. It is the first working slice ("Gate B") of the plan in `3d_Generation_Plan/`;
+`docs/3D_Gate_B_Status.md` lists what is built, what is not, and what has only been tested against stand-ins.
+
+What it does today: takes in a **binary FBX** file or a **SWIFT ZIP** it exported earlier, shows it in a 3D view, measures
+it, checks it for faults, lets you name the parts and give them roles, checks a character's preparation, attaches reference
+pictures sent from Reference Generation, and exports a SWIFT ZIP that can be brought back in.
+
+What it does not do: make or change a 3D model. Generation, optimisation, UV unwrapping, textures, materials, pose
+conversion, weight transfer and landmarks have no tool behind them on this computer, so their tabs say so and change nothing.
+Files are stored exactly as they arrive: nothing is converted, repaired or re-saved. Text-form (ASCII) FBX is refused.
+
+- **Pending and approved.** Every file that arrives is *pending* and is deleted 10 days later unless approved. Selecting,
+  exporting, downloading and recording a hand-off never approve anything or give more time. **Approve on import** keeps a
+  file straight away. Deny deletes the file now. **Clean Up Now** runs the hourly expiry check at once.
+- **Storage** is the studio's own folder, `data/studio3d/` (files are stored once by their SHA-256). New work is refused
+  when less than 2 GB would be left free on the disk.
+- **The 3D view** (`static/studio3d/viewport.js`, three.js 0.180.0 and its FBX loader, copied into `static/vendor/three/`):
+  named views, perspective or orthographic lens, Frame, solid / wireframe / both, a colour per part, faulty faces marked in
+  the danger colour, and a grid per axis sized to the model. Hide and Isolate in the parts list are only for looking and
+  are not saved. The view never fetches pictures an FBX names by address.
+- **Checks** look for bad numbers, bad indices, collapsed, repeated and zero-area faces, edges shared by more than two
+  faces, and unused points. They do not judge whether a shape looks right.
+- **Character Tools** needs the body mesh to have the role *Base anatomy*. It measures height, ground contact, centring,
+  axes and units, asks you to state the pose and to confirm two things only a person can judge, and then records which
+  exact file is handed to landmark mapping. It changes no geometry. Landmark mapping itself is not built.
+- **Export** writes `Name.zip`: `Geometry/*.fbx` byte for byte, `AssetManifest.json` (classification, measurements, parts,
+  SHA-256 checksums) and `Documentation/Compatibility_Report.md`. It is read back and checked before it is offered. If
+  anything in it is pending you are asked first. Importing a SWIFT ZIP checks every path and checksum before storing
+  anything and always makes a new asset; nothing already here is overwritten.
+- **Jobs.** Imports and exports go through one queue so nothing overlaps (`studio3d/jobs.py`). The same queue is where
+  model-backed work will go; today every provider is part of the application.
+- **Access.** Changes to `/api/studio3d/` are refused when they come from another website. Like the rest of the app
+  there is no login: reach it on the PGX or over Tailscale only.
+
+Code: `studio3d/` (`fbx.py` reader, `store.py`, `assets.py`, `jobs.py`, `package.py`, `character.py`, `api.py`) with its
+tests in `studio3d/tests/`; the page is `static/studio3d/studio3d.js`.
 
 ## Reference Generation
 

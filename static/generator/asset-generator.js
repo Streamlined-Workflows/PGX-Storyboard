@@ -3,8 +3,8 @@
  * A tab for making pictures outside the storyboard. Two modes work today:
  *   Image Generation   one prompt, up to four reference pictures
  *   Depth Generation   background, middle ground and foreground made separately, then redrawn as one picture
- * Reference Generation (reference sheets and cutting pictures out of them) is drawn by reference-generation.js. 3D Generation has that box and a 3D
- * view (viewport-3d.js, three.js) with a grid for each axis; making 3D models arrives later.
+ * Reference Generation (reference sheets and cutting pictures out of them) is drawn by reference-generation.js, and
+ * 3D Generation (importing, checking and packaging 3D assets) by /static/studio3d/studio3d.js.
  *
  * Every mode starts with an Asset Configuration box: what the asset is (name, rating, type), which models are used, and
  * workflow and approval controls. Each setting is tagged "In use" or "Stored", the same as the Project Configuration Center.
@@ -61,11 +61,11 @@ window.AssetGenerator = (function () {
     const body = page.querySelector('.ag-body');
     body.append(configBox());
     if (window.ReferenceGeneration && mode !== 'reference') window.ReferenceGeneration.hide();
+    if (window.Studio3D && mode !== '3d') window.Studio3D.hide();
     if (mode === 'reference') {
       body.append(window.ReferenceGeneration ? window.ReferenceGeneration.panel(host, refTools()) : el('<div class="panel hint">Reference Generation did not load. Reload the page.</div>'));
     } else if (mode === '3d') {
-      if (window.ReferenceGeneration) body.append(window.ReferenceGeneration.handover(host, refTools()));
-      body.append(view3d());
+      body.append(window.Studio3D ? window.Studio3D.panel(host, refTools()) : el('<div class="panel hint">3D Generation did not load. Reload the page.</div>'));
     } else if (mode === 'image') {
       body.append(el('<p class="hint ag-lead">One picture from a prompt and up to four reference pictures. Made with FLUX.2, the same image model the storyboard uses.</p>'), box('image'));
     } else {
@@ -79,35 +79,6 @@ window.AssetGenerator = (function () {
 
   /* What reference-generation.js is handed besides the host: the Library picker, where to put its dialogs, and a way to change mode. */
   const refTools = () => ({ library, layer: () => root.querySelector('.ag'), go: m => { mode = m; draw(); } });
-
-  /* ---------- 3D Generation: the 3D view ----------
-   * The view is made once and the same element is put back each time the page is redrawn, so the camera stays where it was.
-   * Which grids are on is remembered in this browser. */
-  let three = null, threeFailed = '';
-  const GRID_KEY = 'sd.view3d.grids', GRID_NAMES = { x: 'the upright plane facing along X (spans Y and Z)', y: 'the floor (spans X and Z)', z: 'the upright plane facing along Z (spans X and Y)' };
-  function gridChoice() { try { return Object.assign({ x: false, y: true, z: false }, JSON.parse(localStorage.getItem(GRID_KEY) || '{}')); } catch (e) { return { x: false, y: true, z: false }; } }
-  function view3d() {
-    const grids = three ? three.grids() : gridChoice();
-    const panel = el(`<div class="panel ag-3d"><div class="ag-3dbar"><span class="ag-label">Grid</span>
-        ${['x', 'y', 'z'].map(k => `<label class="ag-grid ag-grid-${k}" title="${k.toUpperCase()} grid: ${GRID_NAMES[k]}"><input type="checkbox" data-k="grid-${k}" data-g="${k}"${grids[k] ? ' checked' : ''}> ${k.toUpperCase()}</label>`).join('')}
-        <span class="ag-3dspace"></span><button class="small ag-3dreset" type="button" data-k="view-reset" title="Put the camera back where it started">Reset view</button></div>
-      <div class="ag-3dhold"><div class="hint ag-3dwait">Starting the 3D view…</div></div>
-      <div class="hint">Drag to turn, right-drag (or two fingers) to move, scroll to zoom. Each grid square is one unit. Making 3D models is not built yet, so a one-unit cube stands in for now.</div></div>`);
-    const hold = panel.querySelector('.ag-3dhold');
-    const place = () => { hold.innerHTML = ''; hold.append(three.element); };
-    const fail = () => { hold.innerHTML = ''; hold.append(el(`<div class="hint ag-3dwait">The 3D view could not start: ${esc(threeFailed)}</div>`)); };
-    panel.querySelectorAll('[data-g]').forEach(c => { c.onchange = () => {
-      const now = Object.assign(three ? three.grids() : gridChoice(), { [c.dataset.g]: c.checked });
-      try { localStorage.setItem(GRID_KEY, JSON.stringify(now)); } catch (e) { /* private browsing: the choice lasts for this visit */ }
-      if (three) three.setGrid(c.dataset.g, c.checked);
-    }; });
-    panel.querySelector('.ag-3dreset').onclick = () => { if (three) three.resetView(); };
-    if (three) place();
-    else if (threeFailed) fail();
-    else import('./viewport-3d.js?v=1').then(m => { if (!three) three = m.create({ grids: gridChoice() }); if (hold.isConnected) place(); else if (mode === '3d') draw(); })
-      .catch(e => { threeFailed = e.message || 'this browser has no WebGL.'; if (hold.isConnected) fail(); });
-    return panel;
-  }
 
   /* ---------- Asset Configuration: the box at the top of every mode ---------- */
   const cfg = () => S().config[mode];
@@ -499,7 +470,7 @@ window.AssetGenerator = (function () {
       if (changed) { data = null; root.innerHTML = '<div class="panel hint">Loading…</div>'; }
       load();
     },
-    hide() { showing = false; clearTimeout(timer); closeLibrary(); if (window.ReferenceGeneration) window.ReferenceGeneration.hide(); },
-    _state: () => data, _view3d: () => three,
+    hide() { showing = false; clearTimeout(timer); closeLibrary(); if (window.ReferenceGeneration) window.ReferenceGeneration.hide(); if (window.Studio3D) window.Studio3D.hide(); },
+    _state: () => data,
   };
 })();

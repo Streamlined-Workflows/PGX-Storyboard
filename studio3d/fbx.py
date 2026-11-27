@@ -436,6 +436,30 @@ def analyse(data):
             "rigging": rigging, "defects": defects, "limits": limits}
 
 
+def faces(data, wanted):
+    """The corner positions of chosen faces, in each mesh's own coordinates, so a page can draw over them.
+    wanted: {geometry id (str): face numbers} -> {geometry id: {face number: [x, y, z, x, y, z, …]}}"""
+    objects = parse(data).find("Objects")
+    out = {}
+    for o in objects.children if objects else []:
+        gid = str(o.props[0]) if o.props else ""
+        if o.name != "Geometry" or gid not in wanted:
+            continue
+        verts, index = o.value("Vertices"), o.value("PolygonVertexIndex")
+        if not isinstance(verts, array.array) or not isinstance(index, array.array):
+            continue
+        want, got, face, corners, n = set(wanted[gid]), {}, 0, [], len(verts) // 3
+        for v in index:
+            i = v if v >= 0 else -v - 1
+            corners.append(i)
+            if v < 0:
+                if face in want and all(0 <= c < n for c in corners):
+                    got[face] = [round(float(verts[c * 3 + k]), 6) for c in corners for k in range(3)]
+                face, corners = face + 1, []
+        out[gid] = got
+    return out
+
+
 def profile(vertices):
     """The density profile a control-point count falls in (Phase 6, 6.4). -> "low" | "mid" | "high" | "below" | "above" """
     return "below" if vertices < 500 else "low" if vertices <= 10_000 else "mid" if vertices <= 30_000 else "high" if vertices <= 500_000 else "above"

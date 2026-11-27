@@ -82,6 +82,13 @@ class Api(unittest.TestCase):
         with self.assertRaises(LookupError):
             self.get("export/file", id="req_nope")
 
+    def test_faulty_faces_come_back_as_shapes(self):
+        a = self.bring(fixtures.broken(), "Broken.fbx")["asset"]
+        art = a["artifacts"][0]
+        out = self.get("defects", asset=a["id"], artifact=art["id"])["defects"]
+        self.assertTrue(out and all(d["model"] and d["polygons"] and all(len(p) % 3 == 0 and len(p) >= 9 for p in d["polygons"]) for d in out))
+        self.assertEqual({d["kind"] for d in out}, {d["kind"] for d in art["report"]["defects"] if d["faces"]})
+
     def test_info_says_what_is_not_available(self):
         info = self.get("info")
         caps = {c["capability"]: c for c in info["capabilities"]}

@@ -8,6 +8,7 @@
     POST  /api/studio3d/asset/copy      {id}         /asset/delete {id}
     POST  /api/studio3d/import?project=…&asset=…&name=…&approve=1     the FBX or SWIFT ZIP itself as the request body
     GET   /api/studio3d/file?asset=…&artifact=…      a stored FBX, exactly as stored
+    GET   /api/studio3d/defects?asset=…&artifact=…   the faulty faces as shapes, for the 3D view to mark
     POST  /api/studio3d/select          {asset, artifact}
     POST  /api/studio3d/component       {asset, artifact, component, fields}
     POST  /api/studio3d/approve         {asset, ids, confirmed}       /deny {asset, ids}
@@ -253,6 +254,17 @@ def _handle(method, route, query, body, raw, st):
             if not st.store.has(art["blob"]):
                 raise LookupError("That file is missing from storage.")
             return File(st.store.blob_path(art["blob"]), "application/octet-stream")
+        if route == "defects":                              # the faulty faces as shapes the 3D view can draw in red
+            r = st.store.load(_need(query, "asset"))
+            art = st._find(r, _need(query, "artifact"))
+            listed = [d for d in art["report"]["defects"] if d["faces"]]
+            wanted = {}
+            for d in listed:
+                wanted.setdefault(d["geometry"], set()).update(d["faces"][:500])
+            shapes = fbx.faces(st.store.read(art["blob"]), wanted) if wanted else {}
+            owner = {m["geometry"]: m["id"] for m in art["report"]["models"] if m["geometry"]}
+            return {"defects": [{"kind": d["kind"], "severity": d["severity"], "model": owner.get(d["geometry"]), "count": d["count"],
+                                 "polygons": [shapes.get(d["geometry"], {}).get(f) for f in d["faces"][:500] if shapes.get(d["geometry"], {}).get(f)]} for d in listed]}
         if route == "export/plan":
             return package.plan(st, _need(query, "asset"), query.get("profile", "standard"), references=query.get("references") == "1")
         if route == "export/file":
