@@ -31,6 +31,7 @@ import usage
 import models
 from identity_studio import api as identity_api
 from audio import api as audio_api
+from studio3d import api as studio3d_api
 import workflows
 
 ROOT = os.path.dirname(os.path.abspath(__file__))
@@ -409,6 +410,31 @@ def project_audio_files(pid):
         except OSError:
             continue
     return out
+
+
+def studio3d_reference(pid, artifact_id):
+    """A Reference Generation picture as it is now, for the 3D studio. -> {image, state, expires, what} or None"""
+    try:
+        a = next((a for a in load_project(pid).get("reference", {}).get("artifacts", []) if a["id"] == artifact_id), None)
+    except ValueError:
+        return None
+    return {"image": a["image"], "state": a["state"], "expires": a.get("expires"), "what": a.get("component") or a.get("role") or ""} if a else None
+
+
+def studio3d_picture(pid, image):
+    try:
+        query = urllib.parse.urlencode({"filename": image, "type": "input"})
+        with urllib.request.urlopen(f"{COMFY}/view?{query}", timeout=120) as r:
+            return r.read()
+    except OSError:
+        return None
+
+
+def studio3d_handovers(pid):
+    try:
+        return reference_view(pid)["handover"]
+    except ValueError:
+        return []
 
 
 def make_room_for_language_model():
@@ -1533,6 +1559,18 @@ class Handler(BaseHTTPRequestHandler):
     def read_body(self):
         return self.rfile.read(int(self.headers.get("Content-Length") or 0))
 
+    def foreign(self, path=""):
+        """3D studio (Phase 24): refuse a change that another website asked this browser to make, and an upload that is
+        too large before reading it. -> True if the request was refused and answered."""
+        origin = self.headers.get("Origin")
+        if origin and urllib.parse.urlsplit(origin).netloc != self.headers.get("Host"):
+            self.send_json({"error": "That request came from another site and was refused."}, 403)
+            return True
+        if int(self.headers.get("Content-Length") or 0) > studio3d_api.assets.MAX_IMPORT:
+            self.send_json({"error": "That file is larger than the studio reads."}, 413)
+            return True
+        return False
+
     def identity(self, method, url, body=None):
         """Hand a /api/identity/ request to the Identity Studio module, which owns everything about it."""
         return self.module(identity_api, method, url, body)
@@ -1592,6 +1630,8 @@ class Handler(BaseHTTPRequestHandler):
                 return self.identity("GET", url)
             if audio_api.handles(url.path):
                 return self.module(audio_api, "GET", url)
+            if studio3d_api.handles(url.path):
+                return self.module(studio3d_api, "GET", url)
             if url.path.startswith("/static/"):            # the SWIFT tokens, logo, fonts and the module scripts
                 kinds = {".css": "text/css", ".svg": "image/svg+xml", ".woff2": "font/woff2", ".js": "text/javascript", ".png": "image/png"}
                 base = os.path.join(ROOT, "static")
@@ -1673,6 +1713,8 @@ class Handler(BaseHTTPRequestHandler):
             return self.identity("PUT", url, self.read_body())
         if audio_api.handles(url.path):
             return self.module(audio_api, "PUT", url, self.read_body())
+        if studio3d_api.handles(url.path):
+            return self.foreign() or self.module(studio3d_api, "PUT", url, self.read_body())
         if url.path == "/api/project":
             try:
                 pid = urllib.parse.parse_qs(url.query).get("id", [""])[0]
@@ -1683,11 +1725,15 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_POST(self):
         path = urllib.parse.urlsplit(self.path).path
+        if studio3d_api.handles(path) and self.foreign(path):
+            return
         body = self.read_body()
         if identity_api.handles(path):
             return self.identity("POST", urllib.parse.urlsplit(self.path), body)
         if audio_api.handles(path):
             return self.module(audio_api, "POST", urllib.parse.urlsplit(self.path), body)
+        if studio3d_api.handles(path):
+            return self.module(studio3d_api, "POST", urllib.parse.urlsplit(self.path), body)
         if path == "/api/upload":
             return self.proxy("POST", "/upload/image", body)
         try:
@@ -1851,5 +1897,7 @@ if __name__ == "__main__":
     identity_api.start()
     assist.before_chat = make_room_for_language_model
     audio_api.configure(project_audio=project_audio_files)
+    studio3d_api.configure(resolve_reference=studio3d_reference, read_reference=studio3d_picture, handovers=studio3d_handovers)
+    studio3d_api.start()
     print(f"SWIFT Director on http://0.0.0.0:{PORT}  ->  ComfyUI at {COMFY}", flush=True)
     ThreadingHTTPServer(("0.0.0.0", PORT), Handler).serve_forever()
